@@ -1,10 +1,12 @@
 import { WMCDSS_API_BASE } from './api';
 import { ChartColors } from './charts';
 import { SITES } from './data';
+import { ConcretePage } from './decisions';
 
-// Side-effect imports: api.ts, charts.tsx, and data.ts assign window.* globals
-// on load. The named imports above pin each module into the bundle so Rollup
-// keeps them instead of tree-shaking the side effects away.
+// Side-effect imports: api.ts, charts.tsx, data.ts, and decisions.tsx assign
+// window.* globals on load. The named imports above pin each module into the
+// bundle so Rollup keeps them instead of tree-shaking the side effects away.
+void ConcretePage;
 
 export function App() {
   return (
@@ -16,7 +18,7 @@ export function App() {
       color: '#1f2937',
     }}>
       <h1 style={{ marginBottom: 8 }}>WMCDSS — Vite scaffold</h1>
-      <p style={{ color: '#6b7280', marginTop: 0 }}>Phase 1 (api.ts + charts.tsx + data.ts ESM port).</p>
+      <p style={{ color: '#6b7280', marginTop: 0 }}>Phase 1 (api.ts + charts.tsx + data.ts + decisions.tsx ESM port).</p>
       <section style={{
         background: '#fef3c7',
         border: '1px solid #fbbf24',
@@ -44,7 +46,8 @@ export function App() {
         <div><strong>SITES count:</strong> {SITES.length}（{SITES.filter(s => s.type !== 'land').length} marine / {SITES.filter(s => s.type === 'land').length} land）</div>
         <div style={{ color: '#6b7280', marginTop: 4 }}>
           (resolved at module load; mirrored to <code>window.WMCDSS_API_BASE</code> /
-          <code>window.LineChart</code> / <code>window.SITES</code> etc.)
+          <code>window.LineChart</code> / <code>window.SITES</code> /
+          <code>window.ConcretePage</code> etc.)
         </div>
       </section>
     </main>
