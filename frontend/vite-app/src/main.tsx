@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import { AppShell } from './app-shell';
 import { WMCDSS_API } from './api';
+import './tweaks-panel';
 
 const rootEl = document.getElementById('root');
 if (!rootEl) throw new Error('#root element missing');
