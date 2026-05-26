@@ -200,36 +200,48 @@ CORS → RateLimit → APIKey になり、ねらいは:
 - [ ] フロントは Babel Standalone（プロトタイプ）。本番化前にビルド導入
 - [x] CI（GitHub Actions）で pytest を回す — **2026-05-26 実装済み** (§9 参照)
 
-## 9. CI / Verify の二段構え
+## 9. CI 二段ジョブ構成
 
 ```mermaid
 flowchart LR
   DEV[開発者 push / PR]
   subgraph GA[GitHub Actions - .github/workflows/ci.yml]
-    L[ruff check .]
-    UT[pytest --ignore=tests/test_api_smoke.py]
-  end
-  subgraph LOCAL[ローカル / ステージング]
-    DC[docker compose up -d]
-    SMK[pytest tests/test_api_smoke.py]
+    direction TB
+    subgraph J1[backend-unit job]
+      L[ruff check .]
+      UT[pytest --ignore=tests/test_api_smoke.py]
+    end
+    subgraph J2[backend-smoke job - needs: backend-unit]
+      UP[docker compose up -d --wait]
+      RDY[poll http://localhost:8003/readyz<br/>up to 90s]
+      SMK[docker compose exec backend<br/>pytest tests/test_api_smoke.py]
+      DOWN[docker compose down -v]
+    end
   end
   REV[Codex review<br/>+ CodeRabbit review]
   MRG[main へ merge]
 
   DEV --> L --> UT
-  UT -- ✅ --> REV
+  UT -- ✅ --> UP --> RDY --> SMK --> DOWN
   UT -- ❌ --> DEV
-  DEV --> DC --> SMK
   SMK -- ✅ --> REV
   REV -- ✅ --> MRG
 ```
 
 ### 二段に分けた理由
 
-| ジョブ | 何を守るか | なぜ CI から smoke を外したか |
+| ジョブ | 何を守るか | なぜ分離したか |
 |---|---|---|
-| ruff | スタイル退行・E701 のような構文クセ | 速く・依存ゼロで落とせる |
-| pytest（純関数） | ロジック退行 | DB なしで完結し、< 1 分で終わる |
-| pytest smoke（Verify 段） | 契約退行（audit detail key 欠落など） | docker compose の起動が必要で GA runner では割高 |
+| `backend-unit` (ruff + pytest 純関数) | スタイル退行 / ロジック退行 | DB 不要で 30 秒以内に終わる。落とすなら早く落としたい層 |
+| `backend-smoke` (compose 起動 + 黒箱) | 契約退行（audit detail key 欠落、middleware 順、migration 起動不能など） | compose 起動に〜90s かかるので、純関数で落ちるなら先に弾いて CPU 時間を節約 |
 
-smoke は `tests/test_api_smoke.py` で `target_id` の audit row を **件数厳密**に検証しており（`len(rows) == 1`）、ここを compose 環境のローカル/ステージングで通すことで `inputs` / `matched_rules` の永続化契約を保証する。
+`needs: backend-unit` で連鎖させているのは:
+
+- 純関数が落ちている時に compose を起動しても無駄
+- ただし unit さえ通ればコミット前 review に出して良い段階に達するので、smoke は **強制ゲート**にせずに「最終 merge までに green であること」をルールにする運用余地を残す（必要なら branch protection で smoke を required にする）
+
+smoke は `tests/test_api_smoke.py` で `target_id` の audit row を **件数厳密**に検証しており（`len(rows) == 1`）、`inputs` / `matched_rules` の永続化契約を CI 内で保証する。ローカルでも同じコマンド (`docker compose exec backend pytest tests/test_api_smoke.py`) で再実行できるので、Verify フェーズでの再現性は維持される。
+
+### backend-smoke の起動待ち
+
+backend コンテナには healthcheck が無いため `docker compose up -d --wait` は **「プロセス起動」**までしか待たない。実際には `pip install --quiet -e .` が走るので、CI runner では 30〜60s の warm-up がある。job ではこれを `/readyz` への 2 秒間隔ポーリング（最大 45 回 = 90s）で吸収する。タイムアウト時は `docker compose logs backend` をダンプして diagnose しやすくしている。

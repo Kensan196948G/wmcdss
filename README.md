@@ -163,14 +163,14 @@ docker compose exec backend pytest -q tests/
 
 ### 🤖 継続的インテグレーション
 
-`push` / `pull_request` (→ `main`) で `.github/workflows/ci.yml` が起動し、以下を実行：
+`push` / `pull_request` (→ `main`) で `.github/workflows/ci.yml` が **二段ジョブ**として起動：
 
-| ステップ | コマンド | 失敗時の影響 |
+| ジョブ | ステップ | 失敗時の影響 |
 |---|---|---|
-| Lint | `ruff check .` | ❌ マージブロック |
-| ユニットテスト | `pytest -v --ignore=tests/test_api_smoke.py` | ❌ マージブロック |
+| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` | ❌ マージブロック |
+| `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | ❌ マージブロック |
 
-> 📝 smoke は docker-compose スタックを要求するため CI から除外し、Verify フェーズでローカル/ステージング上で走らせる二段構え。
+> 📝 unit を先に落とすことで、compose 起動 (〜90s) のコストを回帰の早期発見と引き換えに最小化。smoke は同じコマンドでローカルでも再現可能 (`docker compose exec backend pytest tests/test_api_smoke.py`)。
 
 ---
 

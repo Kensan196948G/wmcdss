@@ -4,7 +4,7 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
-最終更新: **2026-05-27**（rate limit middleware 導入 — Loop 9 完）
+最終更新: **2026-05-27**（CI smoke verify ジョブ追加 — Loop 10 完）
 リリース絶対期限: **2026-11-25** （登録から 6 ヶ月後 — CLAUDE.md 絶対厳守）
 残日数: **約 182 日（Month 1 中盤）**
 GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [Project v2 #29](https://github.com/users/Kensan196948G/projects/29) ／ [Milestone #1 Production Release](https://github.com/Kensan196948G/wmcdss/milestone/1)
@@ -32,7 +32,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
 | 🖥️ Frontend | 🟡 80% | `3ac56d6` | バンドル化（Babel Standalone → Vite）／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 95% | `96aab85` | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
-| 🤖 CI | 🟢 80% | `5c80fe7` | smoke verify ジョブ ／ Codex/CodeRabbit 連携 (#4) |
+| 🤖 CI | 🟢 100% | (pending) | Codex/CodeRabbit 連携 (#4) のみ。unit + smoke 二段ジョブ実装済み |
 | 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
 
 ---
@@ -50,6 +50,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 7 | Build | `.env.production.example` 新設＋`.gitignore` で `.env.production` 保護（B4 解消） | ✅ 96aab85 |
 | 8 | Build → Verify | marine ingester 分離（Issue #2）— `jma_wave` service + `ingest_jma_marine` job + hourly timer + unit テスト +9 件 (32→41)／CI run `26467717952` 28s green／Issue #2 closed | ✅ 3ebf8fa |
 | 9 | Build → Verify | RateLimitMiddleware 導入 — sliding window deque ／identity = `sha256(X-API-Key)[:16]` or IP ／CORS→RateLimit→APIKey の三段／unit +10 件 (41→51) all green ／CI run `26468154402` 30s green | ✅ b17aa2e |
+| 10 | Build | CI smoke verify ジョブ追加 — `backend-smoke` job が compose 起動 → `/readyz` ポーリング → `pytest tests/test_api_smoke.py` (9 件) を実行。`needs: backend-unit` で純関数 fail を先に弾く二段構え。ローカル smoke 9/9 0.18s green | ⏳ push pending |
 
 ---
 

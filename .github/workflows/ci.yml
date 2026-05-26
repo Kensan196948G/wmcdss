@@ -33,5 +33,46 @@ jobs:
 
       - name: Run pure-function tests
         # test_api_smoke.py requires a running docker-compose stack and is
-        # executed separately in the Verify phase; CI covers the offline suite.
+        # covered by the backend-smoke job below.
         run: pytest -v --ignore=tests/test_api_smoke.py
+
+  backend-smoke:
+    name: backend / api smoke (live compose)
+    runs-on: ubuntu-latest
+    needs: backend-unit
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Bring up compose stack
+        # --wait blocks until healthcheck'd services are healthy; backend has
+        # no healthcheck so the readyz poll below covers its warm-up window.
+        run: docker compose up -d --wait db backend
+
+      - name: Wait for backend /readyz
+        # Backend cold start = pip install + uvicorn boot. Empirically 30-60s
+        # on GH runners; cap at 90s and dump logs on timeout.
+        run: |
+          for i in $(seq 1 45); do
+            if curl -sf http://localhost:8003/readyz >/dev/null; then
+              echo "backend ready after ${i} polls"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::backend failed to become ready in 90s"
+          docker compose logs backend
+          exit 1
+
+      - name: Run smoke tests against compose network
+        run: |
+          docker compose exec -T \
+            -e WMCDSS_TEST_BASE=http://backend:8000 \
+            backend pytest -v tests/test_api_smoke.py
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
