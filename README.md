@@ -75,7 +75,7 @@ flowchart LR
 |---|---|---|---|
 | 🖥️ Frontend | React 18 + Vite 6 + TypeScript（**全 15 ページ ESM port 完了 ＋ density/dark/role 永続化 ＋ Babel Standalone 完全退役 Loop 44**） | `frontend/vite-app/`（唯一の entry, nginx multi-stage 配信） | ダッシュボード・現場/閾値管理画面（mock 警告帯付き・localStorage 永続化） |
 | 🌐 Frontend エッジ | nginx 1.27-alpine（multi-stage Docker build, lazy DNS） | `frontend/vite-app/Dockerfile`<br/>`frontend/vite-app/nginx.conf` | Vite 静的配信 ＋ `/api/` reverse proxy ＋ `/readyz` passthrough |
-| 🐍 Backend API | FastAPI + SQLAlchemy 2.0 async | `backend/app/` | 観測値・閾値・判定 REST API |
+| 🐍 Backend API | FastAPI + SQLAlchemy 2.0 async（**Loop 46: docker healthcheck で `/readyz` を judge — `compose up --wait` が DB 接続成立まで待つようになり frontend は `service_healthy` 依存に格上げ**） | `backend/app/` | 観測値・閾値・判定 REST API |
 | 🗄️ DB | PostgreSQL 16 | `db/migrations/` | 観測値・現場・閾値・監査ログ |
 | ⏱️ Ingester | httpx + systemd timer | `backend/app/jobs/ingest_jma{,_marine}.py`<br/>`deploy/systemd/` | AMeDAS（10 分毎）／wave nowcast（毎時）の 2 系統並走 |
 | 🔐 Auth | API Key middleware | `backend/app/core/security.py` | mutation エンドポイントを保護 |

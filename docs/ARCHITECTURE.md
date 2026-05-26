@@ -249,4 +249,4 @@ smoke は `tests/test_api_smoke.py` で `target_id` の audit row を **件数�
 
 ### backend-smoke の起動待ち
 
-backend コンテナには healthcheck が無いため `docker compose up -d --wait` は **「プロセス起動」**までしか待たない。実際には `pip install --quiet -e .` が走るので、CI runner では 30〜60s の warm-up がある。job ではこれを `/readyz` への 2 秒間隔ポーリング（最大 45 回 = 90s）で吸収する。タイムアウト時は `docker compose logs backend` をダンプして diagnose しやすくしている。
+backend コンテナには **Loop 46 で healthcheck を追加** — `python -c 'http.client → GET /readyz; exit 0 if status==200 else 1'` を `interval: 10s / timeout: 5s / retries: 6 / start_period: 30s` で実行。これにより `docker compose up -d --wait` は **healthy 状態（FastAPI 起動 ＋ DB 接続成立 ＋ Loop 45 で 503 化した `/readyz` の 200 応答）** まで待つようになり、`frontend` サービスの `depends_on` も `condition: service_healthy` に格上げされて起動順序が k8s readiness probe と等価になった。CI 側の `/readyz` ポーリング（2 秒間隔 × 最大 45 回 = 90s）は冗長になるが多重防御として残置 — タイムアウト時は引き続き `docker compose logs backend` をダンプして diagnose 可能。実際には `pip install --quiet -e .` が走るため `start_period: 30s` で warm-up を吸収する。
