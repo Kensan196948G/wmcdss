@@ -147,3 +147,49 @@ def test_ip_fallback_when_no_api_key():
         headers = {}
         client = FakeClient()
     assert ratelimit_mod._identity(FakeReq()) == "i:203.0.113.7"
+
+
+# ---------------------------------------------------------------------------
+# FIFO eviction at the identity layer — protects against the X-API-Key
+# rotation DoS where an attacker spins up unbounded distinct identities to
+# exhaust memory. We shrink _MAX_IDENTITIES to 3 so the tests stay fast
+# while still exercising the exact branch at ratelimit.py:60-62.
+# ---------------------------------------------------------------------------
+
+def test_identity_cap_at_capacity_keeps_all(monkeypatch):
+    monkeypatch.setattr(ratelimit_mod, "_MAX_IDENTITIES", 3)
+    b = ratelimit_mod._Buckets()
+    for i in range(3):
+        b.hit(f"k:{i}", limit=10, window_s=60.0, now=1000.0 + i)
+    assert set(b._store.keys()) == {"k:0", "k:1", "k:2"}
+
+
+def test_identity_cap_evicts_oldest_when_full(monkeypatch):
+    monkeypatch.setattr(ratelimit_mod, "_MAX_IDENTITIES", 3)
+    b = ratelimit_mod._Buckets()
+    for i in range(3):
+        b.hit(f"k:{i}", limit=10, window_s=60.0, now=1000.0 + i)
+    b.hit("k:new", limit=10, window_s=60.0, now=2000.0)
+    # k:0 is the oldest insertion → must be evicted; k:new must be present.
+    assert "k:0" not in b._store
+    assert "k:new" in b._store
+    assert set(b._store.keys()) == {"k:1", "k:2", "k:new"}
+
+
+def test_evicted_identity_starts_fresh_quota(monkeypatch):
+    # If an attacker rotates X-API-Key faster than the cap, an evicted
+    # identity coming back must get a clean deque — never inherit timestamps.
+    monkeypatch.setattr(ratelimit_mod, "_MAX_IDENTITIES", 2)
+    b = ratelimit_mod._Buckets()
+    # Burn k:victim under a tight limit.
+    for _ in range(3):
+        b.hit("k:victim", limit=3, window_s=60.0, now=1000.0)
+    assert len(b._store["k:victim"]) == 3
+    # Evict k:victim by overflowing with 2 new identities.
+    b.hit("k:a", limit=3, window_s=60.0, now=1001.0)
+    b.hit("k:b", limit=3, window_s=60.0, now=1002.0)
+    assert "k:victim" not in b._store
+    # k:victim returns — its bucket must be brand new (1 hit, not 4).
+    allowed, remaining, _ = b.hit("k:victim", limit=3, window_s=60.0, now=1003.0)
+    assert allowed is True
+    assert remaining == 2  # limit 3 − 1 fresh hit
