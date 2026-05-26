@@ -95,3 +95,120 @@ def test_oversize_key_via_http_rejected(make_app):
     big = "a" * 10_000
     r = TestClient(make_app(["secret"])).post("/w", headers={"X-API-Key": big})
     assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Loop 37 — security pivot: HTTP method matrix + actor_from + rotation edges
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def make_mutations_app(monkeypatch):
+    """App exposing PUT/PATCH/DELETE so we can verify auth covers all writes."""
+    def _build(keys: list[str]) -> FastAPI:
+        fake = config_mod.Settings(api_keys=keys)
+        monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
+        monkeypatch.setattr(security_mod, "_config", config_mod)
+
+        app = FastAPI()
+        app.add_middleware(APIKeyMiddleware)
+
+        @app.put("/w")
+        async def put_w(): return {"ok": True}
+
+        @app.patch("/w")
+        async def patch_w(): return {"ok": True}
+
+        @app.delete("/w")
+        async def delete_w(): return {"ok": True}
+
+        return app
+    return _build
+
+
+def test_put_blocked_without_key(make_mutations_app):
+    assert TestClient(make_mutations_app(["secret"])).put("/w").status_code == 401
+
+
+def test_patch_blocked_without_key(make_mutations_app):
+    assert TestClient(make_mutations_app(["secret"])).patch("/w").status_code == 401
+
+
+def test_delete_blocked_without_key(make_mutations_app):
+    assert TestClient(make_mutations_app(["secret"])).delete("/w").status_code == 401
+
+
+def test_put_patch_delete_accepted_with_valid_key(make_mutations_app):
+    c = TestClient(make_mutations_app(["secret"]))
+    h = {"X-API-Key": "secret"}
+    assert c.put("/w", headers=h).status_code == 200
+    assert c.patch("/w", headers=h).status_code == 200
+    assert c.delete("/w", headers=h).status_code == 200
+
+
+def test_key_rotation_old_and_new_both_work(make_app):
+    """During rotation, both keys are valid simultaneously — order irrelevant."""
+    app = make_app(["old", "new"])
+    for k in ("old", "new"):
+        assert TestClient(app).post("/w", headers={"X-API-Key": k}).status_code == 200
+
+
+def test_key_match_is_order_independent(make_app):
+    """Reverse order — same security posture regardless of list ordering."""
+    app = make_app(["new", "old"])
+    for k in ("old", "new"):
+        assert TestClient(app).post("/w", headers={"X-API-Key": k}).status_code == 200
+
+
+def test_key_matches_empty_allowed_list_returns_false():
+    assert security_mod._key_matches("anything", []) is False
+
+
+def test_key_matches_empty_presented_returns_false():
+    assert security_mod._key_matches("", ["secret"]) is False
+
+
+# --- actor_from -------------------------------------------------------------
+
+
+def _req_with(headers: dict[str, str] | None = None,
+              method: str = "POST", path: str = "/w"):
+    """Build a minimal Starlette Request for actor_from() input."""
+    from starlette.requests import Request as StarletteRequest
+    scope = {
+        "type": "http",
+        "method": method,
+        "path": path,
+        "raw_path": path.encode(),
+        "query_string": b"",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in (headers or {}).items()],
+    }
+    return StarletteRequest(scope)
+
+
+def test_actor_from_honors_x_actor():
+    assert security_mod.actor_from(_req_with({"X-Actor": "kensan"})) == "kensan"
+
+
+def test_actor_from_missing_returns_anonymous(caplog):
+    caplog.set_level("WARNING")
+    assert security_mod.actor_from(_req_with({})) == "anonymous"
+    assert any("missing X-Actor" in r.message for r in caplog.records)
+
+
+def test_actor_from_blank_treated_as_missing():
+    assert security_mod.actor_from(_req_with({"X-Actor": "   "})) == "anonymous"
+
+
+def test_actor_from_trims_to_64_chars():
+    long_actor = "a" * 200
+    out = security_mod.actor_from(_req_with({"X-Actor": long_actor}))
+    assert len(out) == 64
+    assert out == "a" * 64
+
+
+def test_actor_from_does_not_fall_back_to_api_key():
+    """Credential leak guard: X-API-Key MUST NOT be used as audit actor."""
+    out = security_mod.actor_from(_req_with({"X-API-Key": "supersecret"}))
+    assert out == "anonymous"
+    assert "supersecret" not in out
