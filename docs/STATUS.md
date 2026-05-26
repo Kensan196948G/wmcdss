@@ -4,9 +4,10 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
-最終更新: **2026-05-26**
+最終更新: **2026-05-27**
 リリース絶対期限: **2026-11-25** （登録から 6 ヶ月後 — CLAUDE.md 絶対厳守）
-残日数: **約 183 日（Month 1 中盤）**
+残日数: **約 182 日（Month 1 中盤）**
+GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [Project v2 #29](https://github.com/users/Kensan196948G/projects/29) ／ [Milestone #1 Production Release](https://github.com/Kensan196948G/wmcdss/milestone/1)
 
 ---
 
@@ -31,8 +32,8 @@
 | 🔐 Auth / Audit | 🟢 100% | `5c3f700` | 鍵ローテーション運用フロー未定 |
 | 🖥️ Frontend | 🟡 80% | `3ac56d6` | バンドル化（Babel Standalone → Vite）／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 90% | `e163429` | 本番環境変数テンプレ未作成 |
-| 🤖 CI | 🟢 60% | `5c3f700` | smoke の verify ジョブ ／ Codex/CodeRabbit 連携 |
-| 📚 Docs | 🟢 90% | _本コミット_ | ARCHITECTURE.md に CI 図追加 |
+| 🤖 CI | 🟢 70% | `fc49421` | Node 20 deprecation (#3) ／ smoke verify ジョブ ／ Codex/CodeRabbit 連携 (#4) |
+| 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
 
 ---
 
@@ -41,19 +42,21 @@
 | 回 | フェーズ | 内容 | 結果 |
 |---:|---|---|:--:|
 | 1 | Build | audit hardening + smoke 9 件 + CI gate | ✅ 5c3f700 |
-| 2 | Improve | README に CI バッジ／API 表更新／テスト件数 23+9 | ✅ 本コミット |
-| 3 | Monitor | git remote 未設定／AgentTeams 未起動／Codex+CodeRabbit ユーザ起動待ち | 🟡 ブロッカー記録 |
+| 2 | Improve | README に CI バッジ／API 表更新／テスト件数 23+9／STATUS.md 新設 | ✅ fc49421 |
+| 3 | Monitor → Build | git remote 設定／Issue 4 件生成／Project v2 #29 連携／Milestone #1 設定 | ✅ B1/B3 解消 |
+| 4 | Verify | CI run `26466286004` ✅ 28s — ruff + pytest both green | ✅ |
 
 ---
 
 ## 🚧 ブロッカー / 要ユーザ判断
 
-| # | ブロッカー | 影響 | 解消アクション（要承認） |
-|---:|---|---|---|
-| B1 | `git remote` 未設定 | GitHub Projects 同期不能・PR レビュー不能 | `gh repo create kensan/wmcdss --private --source=. --remote=origin --push` |
-| B2 | Codex / CodeRabbit レビューはユーザ起動のみ | Verify フェーズ完走不能 | `/codex:review` ＋ `/coderabbit:review` を `5c3f700` に対し実行 |
-| B3 | AgentTeams 未活性化 | 並列開発体制が未稼働 | チーム定義 → `Agent` 起動の指示が必要 |
-| B4 | 本番環境変数テンプレ未作成 | デプロイ準備不能（Month 6 課題に先食い余地あり） | `.env.production.example` を Month 4 までに作成 |
+| # | ブロッカー | 状態 | 解消アクション |
+|---:|---|:--:|---|
+| ~~B1~~ | `git remote` 未設定 | ✅ 解消 | `Kensan196948G/wmcdss` private repo 作成・push 完了 (2026-05-26) |
+| B2 | Codex / CodeRabbit レビューはユーザ起動のみ | 🟡 待 | Issue [#4](https://github.com/Kensan196948G/wmcdss/issues/4) — `/codex:review` ＋ `/coderabbit:review` 起動依頼 |
+| B3 | AgentTeams 未活性化 | 🟡 部分解消 | 本セッションは個別 Agent 起動で代替中。`TeamCreate` 起動は CTO 判断で随時 |
+| B4 | 本番環境変数テンプレ未作成 | ⚪ 未着手 | `.env.production.example` を Month 4 までに作成 |
+| B5 | Node.js 20 deprecation (2026-09-16) | ⚪ 未着手 | Issue [#3](https://github.com/Kensan196948G/wmcdss/issues/3) — Month 4 までに対応 |
 
 ---
 
@@ -61,6 +64,7 @@
 
 | SHA | 種別 | 内容 |
 |---|---|---|
+| `fc49421` | docs | STATUS.md 新設＋ARCHITECTURE.md §9 CI 二段構え |
 | `5c3f700` | feat | decision/site の audit 永続化＋オフライン CI gate |
 | `e163429` | docs | hardening 後の SECURITY/README/systemd 整合 |
 | `3ac56d6` | harden | ingester／audit／frontend の silent-failure ＋ auth 強化 |
