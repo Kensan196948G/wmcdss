@@ -40,8 +40,21 @@
       const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
       const backend = window.BACKEND_STATUS || { ok: false, reason: 'pending' };
 
+      // Safety-critical UI: when we're showing mock data instead of live readings,
+      // it must be unmissable. The tweaks-panel indicator alone is too easy to miss.
+      const mockBanner = !backend.ok ? (
+        <div role="alert" style={{
+          background: '#b91c1c', color: '#fff', padding: '10px 16px',
+          fontSize: 14, fontWeight: 600, textAlign: 'center',
+          boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+        }}>
+          ⚠️ バックエンド未接続: 表示中のデータはサンプルです（{backend.reason || 'offline'}）。施工判断には使用しないでください。
+        </div>
+      ) : null;
+
       return (
         <>
+          {mockBanner}
           <App density={t.density} />
           <TweaksPanel title="表示設定">
             <TweakSection label="レイアウト">

@@ -22,7 +22,9 @@ class Settings(BaseSettings):
     # Empty list disables auth (dev default). Production sets at least one.
     api_keys: list[str] = []
     auth_required_methods: list[str] = ["POST", "PATCH", "PUT", "DELETE"]
-    auth_exempt_paths: list[str] = ["/healthz", "/readyz", "/docs", "/openapi.json", "/"]
+    # Note: "/" intentionally NOT here. GETs are already exempt via
+    # auth_required_methods; listing "/" makes _exempt() refactors risky.
+    auth_exempt_paths: list[str] = ["/healthz", "/readyz", "/docs", "/openapi.json"]
 
 
 @lru_cache

@@ -33,13 +33,23 @@ _WIND_DIR_DEG = {
 }
 
 
-def _val(entry: dict, key: str) -> float | None:
-    """Extract a numeric value if its quality flag is 0 (valid)."""
+def _val(entry: dict, key: str, *, dropped: dict[str, int] | None = None) -> float | None:
+    """Extract a numeric value if its quality flag is 0 (valid).
+
+    When `dropped` is provided, any non-zero quality flag is recorded so the
+    caller can surface "sensor reported, but QC rejected" separately from
+    "field absent" (important: a stuck instrument and an unequipped station
+    look identical otherwise).
+    """
     v = entry.get(key)
     if not isinstance(v, list) or len(v) < 2:
         return None
     raw, flag = v[0], v[1]
-    if flag != 0 or raw is None:
+    if flag != 0:
+        if dropped is not None:
+            dropped[key] = flag
+        return None
+    if raw is None:
         return None
     try:
         return float(raw)
@@ -78,25 +88,31 @@ def _latest_entry(payload: dict[str, Any]) -> tuple[datetime, dict[str, Any]] | 
 
 
 def normalise(entry: dict[str, Any], observed_at: datetime, site_id: str,
-              *, source: str = "jma", data_version: int = 1) -> dict[str, Any]:
+              *, source: str = "jma", data_version: int = 1,
+              station_id: str | None = None) -> dict[str, Any]:
     """Map a JMA AMeDAS entry to a WeatherObservationIn-shaped dict."""
-    precip = _val(entry, "precipitation10m")
-    sun_sec = _val(entry, "sun10m")  # seconds of sunshine in the 10-min window
-    return {
+    dropped: dict[str, int] = {}
+    precip = _val(entry, "precipitation10m", dropped=dropped)
+    sun_sec = _val(entry, "sun10m", dropped=dropped)
+    out = {
         "site_id": site_id,
         "observed_at": observed_at,
-        "temperature_c": _val(entry, "temp"),
-        "humidity_pct":  _val(entry, "humidity"),
-        "pressure_hpa":  _val(entry, "pressure"),
+        "temperature_c": _val(entry, "temp", dropped=dropped),
+        "humidity_pct":  _val(entry, "humidity", dropped=dropped),
+        "pressure_hpa":  _val(entry, "pressure", dropped=dropped),
         "precip_mm":     precip,
-        "wind_speed_ms": _val(entry, "wind"),
-        "wind_gust_ms":  _val(entry, "windGust"),
+        "wind_speed_ms": _val(entry, "wind", dropped=dropped),
+        "wind_gust_ms":  _val(entry, "windGust", dropped=dropped),
         "wind_dir_deg":  _wind_dir_deg(entry),
         # AMeDAS reports seconds in a 10-min window; convert to hours.
         "sunshine_h":    (sun_sec / 3600.0) if sun_sec is not None else None,
         "data_version":  data_version,
         "source":        source,
     }
+    if dropped:
+        log.info("jma qc-dropped station=%s site=%s observed_at=%s fields=%s",
+                 station_id, site_id, observed_at.isoformat(), dropped)
+    return out
 
 
 async def fetch_latest(
@@ -107,20 +123,24 @@ async def fetch_latest(
 ) -> tuple[datetime, dict[str, Any]] | None:
     """Fetch latest AMeDAS observation. Falls back to the previous 3h block if
     the current block is empty (which happens right after a block rollover).
+
+    Error policy:
+      - 404: legitimate block-rollover/missing-station case → try previous block,
+        return None if both miss.
+      - 401/403/429: upstream is telling us something the operator must see
+        (UA banned, rate-limited). Raise so the job loop logs+counts it.
+      - 5xx / timeout / network: same — raise; don't mask as "no data".
+      - JSON decode error on 200: raise (payload contract change).
     """
     now_jst = (now or datetime.now(timezone.utc)).astimezone(JST)
     for offset in (0, -3):  # try current then previous block
         ts = now_jst + timedelta(hours=offset)
         url = _block_url(station_id, ts)
-        try:
-            r = await client.get(url, timeout=10.0)
-            if r.status_code == 404:
-                continue
-            r.raise_for_status()
-            payload = r.json()
-        except httpx.HTTPError as exc:
-            log.warning("jma fetch failed station=%s url=%s: %s", station_id, url, exc)
+        r = await client.get(url, timeout=10.0)
+        if r.status_code == 404:
             continue
+        r.raise_for_status()
+        payload = r.json()
         latest = _latest_entry(payload)
         if latest:
             return latest

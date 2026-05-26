@@ -62,3 +62,36 @@ def test_writes_accepted_with_valid_key(make_app):
 
 def test_exempt_paths_bypass_auth(make_app):
     assert TestClient(make_app(["secret"])).get("/healthz").status_code == 200
+
+
+def test_root_exempt_does_not_bypass_other_paths(monkeypatch):
+    # Regression: if someone re-adds "/" to auth_exempt_paths, ensure the
+    # prefix logic does NOT make every URL auth-free.
+    fake = config_mod.Settings(api_keys=["secret"], auth_exempt_paths=["/", "/healthz"])
+    monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
+    monkeypatch.setattr(security_mod, "_config", config_mod)
+
+    app = FastAPI()
+    app.add_middleware(APIKeyMiddleware)
+
+    @app.post("/w")
+    async def w(): return {"ok": True}
+
+    assert TestClient(app).post("/w").status_code == 401
+
+
+def test_key_matches_non_ascii_rejected_cleanly():
+    # Regression: hmac.compare_digest raises TypeError on str with non-ASCII.
+    # _key_matches must encode to bytes and return False, not propagate.
+    assert security_mod._key_matches("鍵", ["secret"]) is False
+
+
+def test_key_matches_oversize_rejected():
+    # CPU-amplification guard: bound the bytes passed to compare_digest.
+    assert security_mod._key_matches("a" * 10_000, ["secret"]) is False
+
+
+def test_oversize_key_via_http_rejected(make_app):
+    big = "a" * 10_000
+    r = TestClient(make_app(["secret"])).post("/w", headers={"X-API-Key": big})
+    assert r.status_code == 401

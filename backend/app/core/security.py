@@ -18,9 +18,23 @@ from app.core import config as _config
 log = logging.getLogger(__name__)
 
 
+# Cap header length before any work: prevents CPU amplification by oversize
+# X-API-Key headers and bounds the bytes we pass to hmac.compare_digest.
+_MAX_KEY_LEN = 512
+
+
 def _key_matches(presented: str, allowed: list[str]) -> bool:
+    if not presented or len(presented) > _MAX_KEY_LEN:
+        return False
+    # compare_digest raises TypeError if either str contains non-ASCII; encode
+    # to bytes so a client sending e.g. `X-API-Key: 鍵` becomes a clean 401
+    # instead of an unhandled 500 (which would leak a stack trace and enable DoS).
+    try:
+        pb = presented.encode("utf-8")
+    except (AttributeError, UnicodeError):
+        return False
     for k in allowed:
-        if hmac.compare_digest(presented, k):
+        if hmac.compare_digest(pb, k.encode("utf-8")):
             return True
     return False
 

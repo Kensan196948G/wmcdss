@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.audit import AuditLog
@@ -24,6 +25,13 @@ async def write_audit(
     target_id: str | None = None,
     detail: dict[str, Any] | None = None,
 ) -> None:
+    """Best-effort audit write.
+
+    Only DB errors are swallowed (logged at ERROR so journal/Sentry catches a
+    sustained outage). Programming errors — e.g. an `AttributeError` from a
+    typo'd kwarg or a `TypeError` from wrong-shaped `detail` — propagate so
+    tests and dev catch them.
+    """
     try:
         row = AuditLog(
             actor=actor, action=action,
@@ -32,6 +40,6 @@ async def write_audit(
         )
         db.add(row)
         await db.flush()
-    except Exception as exc:
-        log.warning("audit write failed action=%s target=%s/%s: %s",
-                    action, target_type, target_id, exc)
+    except SQLAlchemyError as exc:
+        log.error("audit write failed action=%s target=%s/%s: %s",
+                  action, target_type, target_id, exc)

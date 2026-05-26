@@ -48,12 +48,23 @@ function adaptSite(backendSite, mockFallback) {
 
 // --- fetchers ---------------------------------------------------------------
 
+// Typed error so callers can branch on status instead of substring-matching messages.
+class APIError extends Error {
+  constructor({ status, url, body }) {
+    super(`API ${status} ${url}: ${(body || '').slice(0, 200)}`);
+    this.name = 'APIError';
+    this.status = status;
+    this.url = url;
+    this.body = body;
+  }
+}
+
 async function fetchJSON(path, init) {
   const url = path.startsWith('http') ? path : `${WMCDSS_API_BASE}${path}`;
   const resp = await fetch(url, init);
   if (!resp.ok) {
     const body = await resp.text().catch(() => '');
-    throw new Error(`API ${resp.status} ${url}: ${body.slice(0, 200)}`);
+    throw new APIError({ status: resp.status, url, body });
   }
   return resp.json();
 }
@@ -67,7 +78,7 @@ async function fetchLatestWeather(siteId) {
   try {
     return await fetchJSON(`/observations/weather/latest?site_id=${encodeURIComponent(siteId)}`);
   } catch (err) {
-    if (String(err.message).includes(' 404 ')) return null;
+    if (err instanceof APIError && err.status === 404) return null;
     throw err;
   }
 }
@@ -76,7 +87,7 @@ async function fetchLatestMarine(siteId) {
   try {
     return await fetchJSON(`/observations/marine/latest?site_id=${encodeURIComponent(siteId)}`);
   } catch (err) {
-    if (String(err.message).includes(' 404 ')) return null;
+    if (err instanceof APIError && err.status === 404) return null;
     throw err;
   }
 }
@@ -139,6 +150,7 @@ async function initFromBackend() {
 
 window.WMCDSS_API = {
   base: WMCDSS_API_BASE,
+  APIError,
   fetchJSON,
   fetchSitesFromBackend,
   fetchLatestWeather,
