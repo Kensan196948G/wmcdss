@@ -22,6 +22,13 @@ import {
   SiteRegisterPage,
   SiteDetailPage,
 } from './site-pages';
+import {
+  TweaksPanel,
+  TweakSection,
+  TweakRadio,
+  TweakToggle,
+} from './tweaks-panel';
+import type { TweakOption } from './tweaks-panel';
 
 export type PageId =
   | 'dashboard'
@@ -153,8 +160,13 @@ export function AppShell() {
   const [page, setPage] = useState<PageId>('dashboard');
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
   const [role, setRole] = useState<ShellRole>('field');
-  const [density] = useState<Density>('normal');
+  const [density, setDensity] = useState<Density>('normal');
+  const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [now, setNow] = useState<Date>(new Date());
+
+  const openTweaks = () => {
+    window.postMessage({ type: '__activate_edit_mode' }, '*');
+  };
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 60000);
@@ -216,7 +228,10 @@ export function AppShell() {
     selectedSite && (page === 'site-detail' || page === 'weather' || page === 'marine');
 
   return (
-    <div className={`app-layout ${density === 'compact' ? 'density-compact' : ''}`}>
+    <div
+      className={`app-layout ${density === 'compact' ? 'density-compact' : ''} ${theme === 'dark' ? 'theme-dark' : ''}`.trim()}
+      data-theme={theme}
+    >
       <nav className="sidebar">
         <div className="sidebar-logo">
           <div className="sidebar-logo-icon">WM</div>
@@ -282,15 +297,65 @@ export function AppShell() {
               <span className="badge-dot"></span> 中止 {dangerCount}
             </span>
             <span className="header-time">{formatTime(now)}</span>
+            <button
+              className="header-tweaks-btn"
+              type="button"
+              aria-label="表示設定を開く"
+              title="表示設定"
+              onClick={openTweaks}
+              style={{
+                background: 'transparent',
+                border: '1px solid rgba(0,0,0,0.12)',
+                borderRadius: 6,
+                padding: '4px 10px',
+                cursor: 'pointer',
+                fontSize: 14,
+                marginLeft: 8,
+              }}
+            >
+              ⚙
+            </button>
           </div>
         </header>
         <div className="content fade-in" key={page + (selectedSite || '')}>
           {renderPage()}
         </div>
       </div>
+
+      <TweaksPanel title="表示設定">
+        <TweakSection label="表示モード">
+          <TweakRadio<ShellRole>
+            label="ロール"
+            value={role}
+            options={ROLE_OPTIONS}
+            onChange={setRole}
+          />
+          <TweakRadio<Density>
+            label="情報密度"
+            value={density}
+            options={DENSITY_OPTIONS}
+            onChange={setDensity}
+          />
+          <TweakToggle
+            label="ダークモード"
+            value={theme === 'dark'}
+            onChange={(v) => setTheme(v ? 'dark' : 'light')}
+          />
+        </TweakSection>
+      </TweaksPanel>
     </div>
   );
 }
+
+const ROLE_OPTIONS: ReadonlyArray<TweakOption<ShellRole>> = [
+  { value: 'field', label: '現場' },
+  { value: 'hq', label: '本社' },
+];
+
+const DENSITY_OPTIONS: ReadonlyArray<TweakOption<Density>> = [
+  { value: 'normal', label: '標準' },
+  { value: 'compact', label: '詰めて表示' },
+];
 
 declare global {
   interface Window {
