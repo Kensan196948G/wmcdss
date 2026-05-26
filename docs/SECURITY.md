@@ -20,25 +20,47 @@
 # .env / 環境変数
 WMCDSS_API_KEYS=ops-prod-aaaa,ops-prod-bbbb
 WMCDSS_AUTH_REQUIRED_METHODS=POST,PATCH,PUT,DELETE
-WMCDSS_AUTH_EXEMPT_PATHS=/healthz,/readyz,/docs,/openapi.json,/
+WMCDSS_AUTH_EXEMPT_PATHS=/healthz,/readyz,/docs,/openapi.json
 ```
 
 - `api_keys` が **空のときは認証無効**（ローカル開発デフォルト）
 - 本番デプロイは少なくとも 1 キーを必ず設定する（ローテーション可能なように複数持つことを推奨）
+- ⚠️ `WMCDSS_AUTH_EXEMPT_PATHS` に `"/"` を **入れてはいけない** — §2.3 参照
 
-### 2.2 比較
+### 2.2 比較（hardened）
 
 ```python
+_MAX_KEY_LEN = 512  # CPU-amplification guard for compare_digest
+
 def _key_matches(presented: str, allowed: list[str]) -> bool:
+    # 1) 長さ上限: 攻撃者が極端に長い鍵を送って compare_digest の比較コストを
+    #    増幅させる DoS を遮断。
+    if len(presented) > _MAX_KEY_LEN:
+        return False
+    try:
+        # 2) bytes に明示変換: compare_digest は str 同士で非 ASCII が含まれると
+        #    TypeError を投げる。UTF-8 にエンコードして bytes 比較に統一。
+        presented_b = presented.encode("utf-8")
+    except (AttributeError, UnicodeError):
+        return False
     for k in allowed:
-        if hmac.compare_digest(presented, k):
-            return True
+        try:
+            if hmac.compare_digest(presented_b, k.encode("utf-8")):
+                return True
+        except (AttributeError, UnicodeError):
+            continue
     return False
 ```
 
 - `==` ではなく `hmac.compare_digest` を使うことで「先頭一致の長さ」から
   鍵の prefix を推測する **タイミング攻撃** を防ぐ。
 - 複数キーを許す設計は、ローテーション中に新旧 2 本を並行運用するため。
+- **`_MAX_KEY_LEN`**: 攻撃者は鍵を知らなくても巨大な `X-API-Key` を送って
+  比較処理を増幅できる。512 byte 上限で打ち切り、`compare_digest` に渡る
+  バイト列を有界化する（`test_key_matches_oversize_rejected` で回帰防止）。
+- **bytes 変換**: `hmac.compare_digest` は str 同士でも非 ASCII（例: `"鍵"`）が
+  含まれると `TypeError` を上げて 500 に化ける。UTF-8 にエンコードしてから渡し、
+  encode 失敗時は False で安全側に倒す（`test_key_matches_non_ascii_rejected_cleanly`）。
 
 ### 2.3 exempt 判定の罠
 

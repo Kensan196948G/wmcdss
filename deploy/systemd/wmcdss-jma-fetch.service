@@ -10,10 +10,11 @@ Type=oneshot
 # same Python env + DB connectivity as the API service.
 ExecStart=/usr/bin/docker compose -f %h/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.yml exec -T backend python -m app.jobs.ingest_jma
 
-# JMA's public endpoints are best-effort: don't paint the timer red on transient
-# upstream failures — the job already logs them and idempotent upserts will heal
-# any gaps on the next run.
-SuccessExitStatus=0 1
+# Post-hardening, ingest_jma.main() catches transient upstream errors internally
+# (4xx/5xx, timeouts, connection drops are tallied into audit detail and the job
+# still exits 0). Exit=1 now means an *unexpected* exception bubbled out — that
+# is a real failure systemd should surface as red, not mask. Do NOT re-add
+# `SuccessExitStatus=0 1` without removing the in-job tolerance first.
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7

@@ -31,3 +31,11 @@ state.json
 
 # Docker / DB volumes (mounted via named volumes; nothing local)
 pgdata/
+
+# Pre-project proposal documents (kept locally for reference, not source-of-truth).
+# Live design docs go under docs/. The 8.5MB sample HTML in particular must not
+# bloat the repo — extract the relevant UI snippets into docs/ if reused.
+/現場気象海象 自動集計・施工判断支援システム.md
+/現場気象海象 自動集計・施工判断支援システム.txt
+/現場気象海象 自動集計・施工判断支援システム提案資料.html
+/現場気象海象 自動集計・施工判断支援システム提案資料サンプルWebUI.html
