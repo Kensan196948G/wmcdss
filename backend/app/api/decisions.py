@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import actor_from
 from app.db.session import get_db
 from app.models.observations import WeatherObservation, MarineObservation
 from app.models.threshold import Threshold
@@ -13,10 +14,6 @@ from app.services.audit import write_audit
 from app.services.decision import ThresholdRule, evaluate
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
-
-
-def _actor(req: Request) -> str | None:
-    return req.headers.get("X-Actor") or req.headers.get("X-API-Key", "anonymous")
 
 
 async def _load_thresholds(db: AsyncSession, site_id, work_type: str) -> list[ThresholdRule]:
@@ -93,7 +90,7 @@ async def create_decision(
     # decision. The detail payload mirrors what a human would need to reconstruct
     # the decision after the fact (inputs snapshot, status, matched rules).
     await write_audit(
-        db, actor=_actor(request), action="decision.create",
+        db, actor=actor_from(request), action="decision.create",
         target_type="decision", target_id=str(decision.id),
         detail={
             "site_id": str(req.site_id),
@@ -107,6 +104,7 @@ async def create_decision(
             "inputs": inputs,
             "matched_rules": res.matched_rules,
         },
+        strict=True,
     )
     await db.commit()
     await db.refresh(decision)

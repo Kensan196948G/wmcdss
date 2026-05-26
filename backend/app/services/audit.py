@@ -24,13 +24,22 @@ async def write_audit(
     target_type: str | None = None,
     target_id: str | None = None,
     detail: dict[str, Any] | None = None,
+    strict: bool = False,
 ) -> None:
-    """Best-effort audit write.
+    """Audit write with selectable durability.
 
-    Only DB errors are swallowed (logged at ERROR so journal/Sentry catches a
-    sustained outage). Programming errors — e.g. an `AttributeError` from a
-    typo'd kwarg or a `TypeError` from wrong-shaped `detail` — propagate so
-    tests and dev catch them.
+    Default (`strict=False`): best-effort. DB errors are swallowed and logged
+    at ERROR so journal/Sentry catches sustained outages. Used for high-volume
+    ingest where losing an audit row is preferable to dropping the request.
+
+    `strict=True`: business-critical mutations (site/decision/threshold CRUD).
+    Re-raises `SQLAlchemyError` so the caller's `db.commit()` never runs and
+    the surrounding transaction rolls back — audit failure makes the business
+    write fail too. This is the atomic contract the API smoke tests pin.
+
+    Programming errors — e.g. an `AttributeError` from a typo'd kwarg or a
+    `TypeError` from wrong-shaped `detail` — always propagate so tests and
+    dev catch them.
     """
     try:
         row = AuditLog(
@@ -41,5 +50,7 @@ async def write_audit(
         db.add(row)
         await db.flush()
     except SQLAlchemyError as exc:
-        log.error("audit write failed action=%s target=%s/%s: %s",
-                  action, target_type, target_id, exc)
+        log.error("audit write failed action=%s target=%s/%s strict=%s: %s",
+                  action, target_type, target_id, strict, exc)
+        if strict:
+            raise

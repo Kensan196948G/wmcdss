@@ -22,6 +22,27 @@ log = logging.getLogger(__name__)
 # X-API-Key headers and bounds the bytes we pass to hmac.compare_digest.
 _MAX_KEY_LEN = 512
 
+# Actor field length cap mirrors AuditLog.actor column constraint. Trimming at
+# the boundary keeps DB writes from ever exploding into "X-Actor too long" 500s
+# and makes the audit table grep-friendly.
+_MAX_ACTOR_LEN = 64
+
+
+def actor_from(request: Request) -> str:
+    """Resolve the audit `actor` for a mutating request.
+
+    Only `X-Actor` is honoured. Falling back to `X-API-Key` would leak the
+    credential into `audit_log.actor`, which `GET /api/v1/audit` exposes
+    unauthenticated. When no `X-Actor` is supplied, "anonymous" is used and
+    a warning is logged so a sustained absence in production is visible.
+    """
+    raw = (request.headers.get("X-Actor") or "").strip()
+    if not raw:
+        log.warning("audit: %s %s missing X-Actor; recording actor=anonymous",
+                    request.method, request.url.path)
+        return "anonymous"
+    return raw[:_MAX_ACTOR_LEN]
+
 
 def _key_matches(presented: str, allowed: list[str]) -> bool:
     if not presented or len(presented) > _MAX_KEY_LEN:

@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import actor_from
 from app.db.session import get_db
 from app.models.observations import WeatherObservation, MarineObservation
 from app.schemas.observation import (
@@ -22,10 +23,6 @@ from app.schemas.observation import (
 from app.services.audit import write_audit
 
 router = APIRouter(prefix="/observations", tags=["observations"])
-
-
-def _actor(req: Request) -> str | None:
-    return req.headers.get("X-Actor") or req.headers.get("X-API-Key", "anonymous")
 
 
 async def _ingest(
@@ -70,7 +67,7 @@ async def ingest_weather(
         rows=rows,
     )
     await write_audit(
-        db, actor=_actor(request), action="observation.weather.ingest",
+        db, actor=actor_from(request), action="observation.weather.ingest",
         target_type="weather_observation", target_id=None,
         detail={"count": result.total},
     )
@@ -128,7 +125,7 @@ async def ingest_marine(
         rows=rows,
     )
     await write_audit(
-        db, actor=_actor(request), action="observation.marine.ingest",
+        db, actor=actor_from(request), action="observation.marine.ingest",
         target_type="marine_observation", target_id=None,
         detail={"count": result.total},
     )

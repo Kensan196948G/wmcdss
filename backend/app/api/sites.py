@@ -2,16 +2,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import actor_from
 from app.db.session import get_db
 from app.models.site import Site
 from app.schemas.site import SiteCreate, SiteOut
 from app.services.audit import write_audit
 
 router = APIRouter(prefix="/sites", tags=["sites"])
-
-
-def _actor(req: Request) -> str | None:
-    return req.headers.get("X-Actor") or req.headers.get("X-API-Key", "anonymous")
 
 
 @router.get("", response_model=list[SiteOut])
@@ -32,9 +29,10 @@ async def create_site(
     db.add(site)
     await db.flush()
     await write_audit(
-        db, actor=_actor(request), action="site.create",
+        db, actor=actor_from(request), action="site.create",
         target_type="site", target_id=str(site.id),
         detail=payload.model_dump(mode="json"),
+        strict=True,
     )
     await db.commit()
     await db.refresh(site)

@@ -14,16 +14,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.security import actor_from
 from app.db.session import get_db
 from app.models.threshold import Threshold
 from app.schemas.threshold import ThresholdCreate, ThresholdOut, ThresholdUpdate
 from app.services.audit import write_audit
 
 router = APIRouter(prefix="/thresholds", tags=["thresholds"])
-
-
-def _actor(req: Request) -> str | None:
-    return req.headers.get("X-Actor") or req.headers.get("X-API-Key", "anonymous")
 
 
 @router.get("", response_model=list[ThresholdOut])
@@ -65,9 +62,10 @@ async def create_threshold(
     db.add(row)
     await db.flush()
     await write_audit(
-        db, actor=_actor(request), action="threshold.create",
+        db, actor=actor_from(request), action="threshold.create",
         target_type="threshold", target_id=str(row.id),
         detail=payload.model_dump(mode="json"),
+        strict=True,
     )
     await db.commit()
     await db.refresh(row)
@@ -90,9 +88,10 @@ async def update_threshold(
         setattr(row, k, v)
 
     await write_audit(
-        db, actor=_actor(request), action="threshold.update",
+        db, actor=actor_from(request), action="threshold.update",
         target_type="threshold", target_id=str(row.id),
         detail={"changes": changes},
+        strict=True,
     )
     await db.commit()
     await db.refresh(row)
@@ -110,9 +109,10 @@ async def delete_threshold(
         raise HTTPException(404, "threshold not found")
     await db.delete(row)
     await write_audit(
-        db, actor=_actor(request), action="threshold.delete",
+        db, actor=actor_from(request), action="threshold.delete",
         target_type="threshold", target_id=str(threshold_id),
         detail=None,
+        strict=True,
     )
     await db.commit()
     return None

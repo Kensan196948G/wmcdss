@@ -4,7 +4,7 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
-最終更新: **2026-05-27**
+最終更新: **2026-05-27**（audit hardening 反映）
 リリース絶対期限: **2026-11-25** （登録から 6 ヶ月後 — CLAUDE.md 絶対厳守）
 残日数: **約 182 日（Month 1 中盤）**
 GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [Project v2 #29](https://github.com/users/Kensan196948G/projects/29) ／ [Milestone #1 Production Release](https://github.com/Kensan196948G/wmcdss/milestone/1)
@@ -29,7 +29,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 🐍 Backend API | 🟢 95% | `5c3f700` | OpenAPI スキーマ自動公開／レート制限 |
 | 🗄️ DB マイグレーション | 🟢 100% | `95a64d5` | 本番マイグレーションリハ未実施 |
 | ⏱️ JMA Ingester | 🟢 100% | `3ac56d6` | 実 timer での連続稼働ログ未取得 |
-| 🔐 Auth / Audit | 🟢 100% | `5c3f700` | 鍵ローテーション運用フロー未定 |
+| 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
 | 🖥️ Frontend | 🟡 80% | `3ac56d6` | バンドル化（Babel Standalone → Vite）／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 90% | `e163429` | 本番環境変数テンプレ未作成 |
 | 🤖 CI | 🟢 70% | `fc49421` | Node 20 deprecation (#3) ／ smoke verify ジョブ ／ Codex/CodeRabbit 連携 (#4) |
@@ -45,6 +45,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 2 | Improve | README に CI バッジ／API 表更新／テスト件数 23+9／STATUS.md 新設 | ✅ fc49421 |
 | 3 | Monitor → Build | git remote 設定／Issue 4 件生成／Project v2 #29 連携／Milestone #1 設定 | ✅ B1/B3 解消 |
 | 4 | Verify | CI run `26466286004` ✅ 28s — ruff + pytest both green | ✅ |
+| 5 | Improve | audit hardening — `_actor` API Key 漏洩除去／`write_audit(strict=True)` ／unit +9 (23→32) | ✅ |
 
 ---
 

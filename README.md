@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-23%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-32%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -149,10 +149,11 @@ docker compose exec backend pytest -q tests/
 | グループ | 件数 | 内容 |
 |---|---:|---|
 | ユニット（auth middleware） | 9 | API Key 認証・exempt パス・タイミング攻撃耐性・非 ASCII 鍵拒否・過大鍵 DoS 防御 |
+| ユニット（audit hardening） | 9 | actor_from の API Key 漏洩防止・write_audit strict モードの SQLAlchemyError 伝播 |
 | ユニット（JMA fetcher） | 7 | パース・品質フラグ・block ロールバック・QC-drop 検出 |
 | ユニット（decisions など） | 7 | 判定ロジック・閾値マージ |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **32** | ✅ unit 23/23 passing — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **41** | ✅ unit 32/32 passing — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 
