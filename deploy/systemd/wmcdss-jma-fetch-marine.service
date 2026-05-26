@@ -1,0 +1,22 @@
+[Unit]
+Description=WMCDSS - JMA wave nowcast ingester (one-shot)
+Documentation=https://www.jma.go.jp/bosai/
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs the marine job inside the same backend container as the API and the
+# AMeDAS ingester — shared Python env + DB pool.
+ExecStart=/usr/bin/docker compose -f %h/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.yml exec -T backend python -m app.jobs.ingest_jma_marine
+
+# Mirrors wmcdss-jma-fetch.service: ingest_jma_marine.main() catches transient
+# upstream errors and tallies them into audit detail; exit=1 means an
+# unexpected exception bubbled out. Keep these two units symmetric so that an
+# operator's mental model for one applies to the other.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target

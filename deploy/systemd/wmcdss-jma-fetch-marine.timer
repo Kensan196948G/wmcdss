@@ -1,0 +1,16 @@
+[Unit]
+Description=WMCDSS - run JMA wave nowcast ingester hourly
+Documentation=man:systemd.timer(5)
+
+[Timer]
+# JMA wave nowcast publishes hourly (not 10-min like AMeDAS). Fire 3 minutes
+# past each hour so the upstream file is reliably available — wave data is
+# generated from coastal radar + buoy fusion which lags raw observation.
+OnCalendar=*:03:00
+# If the system was off when a tick was due, run once at boot to catch up.
+Persistent=true
+AccuracySec=30s
+Unit=wmcdss-jma-fetch-marine.service
+
+[Install]
+WantedBy=timers.target

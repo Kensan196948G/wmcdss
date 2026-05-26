@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-32%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-41%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -34,7 +34,8 @@ flowchart LR
   end
 
   subgraph Host[サーバホスト]
-    T[systemd timer<br/>:0/10 min]
+    T1[systemd timer<br/>AMeDAS :0/10 min]
+    T2[systemd timer<br/>wave :03 hourly]
     subgraph DC[docker compose]
       B[FastAPI<br/>backend]
       D[(Postgres 16)]
@@ -45,9 +46,10 @@ flowchart LR
     F[React<br/>frontend]
   end
 
-  A1 --> T
-  A2 --> T
-  T -->|python -m app.jobs.ingest_jma| B
+  A1 --> T1
+  A2 --> T2
+  T1 -->|ingest_jma| B
+  T2 -->|ingest_jma_marine| B
   B --> D
   F -->|HTTP /api/v1| B
   B -->|JSON| F
@@ -71,7 +73,7 @@ flowchart LR
 | 🖥️ Frontend | React (Babel Standalone) | `frontend/` | ダッシュボード・現場/閾値管理画面 |
 | 🐍 Backend API | FastAPI + SQLAlchemy 2.0 async | `backend/app/` | 観測値・閾値・判定 REST API |
 | 🗄️ DB | PostgreSQL 16 | `db/migrations/` | 観測値・現場・閾値・監査ログ |
-| ⏱️ Ingester | httpx + systemd timer | `backend/app/jobs/ingest_jma.py`<br/>`deploy/systemd/` | JMA から定期取得 |
+| ⏱️ Ingester | httpx + systemd timer | `backend/app/jobs/ingest_jma{,_marine}.py`<br/>`deploy/systemd/` | AMeDAS（10 分毎）／wave nowcast（毎時）の 2 系統並走 |
 | 🔐 Auth | API Key middleware | `backend/app/core/security.py` | mutation エンドポイントを保護 |
 | 📜 Audit | Service-level audit writes | `backend/app/services/audit.py` | 変更の actor/detail を永続化 |
 
@@ -150,10 +152,11 @@ docker compose exec backend pytest -q tests/
 |---|---:|---|
 | ユニット（auth middleware） | 9 | API Key 認証・exempt パス・タイミング攻撃耐性・非 ASCII 鍵拒否・過大鍵 DoS 防御 |
 | ユニット（audit hardening） | 9 | actor_from の API Key 漏洩防止・write_audit strict モードの SQLAlchemyError 伝播 |
-| ユニット（JMA fetcher） | 7 | パース・品質フラグ・block ロールバック・QC-drop 検出 |
+| ユニット（JMA AMeDAS fetcher） | 7 | パース・品質フラグ・block ロールバック・QC-drop 検出 |
+| ユニット（JMA wave fetcher） | 9 | パース・grid snap・日跨ぎ fallback・5xx 伝播・sentinel 値除外・scalar/tuple 両対応 |
 | ユニット（decisions など） | 7 | 判定ロジック・閾値マージ |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **41** | ✅ unit 32/32 passing — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **50** | ✅ unit 41/41 passing — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 

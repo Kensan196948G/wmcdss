@@ -32,12 +32,14 @@ flowchart TB
   end
 
   subgraph JOB[Periodic jobs]
-    J[app/jobs/ingest_jma.py]
+    J1[app/jobs/ingest_jma.py<br/>AMeDAS 10min]
+    J2[app/jobs/ingest_jma_marine.py<br/>wave nowcast hourly]
   end
 
   API_JS -- HTTP JSON --> MW
   MDL --> DB
-  J --> MDL
+  J1 --> MDL
+  J2 --> MDL
 ```
 
 ## 2. データフロー（観測値 ingest）
@@ -158,7 +160,7 @@ flowchart TD
 
 ## 8. 既知の課題 / TODO
 
-- [ ] 波浪（marine）の ingester は AMeDAS と別エンドポイントなので別ジョブにする
+- [x] 波浪（marine）の ingester は AMeDAS と別エンドポイントなので別ジョブにする — **2026-05-27 実装済み** (`app/services/jma_wave.py` + `app/jobs/ingest_jma_marine.py` + hourly `wmcdss-jma-fetch-marine.timer`)。Issue #2 完。URL 実機検証は Month 5 pre-launch OPERATOR TODO として `jma_wave.py` 冒頭に明記
 - [ ] Decisions の閾値 OR-merge は now SQL でやっているが、メトリクスが増えたら view 化を検討
 - [ ] フロントは Babel Standalone（プロトタイプ）。本番化前にビルド導入
 - [x] CI（GitHub Actions）で pytest を回す — **2026-05-26 実装済み** (§9 参照)
