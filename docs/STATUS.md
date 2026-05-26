@@ -32,7 +32,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
 | 🖥️ Frontend | 🟡 80% | `3ac56d6` | バンドル化（Babel Standalone → Vite）／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 95% | `96aab85` | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
-| 🤖 CI | 🟢 100% | (pending) | Codex/CodeRabbit 連携 (#4) のみ。unit + smoke 二段ジョブ実装済み |
+| 🤖 CI | 🟢 100% | `6d7b200` | Codex/CodeRabbit 連携 (#4) のみ。unit + smoke 二段ジョブ green |
 | 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
 
 ---
@@ -50,7 +50,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 7 | Build | `.env.production.example` 新設＋`.gitignore` で `.env.production` 保護（B4 解消） | ✅ 96aab85 |
 | 8 | Build → Verify | marine ingester 分離（Issue #2）— `jma_wave` service + `ingest_jma_marine` job + hourly timer + unit テスト +9 件 (32→41)／CI run `26467717952` 28s green／Issue #2 closed | ✅ 3ebf8fa |
 | 9 | Build → Verify | RateLimitMiddleware 導入 — sliding window deque ／identity = `sha256(X-API-Key)[:16]` or IP ／CORS→RateLimit→APIKey の三段／unit +10 件 (41→51) all green ／CI run `26468154402` 30s green | ✅ b17aa2e |
-| 10 | Build | CI smoke verify ジョブ追加 — `backend-smoke` job が compose 起動 → `/readyz` ポーリング → `pytest tests/test_api_smoke.py` (9 件) を実行。`needs: backend-unit` で純関数 fail を先に弾く二段構え。ローカル smoke 9/9 0.18s green | ⏳ push pending |
+| 10 | Build → Verify | CI smoke verify ジョブ追加 — `backend-smoke` job が compose 起動 → `/readyz` ポーリング → `pytest tests/test_api_smoke.py` (9 件) を実行。`needs: backend-unit` で純関数 fail を先に弾く二段構え。初回 push で exit 127 (`pytest` 未インストール) → dev extras を container 内に layered install するステップ追加 → CI run `26468562824` で unit 23s + smoke 40s 双方 green | ✅ 6d7b200 |
 
 ---
 
@@ -70,6 +70,8 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 
 | SHA | 種別 | 内容 |
 |---|---|---|
+| `6d7b200` | ci | smoke job 内で dev extras を layered install（exit 127 修正） |
+| `847f11a` | ci | `backend-smoke` job 追加 — compose 起動 + `/readyz` ポーリング + smoke 9 件 |
 | `b17aa2e` | feat | RateLimitMiddleware — sliding window per identity (key hash / IP) ／tests +10 |
 | `3ebf8fa` | feat | marine ingester 分離（`jma_wave` service ＋ `ingest_jma_marine` job ＋ hourly timer ＋ tests +9）— Issue #2 closed |
 | `96aab85` | infra | `.env.production.example` 新設＋`.gitignore` 強化（B4 解消） |
