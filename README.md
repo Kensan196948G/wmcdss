@@ -5,7 +5,8 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-23%20unit%20%2B%207%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-23%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
 [![postgres](https://img.shields.io/badge/Postgres-16-336791)]()
@@ -82,7 +83,8 @@ flowchart LR
 |---|---|---|---|
 | `GET`  | `/healthz` `/readyz` | 不要 | プロセス/DB liveness |
 | `GET`  | `/api/v1/sites` | 不要 | 現場一覧 |
-| `POST` | `/api/v1/decisions` | 🔐 必要 | 期間内観測値から判定を計算 |
+| `POST` | `/api/v1/sites` | 🔐 必要 | 現場登録（`audit_log` に記録） |
+| `POST` | `/api/v1/decisions` | 🔐 必要 | 期間内観測値から判定を計算（`audit_log` に記録） |
 | `GET`  | `/api/v1/thresholds` | 不要 | site/work_type ごとの閾値（OR-merge） |
 | `POST` `PUT` `DELETE` | `/api/v1/thresholds` | 🔐 必要 | 閾値 CRUD |
 | `POST` | `/api/v1/observations/weather` | 🔐 必要 | AMeDAS 観測値の upsert（バッチ） |
@@ -149,8 +151,19 @@ docker compose exec backend pytest -q tests/
 | ユニット（auth middleware） | 9 | API Key 認証・exempt パス・タイミング攻撃耐性・非 ASCII 鍵拒否・過大鍵 DoS 防御 |
 | ユニット（JMA fetcher） | 7 | パース・品質フラグ・block ロールバック・QC-drop 検出 |
 | ユニット（decisions など） | 7 | 判定ロジック・閾値マージ |
-| API スモーク (要ライブ backend) | 7 | 起動中バックエンドに対する黒箱 |
-| **合計** | **30** | ✅ unit 23/23 passing — smoke は `docker compose up` 環境で別実行 |
+| API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
+| **合計** | **32** | ✅ unit 23/23 passing — smoke は `docker compose up` 環境で別実行 |
+
+### 🤖 継続的インテグレーション
+
+`push` / `pull_request` (→ `main`) で `.github/workflows/ci.yml` が起動し、以下を実行：
+
+| ステップ | コマンド | 失敗時の影響 |
+|---|---|---|
+| Lint | `ruff check .` | ❌ マージブロック |
+| ユニットテスト | `pytest -v --ignore=tests/test_api_smoke.py` | ❌ マージブロック |
+
+> 📝 smoke は docker-compose スタックを要求するため CI から除外し、Verify フェーズでローカル/ステージング上で走らせる二段構え。
 
 ---
 
@@ -169,9 +182,10 @@ docker compose exec backend pytest -q tests/
 
 ## 📚 ドキュメント
 
-- 🏛️ [アーキテクチャ](docs/ARCHITECTURE.md) — レイヤ構成・データフロー・採用判断
+- 🏛️ [アーキテクチャ](docs/ARCHITECTURE.md) — レイヤ構成・データフロー・採用判断・CI 二段構え
 - 🔐 [セキュリティ設計](docs/SECURITY.md) — 認証・監査・タイミング攻撃対策
 - 🛠️ [運用ガイド](deploy/systemd/README.md) — systemd timer のインストール
+- 📊 [プロジェクトステータス](docs/STATUS.md) — フェーズ進捗・残日数・ブロッカー（GitHub Projects 等価）
 
 ---
 

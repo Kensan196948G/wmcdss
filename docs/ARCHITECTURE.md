@@ -161,4 +161,38 @@ flowchart TD
 - [ ] 波浪（marine）の ingester は AMeDAS と別エンドポイントなので別ジョブにする
 - [ ] Decisions の閾値 OR-merge は now SQL でやっているが、メトリクスが増えたら view 化を検討
 - [ ] フロントは Babel Standalone（プロトタイプ）。本番化前にビルド導入
-- [ ] CI（GitHub Actions）で pytest を回す
+- [x] CI（GitHub Actions）で pytest を回す — **2026-05-26 実装済み** (§9 参照)
+
+## 9. CI / Verify の二段構え
+
+```mermaid
+flowchart LR
+  DEV[開発者 push / PR]
+  subgraph GA[GitHub Actions - .github/workflows/ci.yml]
+    L[ruff check .]
+    UT[pytest --ignore=tests/test_api_smoke.py]
+  end
+  subgraph LOCAL[ローカル / ステージング]
+    DC[docker compose up -d]
+    SMK[pytest tests/test_api_smoke.py]
+  end
+  REV[Codex review<br/>+ CodeRabbit review]
+  MRG[main へ merge]
+
+  DEV --> L --> UT
+  UT -- ✅ --> REV
+  UT -- ❌ --> DEV
+  DEV --> DC --> SMK
+  SMK -- ✅ --> REV
+  REV -- ✅ --> MRG
+```
+
+### 二段に分けた理由
+
+| ジョブ | 何を守るか | なぜ CI から smoke を外したか |
+|---|---|---|
+| ruff | スタイル退行・E701 のような構文クセ | 速く・依存ゼロで落とせる |
+| pytest（純関数） | ロジック退行 | DB なしで完結し、< 1 分で終わる |
+| pytest smoke（Verify 段） | 契約退行（audit detail key 欠落など） | docker compose の起動が必要で GA runner では割高 |
+
+smoke は `tests/test_api_smoke.py` で `target_id` の audit row を **件数厳密**に検証しており（`len(rows) == 1`）、ここを compose 環境のローカル/ステージングで通すことで `inputs` / `matched_rules` の永続化契約を保証する。
