@@ -32,7 +32,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
 | 🖥️ Frontend | 🟡 80% | `3ac56d6` | バンドル化（Babel Standalone → Vite）／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 90% | `e163429` | 本番環境変数テンプレ未作成 |
-| 🤖 CI | 🟢 70% | `fc49421` | Node 20 deprecation (#3) ／ smoke verify ジョブ ／ Codex/CodeRabbit 連携 (#4) |
+| 🤖 CI | 🟢 80% | `5c80fe7` | smoke verify ジョブ ／ Codex/CodeRabbit 連携 (#4) |
 | 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
 
 ---
@@ -46,6 +46,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 3 | Monitor → Build | git remote 設定／Issue 4 件生成／Project v2 #29 連携／Milestone #1 設定 | ✅ B1/B3 解消 |
 | 4 | Verify | CI run `26466286004` ✅ 28s — ruff + pytest both green | ✅ |
 | 5 | Improve | audit hardening — `_actor` API Key 漏洩除去／`write_audit(strict=True)` ／unit +9 (23→32) | ✅ |
+| 6 | Build → Verify | CI Node 20 deprecation — `checkout@v5`／`setup-python@v6`／run `26467039494` 23s green／Issue #3 closed | ✅ 5c80fe7 |
 
 ---
 
@@ -57,7 +58,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | B2 | Codex / CodeRabbit レビューはユーザ起動のみ | 🟡 待 | Issue [#4](https://github.com/Kensan196948G/wmcdss/issues/4) — `/codex:review` ＋ `/coderabbit:review` 起動依頼 |
 | B3 | AgentTeams 未活性化 | 🟡 部分解消 | 本セッションは個別 Agent 起動で代替中。`TeamCreate` 起動は CTO 判断で随時 |
 | B4 | 本番環境変数テンプレ未作成 | ⚪ 未着手 | `.env.production.example` を Month 4 までに作成 |
-| B5 | Node.js 20 deprecation (2026-09-16) | ⚪ 未着手 | Issue [#3](https://github.com/Kensan196948G/wmcdss/issues/3) — Month 4 までに対応 |
+| ~~B5~~ | Node.js 20 deprecation (2026-09-16) | ✅ 解消 | Issue [#3](https://github.com/Kensan196948G/wmcdss/issues/3) — `5c80fe7` で v5/v6 にバンプ済み |
 
 ---
 
@@ -65,6 +66,8 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 
 | SHA | 種別 | 内容 |
 |---|---|---|
+| `5c80fe7` | ci | checkout@v5 + setup-python@v6 へバンプ（Node 20 deprecation 解消） |
+| `24eb466` | harden | audit hardening — `_actor` API Key 漏洩除去＋`write_audit(strict=True)` |
 | `fc49421` | docs | STATUS.md 新設＋ARCHITECTURE.md §9 CI 二段構え |
 | `5c3f700` | feat | decision/site の audit 永続化＋オフライン CI gate |
 | `e163429` | docs | hardening 後の SECURITY/README/systemd 整合 |
