@@ -1,0 +1,303 @@
+import { useEffect, useRef, type FC } from 'react';
+import {
+  FORECAST_DAYS, SITES, STATUS_CLASS, STATUS_LABEL, TYPE_LABEL, WEATHER_ICONS,
+  generateMarine, generateWeather, getDecision,
+  type Site, type Status,
+} from './data';
+
+declare global {
+  interface Window {
+    L?: any;
+    DashboardPage?: typeof DashboardPage;
+    MapView?: typeof MapView;
+    SiteStatusCard?: typeof SiteStatusCard;
+    AlertBanner?: typeof AlertBanner;
+  }
+}
+declare const L: any;
+
+export interface MapViewProps {
+  sites: Site[];
+  onSiteClick?: (id: string) => void;
+  selectedSite?: string | null;
+}
+
+export const MapView: FC<MapViewProps> = ({ sites, onSiteClick }) => {
+  const mapRef = useRef<HTMLDivElement | null>(null);
+  const mapInst = useRef<any>(null);
+  const markersRef = useRef<any[]>([]);
+
+  useEffect(() => {
+    if (!mapRef.current || mapInst.current) return;
+    const map = L.map(mapRef.current, { zoomControl: false }).setView([35.48, 139.85], 10);
+    L.control.zoom({ position: 'topright' }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; OpenStreetMap contributors',
+      maxZoom: 18,
+    }).addTo(map);
+    mapInst.current = map;
+    setTimeout(() => map.invalidateSize(), 100);
+  }, []);
+
+  useEffect(() => {
+    const map = mapInst.current;
+    if (!map) return;
+    markersRef.current.forEach((m) => map.removeLayer(m));
+    markersRef.current = [];
+
+    const statusColor: Record<Status, string> = {
+      ok: '#1a8a4a', warn: '#c27a0e', danger: '#c0392b',
+    };
+
+    sites.forEach((site) => {
+      const color = statusColor[site.status] ?? '#2874a6';
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="
+          width:32px;height:32px;border-radius:50% 50% 50% 0;
+          background:${color};transform:rotate(-45deg);
+          display:flex;align-items:center;justify-content:center;
+          box-shadow:0 2px 8px rgba(0,0,0,0.3);border:2.5px solid #fff;
+          cursor:pointer;
+        "><span style="transform:rotate(45deg);color:#fff;font-size:12px;font-weight:700;">
+          ${site.type === 'land' ? '陸' : '海'}
+        </span></div>`,
+        iconSize: [32, 32],
+        iconAnchor: [16, 32],
+      });
+      const marker = L.marker([site.lat, site.lng], { icon }).addTo(map);
+      const w = generateWeather(site.id);
+      const m = generateMarine(site.id);
+      marker.bindPopup(`
+        <div style="min-width:180px;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px;">${site.shortName}</div>
+          <div style="font-size:12px;color:#4a5568;margin-bottom:4px;">${TYPE_LABEL[site.type]}</div>
+          <div style="display:flex;gap:12px;font-size:12px;margin-bottom:6px;">
+            <span>🌡${w.temp}℃</span><span>💨${w.wind}m/s</span>
+            ${m ? `<span>🌊${m.waveHeight}m</span>` : ''}
+          </div>
+          <div style="
+            display:inline-block;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:600;
+            background:${color}18;color:${color};border:1px solid ${color}40;
+          ">${STATUS_LABEL[site.status]}</div>
+        </div>
+      `, { closeButton: false });
+      marker.on('click', () => onSiteClick && onSiteClick(site.id));
+      markersRef.current.push(marker);
+    });
+  }, [sites, onSiteClick]);
+
+  return <div ref={mapRef} style={{ height: '100%', borderRadius: 'var(--radius-md)' }} />;
+};
+
+export interface SiteStatusCardProps {
+  site: Site;
+  onClick: (id: string) => void;
+  density?: 'normal' | 'compact';
+}
+
+export const SiteStatusCard: FC<SiteStatusCardProps> = ({ site, onClick, density }) => {
+  const w = generateWeather(site.id);
+  const m = generateMarine(site.id);
+  const decision = getDecision(site);
+  const waveLimit = site.thresholds.waveHeight;
+
+  return (
+    <div className="card" style={{ cursor: 'pointer', transition: 'box-shadow 0.15s' }}
+      onClick={() => onClick(site.id)}
+      onMouseOver={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-md)'; }}
+      onMouseOut={(e) => { (e.currentTarget as HTMLDivElement).style.boxShadow = 'var(--shadow-sm)'; }}>
+      <div className="card-body" style={{ padding: density === 'compact' ? '10px 14px' : '14px 18px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{site.shortName}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{TYPE_LABEL[site.type]}・{site.station}</div>
+          </div>
+          <span className={`badge ${STATUS_CLASS[decision.status]}`}>
+            <span className="badge-dot"></span>
+            {STATUS_LABEL[decision.status]}
+          </span>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>気温</div>
+            <div style={{ fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{w.temp}℃</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>風速</div>
+            <div style={{
+              fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+              color: w.wind > site.thresholds.windSpeed ? 'var(--status-danger)'
+                : w.wind > site.thresholds.windSpeed * 0.8 ? 'var(--status-warn)' : 'inherit',
+            }}>{w.wind}m/s</div>
+          </div>
+          {m && waveLimit !== null ? (
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>波高</div>
+              <div style={{
+                fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
+                color: m.waveHeight > waveLimit ? 'var(--status-danger)'
+                  : m.waveHeight > waveLimit * 0.8 ? 'var(--status-warn)' : 'inherit',
+              }}>{m.waveHeight}m</div>
+            </div>
+          ) : (
+            <div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>降水</div>
+              <div style={{ fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{w.rain}mm</div>
+            </div>
+          )}
+        </div>
+
+        <div className={`reason-text ${decision.status}`} style={{ marginTop: 0 }}>
+          {decision.reasons[0]}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export interface AlertBannerProps {
+  sites: Site[];
+}
+
+export const AlertBanner: FC<AlertBannerProps> = ({ sites }) => {
+  const dangerSites = sites.filter((s) => s.status === 'danger');
+  const warnSites = sites.filter((s) => s.status === 'warn');
+  if (dangerSites.length === 0 && warnSites.length === 0) return null;
+
+  return (
+    <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {dangerSites.map((s) => (
+        <div key={s.id} style={{
+          background: 'var(--status-danger-bg)', border: '1px solid var(--status-danger-border)',
+          borderRadius: 'var(--radius-md)', padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 13,
+        }}>
+          <span style={{ fontSize: 18 }}>⚠</span>
+          <span style={{ fontWeight: 600, color: 'var(--status-danger)' }}>中止推奨</span>
+          <span>{s.shortName} — {getDecision(s).reasons[0]}</span>
+        </div>
+      ))}
+      {warnSites.map((s) => (
+        <div key={s.id} style={{
+          background: 'var(--status-warn-bg)', border: '1px solid var(--status-warn-border)',
+          borderRadius: 'var(--radius-md)', padding: '10px 16px',
+          display: 'flex', alignItems: 'center', gap: 10, fontSize: 13,
+        }}>
+          <span style={{ fontSize: 18 }}>⚡</span>
+          <span style={{ fontWeight: 600, color: 'var(--status-warn)' }}>注意</span>
+          <span>{s.shortName} — {getDecision(s).reasons[0]}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+export interface DashboardPageProps {
+  navigate: (page: string, site?: string) => void;
+  density?: 'normal' | 'compact';
+}
+
+export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => {
+  const okCount = SITES.filter((s) => s.status === 'ok').length;
+  const warnCount = SITES.filter((s) => s.status === 'warn').length;
+  const dangerCount = SITES.filter((s) => s.status === 'danger').length;
+  const today = FORECAST_DAYS[0];
+
+  return (
+    <div>
+      <AlertBanner sites={SITES} />
+
+      <div className="grid-4 mb-16">
+        <div className="stat-card">
+          <div className="stat-label">管理現場数</div>
+          <div className="stat-value" style={{ color: 'var(--blue-500)' }}>{SITES.length}</div>
+          <div className="stat-sub">
+            陸上 {SITES.filter((s) => s.type === 'land').length} / 海上 {SITES.filter((s) => s.type === 'marine' || s.type === 'both').length}
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">施工可</div>
+          <div className="stat-value" style={{ color: 'var(--status-ok)' }}>{okCount}</div>
+          <div className="stat-sub">全項目基準値内</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">注意</div>
+          <div className="stat-value" style={{ color: 'var(--status-warn)' }}>{warnCount}</div>
+          <div className="stat-sub">基準値に接近中</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">中止推奨</div>
+          <div className="stat-value" style={{ color: 'var(--status-danger)' }}>{dangerCount}</div>
+          <div className="stat-sub">基準値超過</div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 16 }}>
+        <div className="card" style={{ overflow: 'hidden' }}>
+          <div className="card-header">
+            <span className="card-title">現場マップ — 東京湾岸エリア</span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              {today.weather} {WEATHER_ICONS[today.weather]} {today.tempL}〜{today.tempH}℃
+            </span>
+          </div>
+          <div style={{ height: 420 }}>
+            <MapView
+              sites={SITES}
+              onSiteClick={(id) => { navigate('site-detail', id); }}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 480, overflowY: 'auto' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', padding: '0 2px' }}>
+            現場ステータス（{SITES.length}件）
+          </div>
+          {SITES.map((site) => (
+            <SiteStatusCard key={site.id} site={site} density={density}
+              onClick={(id) => navigate('site-detail', id)} />
+          ))}
+        </div>
+      </div>
+
+      <div className="card mt-16">
+        <div className="card-header">
+          <span className="card-title">週間天気予報（東京）</span>
+        </div>
+        <div className="card-body">
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${FORECAST_DAYS.length}, 1fr)`, gap: 8, textAlign: 'center' }}>
+            {FORECAST_DAYS.map((d, i) => (
+              <div key={i} style={{
+                padding: '10px 4px', borderRadius: 'var(--radius-md)',
+                background: i === 0 ? 'var(--blue-50)' : 'transparent',
+                border: i === 0 ? '1px solid var(--blue-200)' : '1px solid transparent',
+              }}>
+                <div style={{
+                  fontSize: 12, fontWeight: 600, marginBottom: 4,
+                  color: i === 0 ? 'var(--blue-500)' : 'var(--text)',
+                }}>
+                  {d.date}
+                </div>
+                <div style={{ fontSize: 22, marginBottom: 4 }}>{WEATHER_ICONS[d.weather]}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 2 }}>{d.weather}</div>
+                <div style={{ fontSize: 12, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                  <span style={{ color: 'var(--status-danger)' }}>{d.tempH}°</span>
+                  <span style={{ color: 'var(--text-muted)', margin: '0 2px' }}>/</span>
+                  <span style={{ color: 'var(--blue-500)' }}>{d.tempL}°</span>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 4 }}>
+                  ☔{d.rain}% 💨{d.wind}m/s
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+if (typeof window !== 'undefined') {
+  Object.assign(window, { DashboardPage, MapView, SiteStatusCard, AlertBanner });
+}
