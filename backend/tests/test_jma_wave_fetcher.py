@@ -171,3 +171,79 @@ def test_snap_to_grid_rounds_to_nearest_005():
     assert jma_wave._snap_to_grid(139.7714) == pytest.approx(139.75)
     assert jma_wave._snap_to_grid(35.625) == pytest.approx(35.60) or \
            jma_wave._snap_to_grid(35.625) == pytest.approx(35.65)  # banker's rounding tolerance
+
+
+# ---------------------------------------------------------------------------
+# Error-propagation contract for fetch_latest (jma_wave.py:156-167).
+#
+# Horizontal mirror of test_jma_fetcher.py's Loop 42 block. The wave fetcher
+# documents the *same* policy as the AMeDAS fetcher in its docstring (404 →
+# fall through to yesterday; everything else raises), but only the 5xx arm
+# was previously pinned. 429/401/timeout/connect-error/empty-payload were
+# silently relying on jma.py's tests by analogy — that link breaks the
+# moment one module's policy diverges, so we pin wave explicitly here.
+# ---------------------------------------------------------------------------
+
+async def test_fetch_latest_raises_on_429(mock_client_factory):
+    # Same shape as 5xx (raise_for_status), but distinct operational meaning:
+    # JMA throttles aggressive polling and we MUST surface that to the
+    # scheduler so it can back off — not silently fall through to "yesterday".
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(429)
+
+    async with mock_client_factory(handler) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await jma_wave.fetch_latest(client, 35.0, 140.0)
+
+
+async def test_fetch_latest_raises_on_401(mock_client_factory):
+    # Wave nowcast is currently open, but the docstring's "OPERATOR TODO
+    # Month 5" leaves room for a future auth-required endpoint. Pin 401 now
+    # so that migration cannot silently degrade to "missing data".
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(401)
+
+    async with mock_client_factory(handler) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await jma_wave.fetch_latest(client, 35.0, 140.0)
+
+
+async def test_fetch_latest_propagates_timeout(mock_client_factory):
+    # client.get(..., timeout=10.0) — a hung JMA edge surfaces as ReadTimeout.
+    # MUST NOT be swallowed into the (0,-1) fallback; caller decides retry.
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("simulated read timeout", request=req)
+
+    async with mock_client_factory(handler) as client:
+        with pytest.raises(httpx.TimeoutException):
+            await jma_wave.fetch_latest(client, 35.0, 140.0)
+
+
+async def test_fetch_latest_propagates_connect_error(mock_client_factory):
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("simulated network failure", request=req)
+
+    async with mock_client_factory(handler) as client:
+        with pytest.raises(httpx.ConnectError):
+            await jma_wave.fetch_latest(client, 35.0, 140.0)
+
+
+async def test_fetch_latest_returns_none_when_both_blocks_empty_payload(mock_client_factory):
+    # Distinct from the 404 path above: 200 + {} means JMA has the file
+    # for this grid cell but no observations are published yet (the gap
+    # right after midnight JST before the first hourly tick). The (0,-1)
+    # loop must exhaust through *both* days and return None — not the
+    # empty {} from today.
+    calls: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(str(req.url))
+        return httpx.Response(200, json={})
+
+    async with mock_client_factory(handler) as client:
+        result = await jma_wave.fetch_latest(
+            client, 35.0, 140.0,
+            now=datetime(2026, 5, 26, 0, 5, tzinfo=timezone.utc),  # 09:05 JST
+        )
+    assert result is None
+    assert len(calls) == 2  # both today and yesterday were attempted
