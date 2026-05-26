@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-88%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-93%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -184,11 +184,11 @@ docker compose exec backend pytest -q tests/
 | ユニット（rate limit middleware） | 13 | sliding window・bucket 分離・window 期限切れ復活・exempt パス・identity hashing 漏洩防止／**FIFO identity eviction 3 件（Loop 41 — `_MAX_IDENTITIES=4096` の X-API-Key 量産 DoS 防壁を構造検証）** |
 | ユニット（audit hardening） | 9 | actor_from の API Key 漏洩防止・write_audit strict モードの SQLAlchemyError 伝播 |
 | ユニット（JMA AMeDAS fetcher） | 12 | パース・品質フラグ・block ロールバック・QC-drop 検出／**error-propagation 6 件（Loop 42 — 429/401/503 raise・ReadTimeout/ConnectError 伝播・両 block 200+空 body の None 返却を `httpx.MockTransport` handler raise 技法で構造 pin）** |
-| ユニット（JMA wave fetcher） | 9 | パース・grid snap・日跨ぎ fallback・5xx 伝播・sentinel 値除外・scalar/tuple 両対応 |
+| ユニット（JMA wave fetcher） | 14 | パース・grid snap・日跨ぎ fallback・sentinel 値除外・scalar/tuple 両対応／**error-propagation 5 件（Loop 43 — Loop 42 pattern を `jma_wave.py:148-167` に水平展開、5xx は既 pin で 429/401/ReadTimeout/ConnectError/両 day 200+空 body の 5 分岐を独立 pin）** |
 | ユニット（decisions） | 18 | 判定ロジック・閾値マージ・境界値・OR-merge 優先度・欠測補完（Loop 35 で 7 → 18 へ拡張） |
 | ユニット（OpenAPI exposure policy） | 4 | env スイッチで `/openapi.json`・`/docs`・`/redoc` を 404 化／無効でも `/healthz` ・`/` endpoints list は残る |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **97** | ✅ unit 88/88 passing — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **102** | ✅ unit 93/93 passing — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 
@@ -196,7 +196,7 @@ docker compose exec backend pytest -q tests/
 
 | ジョブ | ステップ | 並走 | 失敗時の影響 |
 |---|---|:--:|---|
-| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (88 件) | — | ❌ マージブロック |
+| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (93 件) | — | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | unit 後 | ❌ マージブロック |
 | `frontend-build` | `npm ci` (lockfile-pinned) ／ `npm run build` ／ bundle size 報告 | unit と並走 | ❌ マージブロック |
 | `frontend-docker` (Loop 38 追加) | `docker buildx build` で `frontend/vite-app/Dockerfile` を multi-stage build（host の `npm run build` では検出不能な Docker context-escape ／ nginx eager DNS を機械検出） | unit と並走 | ❌ マージブロック |
