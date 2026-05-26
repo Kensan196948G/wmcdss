@@ -91,6 +91,48 @@ def test_latest_404_for_unknown_site(client: httpx.Client) -> None:
     assert r.status_code == 404
 
 
+def test_decision_create_writes_audit(client: httpx.Client, site_id: str) -> None:
+    payload = {
+        "site_id": site_id,
+        "work_type": "_pytest",
+        "target_window_start": "2026-01-01T00:00:00Z",
+        "target_window_end":   "2026-01-01T06:00:00Z",
+    }
+    created = client.post("/api/v1/decisions", json=payload,
+                          headers={"X-Actor": "pytest"}).raise_for_status().json()
+    did = created["id"]
+
+    rows = client.get("/api/v1/audit", params={
+        "actor": "pytest", "action": "decision.create", "target_id": did, "limit": 1,
+    }).raise_for_status().json()
+    assert len(rows) == 1, "decision.create must produce exactly one audit row per POST"
+    detail = rows[0]["detail"]
+    assert detail["site_id"] == site_id
+    assert detail["work_type"] == "_pytest"
+    assert detail["status"] in {"go", "caution", "stop"}
+    assert "inputs" in detail and "matched_rules" in detail, \
+        "README contract: inputs snapshot + matched rules must be persisted for replay"
+
+
+def test_site_create_writes_audit(client: httpx.Client) -> None:
+    code = f"_pyt_{uuid.uuid4().hex[:8]}"
+    payload = {
+        "code": code, "name": "pytest audit site",
+        "kind": "land", "lat": 35.0, "lon": 139.0,
+    }
+    created = client.post("/api/v1/sites", json=payload,
+                          headers={"X-Actor": "pytest"}).raise_for_status().json()
+    sid = created["id"]
+
+    rows = client.get("/api/v1/audit", params={
+        "actor": "pytest", "action": "site.create", "target_id": sid, "limit": 1,
+    }).raise_for_status().json()
+    assert len(rows) == 1, "site.create must produce exactly one audit row per POST"
+    detail = rows[0]["detail"]
+    assert detail["code"] == code
+    assert detail["kind"] == "land"
+
+
 def test_audit_log_contains_recent_writes(client: httpx.Client) -> None:
     rows = client.get("/api/v1/audit", params={"limit": 50}).raise_for_status().json()
     assert isinstance(rows, list)

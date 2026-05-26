@@ -27,9 +27,13 @@ async def list_audit(
     t1 = t1 or datetime.now(timezone.utc)
     t0 = t0 or (t1 - timedelta(days=7))
     stmt = select(AuditLog).where(AuditLog.occurred_at.between(t0, t1))
-    if actor:       stmt = stmt.where(AuditLog.actor == actor)
-    if action:      stmt = stmt.where(AuditLog.action == action)
-    if target_type: stmt = stmt.where(AuditLog.target_type == target_type)
-    if target_id:   stmt = stmt.where(AuditLog.target_id == target_id)
+    if actor:
+        stmt = stmt.where(AuditLog.actor == actor)
+    if action:
+        stmt = stmt.where(AuditLog.action == action)
+    if target_type:
+        stmt = stmt.where(AuditLog.target_type == target_type)
+    if target_id:
+        stmt = stmt.where(AuditLog.target_id == target_id)
     stmt = stmt.order_by(AuditLog.occurred_at.desc()).limit(limit)
     return (await db.execute(stmt)).scalars().all()

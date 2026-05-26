@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,9 +9,14 @@ from app.models.observations import WeatherObservation, MarineObservation
 from app.models.threshold import Threshold
 from app.models.decision import Decision
 from app.schemas.decision import DecisionRequest, DecisionOut
+from app.services.audit import write_audit
 from app.services.decision import ThresholdRule, evaluate
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
+
+
+def _actor(req: Request) -> str | None:
+    return req.headers.get("X-Actor") or req.headers.get("X-API-Key", "anonymous")
 
 
 async def _load_thresholds(db: AsyncSession, site_id, work_type: str) -> list[ThresholdRule]:
@@ -59,7 +64,11 @@ async def _latest_inputs(db: AsyncSession, site_id, t0, t1) -> dict[str, float |
 
 
 @router.post("", response_model=DecisionOut)
-async def create_decision(req: DecisionRequest, db: AsyncSession = Depends(get_db)):
+async def create_decision(
+    req: DecisionRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
     if req.target_window_end <= req.target_window_start:
         raise HTTPException(400, "target_window_end must be after target_window_start")
 
@@ -78,6 +87,27 @@ async def create_decision(req: DecisionRequest, db: AsyncSession = Depends(get_d
         thresholds_snapshot={"rules": res.matched_rules},
     )
     db.add(decision)
+    await db.flush()
+
+    # Audit: README promises actor + inputs + judgement are persisted on every
+    # decision. The detail payload mirrors what a human would need to reconstruct
+    # the decision after the fact (inputs snapshot, status, matched rules).
+    await write_audit(
+        db, actor=_actor(request), action="decision.create",
+        target_type="decision", target_id=str(decision.id),
+        detail={
+            "site_id": str(req.site_id),
+            "work_type": req.work_type,
+            "window": {
+                "start": req.target_window_start.isoformat(),
+                "end": req.target_window_end.isoformat(),
+            },
+            "status": res.status,
+            "reason": res.reason,
+            "inputs": inputs,
+            "matched_rules": res.matched_rules,
+        },
+    )
     await db.commit()
     await db.refresh(decision)
     return decision
