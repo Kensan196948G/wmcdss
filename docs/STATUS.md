@@ -31,7 +31,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | ⏱️ JMA Ingester | 🟢 100% | `3ac56d6` | 実 timer での連続稼働ログ未取得 |
 | 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
 | 🖥️ Frontend | 🟡 80% | `3ac56d6` | バンドル化（Babel Standalone → Vite）／E2E |
-| 🛠️ Infra (compose / systemd) | 🟢 90% | `e163429` | 本番環境変数テンプレ未作成 |
+| 🛠️ Infra (compose / systemd) | 🟢 95% | (pending) | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
 | 🤖 CI | 🟢 80% | `5c80fe7` | smoke verify ジョブ ／ Codex/CodeRabbit 連携 (#4) |
 | 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
 
@@ -47,6 +47,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 4 | Verify | CI run `26466286004` ✅ 28s — ruff + pytest both green | ✅ |
 | 5 | Improve | audit hardening — `_actor` API Key 漏洩除去／`write_audit(strict=True)` ／unit +9 (23→32) | ✅ |
 | 6 | Build → Verify | CI Node 20 deprecation — `checkout@v5`／`setup-python@v6`／run `26467039494` 23s green／Issue #3 closed | ✅ 5c80fe7 |
+| 7 | Build | `.env.production.example` 新設＋`.gitignore` で `.env.production` 保護（B4 解消） | ✅ (pending) |
 
 ---
 
@@ -57,7 +58,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | ~~B1~~ | `git remote` 未設定 | ✅ 解消 | `Kensan196948G/wmcdss` private repo 作成・push 完了 (2026-05-26) |
 | B2 | Codex / CodeRabbit レビューはユーザ起動のみ | 🟡 待 | Issue [#4](https://github.com/Kensan196948G/wmcdss/issues/4) — `/codex:review` ＋ `/coderabbit:review` 起動依頼 |
 | B3 | AgentTeams 未活性化 | 🟡 部分解消 | 本セッションは個別 Agent 起動で代替中。`TeamCreate` 起動は CTO 判断で随時 |
-| B4 | 本番環境変数テンプレ未作成 | ⚪ 未着手 | `.env.production.example` を Month 4 までに作成 |
+| ~~B4~~ | 本番環境変数テンプレ未作成 | ✅ 解消 | `.env.production.example` 作成・`.gitignore` で `.env.production` 保護（Loop 7） |
 | ~~B5~~ | Node.js 20 deprecation (2026-09-16) | ✅ 解消 | Issue [#3](https://github.com/Kensan196948G/wmcdss/issues/3) — `5c80fe7` で v5/v6 にバンプ済み |
 
 ---
