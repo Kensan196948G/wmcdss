@@ -4,10 +4,14 @@
 
 ```mermaid
 flowchart TB
-  subgraph FE[Frontend - React 18]
+  subgraph FE[Frontend - React 18 + Vite 6]
     UI[Dashboards / Admin pages]
-    API_JS[api.jsx adapter]
-    UI --> API_JS
+    API_TS[src/api.ts adapter]
+    UI --> API_TS
+  end
+
+  subgraph EDGE[Edge - nginx 1.27-alpine]
+    NX[Vite 静的配信 ＋<br/>/api/ reverse proxy<br/>resolver lazy DNS]
   end
 
   subgraph BE[Backend - FastAPI]
@@ -15,7 +19,7 @@ flowchart TB
     SCH[Schemas<br/>Pydantic v2]
     SVC[Services<br/>decision / audit / jma]
     MDL[Models<br/>SQLAlchemy 2.0 async]
-    MW[Middleware<br/>APIKey + CORS]
+    MW[Middleware<br/>APIKey + RateLimit + CORS]
     R --> SCH
     R --> SVC
     SVC --> MDL
@@ -36,7 +40,8 @@ flowchart TB
     J2[app/jobs/ingest_jma_marine.py<br/>wave nowcast hourly]
   end
 
-  API_JS -- HTTP JSON --> MW
+  API_TS -- HTTP JSON --> NX
+  NX -- /api/ proxy --> MW
   MDL --> DB
   J1 --> MDL
   J2 --> MDL
