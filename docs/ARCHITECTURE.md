@@ -197,7 +197,7 @@ CORS → RateLimit → APIKey になり、ねらいは:
 
 - [x] 波浪（marine）の ingester は AMeDAS と別エンドポイントなので別ジョブにする — **2026-05-27 実装済み** (`app/services/jma_wave.py` + `app/jobs/ingest_jma_marine.py` + hourly `wmcdss-jma-fetch-marine.timer`)。Issue #2 完。URL 実機検証は Month 5 pre-launch OPERATOR TODO として `jma_wave.py` 冒頭に明記
 - [ ] Decisions の閾値 OR-merge は now SQL でやっているが、メトリクスが増えたら view 化を検討
-- [ ] フロントは Babel Standalone（プロトタイプ）。本番化前にビルド導入
+- [x] フロントは Babel Standalone（プロトタイプ）。本番化前にビルド導入 — **2026-05-27 実装済み** (Phase 1 で 15 ページ全 ESM port 完 → Phase 2 入口 Loop 26 で `frontend/vite-app/index.html` を本番 entry 化、Loop 27 で `<MockBanner />` safety parity 回復。`frontend/index.html` は並行稼働 fallback として残存。本番投入判定は CTO 判断 — `docs/STATUS.md` Loop 25-27 参照)
 - [x] CI（GitHub Actions）で pytest を回す — **2026-05-26 実装済み** (§9 参照)
 
 ## 9. CI 二段ジョブ構成

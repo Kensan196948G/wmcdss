@@ -70,7 +70,7 @@ flowchart LR
 
 | レイヤ | 技術 | パス | 役割 |
 |---|---|---|---|
-| 🖥️ Frontend | React (Babel Standalone) | `frontend/` | ダッシュボード・現場/閾値管理画面 |
+| 🖥️ Frontend | React 18 + Vite 6 + TypeScript（**Phase 2 入口着地**）<br/>React + Babel Standalone（並行稼働 fallback） | `frontend/vite-app/`（primary）<br/>`frontend/`（fallback） | ダッシュボード・現場/閾値管理画面（mock 警告帯付き） |
 | 🐍 Backend API | FastAPI + SQLAlchemy 2.0 async | `backend/app/` | 観測値・閾値・判定 REST API |
 | 🗄️ DB | PostgreSQL 16 | `db/migrations/` | 観測値・現場・閾値・監査ログ |
 | ⏱️ Ingester | httpx + systemd timer | `backend/app/jobs/ingest_jma{,_marine}.py`<br/>`deploy/systemd/` | AMeDAS（10 分毎）／wave nowcast（毎時）の 2 系統並走 |
@@ -118,20 +118,25 @@ curl -s http://localhost:8003/healthz
 open frontend/index.html   # window.WMCDSS_API_BASE は同ホスト :8003 自動推定
 ```
 
-### 🆕 Vite ビルド（Phase 1, ESM 移植進行中）
+### 🆕 Vite ビルド（**Phase 2 入口着地・並行稼働中**）
 
-本番ダッシュボードは引き続き上記の Babel Standalone で配信されます。
-`frontend/vite-app/src/` には **Phase 1 で順次 ES module 化した移植版**が並走しています：
+`frontend/vite-app/` は **Phase 1（ESM port 全 15 ページ完了）→ Phase 2 入口 (Loop 26 で本番 entry 化、Loop 27 で safety parity 回復)** まで進み、Babel Standalone 系統（`frontend/index.html`）と **二系統並行稼働**しています。本番投入判定は CTO 判断。
 
 - ✅ `src/api.ts` — `../api.jsx` の ESM/TS 版（named exports ＋ `window.WMCDSS_API` 副作用維持）
-- ⏳ `src/*.tsx` — `../{app,dashboard,decisions,site-pages,...}.jsx` の移植は順次
+- ✅ `src/app-shell.tsx` — root sidebar + header + 15-page router（`PageId` 15-member literal union ＋ exhaustive `Record<PageId, string>`）
+- ✅ `src/{dashboard,decisions,weather-marine,analysis,site-pages,admin-pages,concrete-marine-work,charts,data}.tsx` — 全 15 ページ ESM port 完
+- ✅ `src/main.tsx` — `WMCDSS_API.initFromBackend()` を `.finally(render)` chain で先行実行 ＋ inline `<MockBanner />` で `window.BACKEND_STATUS?.ok` 未接続時に「施工判断には使用しないでください」赤帯表示（legacy index.html Root と意味論一致）
+- ✅ `index.html` — Leaflet 1.9.4 CDN + SRI integrity 転写、`<script type="module" src="/src/main.tsx">`
+- ⏳ `src/tweaks-panel.tsx`（design knobs）— Phase 2 後段で ESM 化予定
 
 ```bash
 cd frontend/vite-app
-npm install                     # Vite 6 + React 18 + TS
+npm ci                          # Vite 6 + React 18 + TS（lockfile-pinned, CI と同手順）
 npm run dev                     # HMR dev server → http://localhost:5173
-npm run build                   # → dist/   (検証済: 27 modules, gzip ~48 kB)
+npm run build                   # → dist/   (Loop 27 時点: 35 modules, gzip ~69 kB)
 ```
+
+> 🛡️ **safety parity**: バックエンド未接続時は赤帯 `<div role="alert">` が render される構造ガード (`main.tsx:MockBanner`)。`initFromBackend()` reject 経路でも `.finally(render)` で必ず render し、「白画面 + ユーザが mock を実データと誤認」事故を構造遮断。
 
 ### 環境変数（主なもの）
 
