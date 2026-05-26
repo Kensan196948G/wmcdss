@@ -31,7 +31,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | ⏱️ JMA Ingester | 🟢 100% | `3ac56d6` | 実 timer での連続稼働ログ未取得 |
 | 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
 | 🖥️ Frontend | 🟡 80% | `3ac56d6` | バンドル化（Babel Standalone → Vite）／E2E |
-| 🛠️ Infra (compose / systemd) | 🟢 95% | (pending) | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
+| 🛠️ Infra (compose / systemd) | 🟢 95% | `96aab85` | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
 | 🤖 CI | 🟢 80% | `5c80fe7` | smoke verify ジョブ ／ Codex/CodeRabbit 連携 (#4) |
 | 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
 
@@ -47,7 +47,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 4 | Verify | CI run `26466286004` ✅ 28s — ruff + pytest both green | ✅ |
 | 5 | Improve | audit hardening — `_actor` API Key 漏洩除去／`write_audit(strict=True)` ／unit +9 (23→32) | ✅ |
 | 6 | Build → Verify | CI Node 20 deprecation — `checkout@v5`／`setup-python@v6`／run `26467039494` 23s green／Issue #3 closed | ✅ 5c80fe7 |
-| 7 | Build | `.env.production.example` 新設＋`.gitignore` で `.env.production` 保護（B4 解消） | ✅ (pending) |
+| 7 | Build | `.env.production.example` 新設＋`.gitignore` で `.env.production` 保護（B4 解消） | ✅ 96aab85 |
 
 ---
 
