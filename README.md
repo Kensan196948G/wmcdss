@@ -6,7 +6,7 @@
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
 [![tests](https://img.shields.io/badge/tests-55%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
-[![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest-2088FF)](.github/workflows/ci.yml)
+[![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vite-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
 [![postgres](https://img.shields.io/badge/Postgres-16-336791)]()
@@ -178,14 +178,15 @@ docker compose exec backend pytest -q tests/
 
 ### 🤖 継続的インテグレーション
 
-`push` / `pull_request` (→ `main`) で `.github/workflows/ci.yml` が **二段ジョブ**として起動：
+`push` / `pull_request` (→ `main`) で `.github/workflows/ci.yml` が **三段ジョブ**として起動：
 
-| ジョブ | ステップ | 失敗時の影響 |
-|---|---|---|
-| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` | ❌ マージブロック |
-| `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | ❌ マージブロック |
+| ジョブ | ステップ | 並走 | 失敗時の影響 |
+|---|---|:--:|---|
+| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` | — | ❌ マージブロック |
+| `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | unit 後 | ❌ マージブロック |
+| `frontend-build` | `npm ci` (lockfile-pinned) ／ `npm run build` ／ bundle size 報告 | unit と並走 | ❌ マージブロック |
 
-> 📝 unit を先に落とすことで、compose 起動 (〜90s) のコストを回帰の早期発見と引き換えに最小化。smoke は同じコマンドでローカルでも再現可能 (`docker compose exec backend pytest tests/test_api_smoke.py`)。
+> 📝 unit を先に落とすことで、compose 起動 (〜90s) のコストを回帰の早期発見と引き換えに最小化。`frontend-build` は `backend-unit` と並走し、壁時計時間に影響しない (実測: frontend 9s ／ unit 26s ／ smoke 40s = wall ~66s)。smoke は同じコマンドでローカルでも再現可能 (`docker compose exec backend pytest tests/test_api_smoke.py`)。
 
 ---
 

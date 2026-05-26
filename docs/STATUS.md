@@ -4,7 +4,7 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
-最終更新: **2026-05-27**（Vite scaffold Phase 0 着地 — Loop 12 完）
+最終更新: **2026-05-27**（CI 三段ジョブ化 — Loop 13 完）
 リリース絶対期限: **2026-11-25** （登録から 6 ヶ月後 — CLAUDE.md 絶対厳守）
 残日数: **約 182 日（Month 1 中盤）**
 GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [Project v2 #29](https://github.com/users/Kensan196948G/projects/29) ／ [Milestone #1 Production Release](https://github.com/Kensan196948G/wmcdss/milestone/1)
@@ -32,7 +32,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
 | 🖥️ Frontend | 🟡 85% | `dc89b0b` | Vite scaffold ✅（Phase 0）／.jsx → ESM 移植（Phase 1）／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 95% | `96aab85` | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
-| 🤖 CI | 🟢 100% | `6d7b200` | Codex/CodeRabbit 連携 (#4) のみ。unit + smoke 二段ジョブ green |
+| 🤖 CI | 🟢 100% | `d1978ed` | 三段ジョブ (unit + smoke + frontend-build) all green。Codex/CodeRabbit 連携 (#4) のみ残課題 |
 | 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
 
 ---
@@ -53,6 +53,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 10 | Build → Verify | CI smoke verify ジョブ追加 — `backend-smoke` job が compose 起動 → `/readyz` ポーリング → `pytest tests/test_api_smoke.py` (9 件) を実行。`needs: backend-unit` で純関数 fail を先に弾く二段構え。初回 push で exit 127 (`pytest` 未インストール) → dev extras を container 内に layered install するステップ追加 → CI run `26468562824` で unit 23s + smoke 40s 双方 green | ✅ 6d7b200 |
 | 11 | Build → Verify | OpenAPI 本番公開ポリシー — `WMCDSS_EXPOSE_OPENAPI` (default true) ／false で `openapi_url=docs_url=redoc_url=None` を渡し `/openapi.json`・`/docs`・`/redoc` を 404 化。「dev open, prod locked」を `api_keys=[]` と同様の env スイッチで実装。unit +4 件 (51→55) — default-on / disabled / `/healthz` 残存 / `/` endpoints list 残存 を分離検証。`importlib.reload(main_mod)` で FastAPI ctor の `openapi_url` 固定をフィクスチャで覆す構造。CI run `26468982461` unit 24s + smoke 48s 双方 green | ✅ 3dce51d |
 | 12 | Build | Vite Phase 0 scaffold (#1) — `frontend/vite-app/` に React 18 + Vite 6 + TS の toolchain を作成。既存 Babel Standalone (`frontend/index.html`) は無傷で fallback として残す方針。`npm run build` 検証: 26 modules transformed → **gzip 46.67 kB / 568ms**（既存構成は babel.min.js だけで ~3MB ロード）。`.gitignore` で node_modules + dist 除外、`package-lock.json` は commit して Phase 1 CI で再現可能性を担保。Phase 1 で `../*.jsx` を ES module として移植予定 | ✅ dc89b0b |
+| 13 | Build → Verify | CI `frontend-build` ジョブ追加 — Phase 1 で `.jsx` を ESM 化する前に **gating を先に整備**。Node 22 + `npm ci` (lockfile-pinned) + `npm run build`。`needs:` なしで `backend-unit` と並走 → 壁時計時間据え置き。CI run `26469645882` で **frontend 9s ／ unit 26s ／ smoke 40s** all green。CI 産出物 `index-CkP53_s4.js` がローカルビルドとハッシュ一致 → reproducibility 確認済み。**新規 deprecation 警告: `actions/setup-node@v4` 内部 Node 20 runtime (2026-09-16 削除)** — Loop 14 で `@v5` 検証予定 (B6 候補) | ✅ d1978ed |
 
 ---
 
@@ -65,6 +66,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | B3 | AgentTeams 未活性化 | 🟡 部分解消 | 本セッションは個別 Agent 起動で代替中。`TeamCreate` 起動は CTO 判断で随時 |
 | ~~B4~~ | 本番環境変数テンプレ未作成 | ✅ 解消 | `.env.production.example` 作成・`.gitignore` で `.env.production` 保護（Loop 7） |
 | ~~B5~~ | Node.js 20 deprecation (2026-09-16) | ✅ 解消 | Issue [#3](https://github.com/Kensan196948G/wmcdss/issues/3) — `5c80fe7` で v5/v6 にバンプ済み |
+| B6 | `actions/setup-node@v4` 内部 Node 20 runtime (2026-09-16 削除予定) | 🟡 監視 | Loop 13 CI ログで再警告検出。`@v5` が GA 済みか確認の上、Loop 14 でバンプ予定 |
 
 ---
 
@@ -72,6 +74,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 
 | SHA | 種別 | 内容 |
 |---|---|---|
+| `d1978ed` | ci | `frontend-build` ジョブ追加 — Node 22 + `npm ci` + Vite build ／並走で wall-clock 据え置き ／run `26469645882` green |
 | `dc89b0b` | feat | Vite Phase 0 scaffold — `frontend/vite-app/` ／React 18 + Vite 6 + TS ／gzip 46.67 kB build verified |
 | `3dce51d` | feat | OpenAPI exposure env-gated — `WMCDSS_EXPOSE_OPENAPI=false` で /docs・/redoc・/openapi.json を 404 ／tests +4 |
 | `6d7b200` | ci | smoke job 内で dev extras を layered install（exit 127 修正） |
