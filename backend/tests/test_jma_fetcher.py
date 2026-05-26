@@ -123,3 +123,84 @@ def test_normalise_wind_direction_mapping():
         site_id="00000000-0000-0000-0000-000000000001",
     )
     assert out["wind_dir_deg"] == 90.0
+
+
+# ---------------------------------------------------------------------------
+# Error-propagation contract for fetch_latest (jma.py:127-133).
+#
+# 404 is the only status that is allowed to fall through to the -3h block.
+# Every other failure mode (auth, rate-limit, 5xx, timeout, network) MUST
+# raise — silent swallow would surface as "no observation" downstream and
+# mask real backend incidents. These tests pin that contract structurally
+# so a future "let's just return None on errors" refactor fails loudly.
+# ---------------------------------------------------------------------------
+
+async def test_fetch_latest_raises_on_429(mock_client_factory):
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(429)
+
+    async with mock_client_factory(handler) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await jma.fetch_latest(client, "44132")
+
+
+async def test_fetch_latest_raises_on_401(mock_client_factory):
+    # 401/403 are the same shape as 429 from raise_for_status' perspective,
+    # but they have distinct operational meanings (key revoked vs throttled).
+    # We pin 401 separately so a "treat 4xx uniformly" refactor stays honest.
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(401)
+
+    async with mock_client_factory(handler) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await jma.fetch_latest(client, "44132")
+
+
+async def test_fetch_latest_raises_on_5xx(mock_client_factory):
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    async with mock_client_factory(handler) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await jma.fetch_latest(client, "44132")
+
+
+async def test_fetch_latest_propagates_timeout(mock_client_factory):
+    # The client is called with timeout=10.0 — a ReadTimeout from httpx is
+    # the realistic shape of a hung JMA edge node. It must NOT be caught
+    # and turned into a fallback attempt; the caller decides retry policy.
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("simulated read timeout", request=req)
+
+    async with mock_client_factory(handler) as client:
+        with pytest.raises(httpx.TimeoutException):
+            await jma.fetch_latest(client, "44132")
+
+
+async def test_fetch_latest_propagates_connect_error(mock_client_factory):
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("simulated network failure", request=req)
+
+    async with mock_client_factory(handler) as client:
+        with pytest.raises(httpx.ConnectError):
+            await jma.fetch_latest(client, "44132")
+
+
+async def test_fetch_latest_returns_none_when_both_blocks_empty_payload(mock_client_factory):
+    # Distinct from the 404 path above: a 200 with an empty body means JMA
+    # has the file but no observations are published yet (e.g., during the
+    # publish gap right after a 3h block boundary). The (0,-3) loop must
+    # exhaust through *both* arms and return None — not return the empty {}.
+    calls: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(str(req.url))
+        return httpx.Response(200, json={})
+
+    async with mock_client_factory(handler) as client:
+        result = await jma.fetch_latest(
+            client, "44132",
+            now=datetime(2026, 5, 26, 3, 5, tzinfo=timezone.utc),
+        )
+    assert result is None
+    assert len(calls) == 2  # both current and -3h blocks were attempted
