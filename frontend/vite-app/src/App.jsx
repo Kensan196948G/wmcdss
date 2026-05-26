@@ -5,15 +5,17 @@ import { ConcretePage } from './decisions';
 import { DashboardPage } from './dashboard';
 import { WeatherPage } from './weather-marine';
 import { HistoricalPage } from './analysis';
+import { ThresholdsPage } from './admin-pages';
 
 // Side-effect imports: api.ts, charts.tsx, data.ts, decisions.tsx,
-// dashboard.tsx, weather-marine.tsx, and analysis.tsx assign window.* globals
-// on load. The named imports above pin each module into the bundle so Rollup
-// keeps them instead of tree-shaking the side effects away.
+// dashboard.tsx, weather-marine.tsx, analysis.tsx, and admin-pages.tsx assign
+// window.* globals on load. The named imports above pin each module into the
+// bundle so Rollup keeps them instead of tree-shaking the side effects away.
 void ConcretePage;
 void DashboardPage;
 void WeatherPage;
 void HistoricalPage;
+void ThresholdsPage;
 
 export function App() {
   return (
@@ -25,7 +27,7 @@ export function App() {
       color: '#1f2937',
     }}>
       <h1 style={{ marginBottom: 8 }}>WMCDSS — Vite scaffold</h1>
-      <p style={{ color: '#6b7280', marginTop: 0 }}>Phase 1 (api.ts + charts.tsx + data.ts + decisions.tsx + dashboard.tsx + weather-marine.tsx + analysis.tsx ESM port).</p>
+      <p style={{ color: '#6b7280', marginTop: 0 }}>Phase 1 (api.ts + charts.tsx + data.ts + decisions.tsx + dashboard.tsx + weather-marine.tsx + analysis.tsx + admin-pages.tsx ESM port).</p>
       <section style={{
         background: '#fef3c7',
         border: '1px solid #fbbf24',
@@ -56,7 +58,10 @@ export function App() {
           <code>window.LineChart</code> / <code>window.SITES</code> /
           <code>window.ConcretePage</code> / <code>window.DashboardPage</code> /
           <code>window.WeatherPage</code> / <code>window.MarinePage</code> /
-          <code>window.HistoricalPage</code> / <code>window.Wave50Page</code> etc.)
+          <code>window.HistoricalPage</code> / <code>window.Wave50Page</code> /
+          <code>window.ThresholdsPage</code> / <code>window.EtlPage</code> /
+          <code>window.ReportsPage</code> / <code>window.AuditPage</code> /
+          <code>window.SettingsPage</code> etc.)
         </div>
       </section>
     </main>
