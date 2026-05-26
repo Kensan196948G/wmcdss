@@ -39,5 +39,16 @@ services:
       - "0.0.0.0:8003:8000"
     restart: unless-stopped
 
+  frontend:
+    build:
+      context: ./frontend/vite-app
+      dockerfile: Dockerfile
+    container_name: wmcdss-frontend
+    depends_on:
+      - backend
+    ports:
+      - "0.0.0.0:8080:80"
+    restart: unless-stopped
+
 volumes:
   wmcdss_pgdata:
