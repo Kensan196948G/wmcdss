@@ -8,6 +8,12 @@ class Settings(BaseSettings):
     app_name: str = "Weather-Marine Construction DSS"
     debug: bool = False
 
+    # OpenAPI surface. True (dev default) exposes /docs, /redoc, /openapi.json.
+    # Production typically sets WMCDSS_EXPOSE_OPENAPI=false so the schema is
+    # not crawlable by anyone who reaches the public host. Same "open by
+    # default, locked by env in prod" stance as `api_keys`.
+    expose_openapi: bool = True
+
     database_url: str = "postgresql+asyncpg://wmcdss:wmcdss@localhost:5432/wmcdss"
 
     cors_origins: list[str] = [

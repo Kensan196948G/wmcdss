@@ -8,7 +8,15 @@ from app.api import health, sites, decisions, thresholds, observations, audit
 
 settings = get_settings()
 
-app = FastAPI(title=settings.app_name, version="0.1.0")
+# OpenAPI exposure is env-controlled. Passing `openapi_url=None` removes the
+# schema endpoint itself, which in turn makes /docs and /redoc 404 naturally —
+# no need to also null those out explicitly, but doing so keeps the intent
+# obvious to a future reader scanning main.py.
+_fastapi_kwargs: dict = {"title": settings.app_name, "version": "0.1.0"}
+if not settings.expose_openapi:
+    _fastapi_kwargs.update(openapi_url=None, docs_url=None, redoc_url=None)
+
+app = FastAPI(**_fastapi_kwargs)
 
 # Order matters: Starlette runs the *last-added* middleware first, so the
 # effective request flow is CORS → RateLimit → APIKey → route.
