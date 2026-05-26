@@ -26,6 +26,16 @@ class Settings(BaseSettings):
     # auth_required_methods; listing "/" makes _exempt() refactors risky.
     auth_exempt_paths: list[str] = ["/healthz", "/readyz", "/docs", "/openapi.json"]
 
+    # Rate limit: sliding window per identity (X-API-Key hash or client IP).
+    # 0 = disabled (dev default; production sets e.g. 60). Applies to the same
+    # mutation methods as auth so reads stay open for dashboards.
+    rate_limit_per_minute: int = 0
+    rate_limit_methods: list[str] = ["POST", "PATCH", "PUT", "DELETE"]
+    # Health/ready probes must never 429 or systemd/k8s would mark the service
+    # unhealthy under load. Kept separate from `auth_exempt_paths` because the
+    # threat models diverge (auth-exempt ≠ should-bypass-DoS-protection).
+    rate_limit_exempt_paths: list[str] = ["/healthz", "/readyz"]
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -125,6 +125,41 @@ flowchart TD
 | exempt の `"/"` | ルートだけ完全一致のみ | 素朴な prefix マッチだと `/api/v1/...` まで全部素通りしてしまう致命バグになる |
 | dev mode | `api_keys = []` で auth 全無効 | ローカル開発の摩擦を減らす |
 
+## 4.1 レート制限 (RateLimitMiddleware)
+
+```mermaid
+flowchart LR
+  REQ[Request] --> CORS[CORSMiddleware]
+  CORS --> RL[RateLimitMiddleware]
+  RL --> AUTH[APIKeyMiddleware]
+  AUTH --> RT[Route handler]
+
+  RL -.429 + Retry-After.-> CLIENT[client]
+  AUTH -.401 missing X-API-Key.-> CLIENT
+```
+
+`add_middleware` は **後 add したものが先に走る** Starlette 仕様に従い、
+`main.py` では `APIKey → RateLimit → CORS` の順に登録している。実行順は逆で
+CORS → RateLimit → APIKey になり、ねらいは:
+
+- CORS が一番外なので 401/429 にも `Access-Control-*` が乗り、ブラウザ JS が
+  エラー本体を読める
+- RateLimit が auth より前にあるので、攻撃トラフィックを `hmac.compare_digest`
+  のループに到達させずに弾ける（CPU 増幅攻撃の遮断）
+- RateLimit は **`X-API-Key` の SHA-256 先頭 16 桁** を identity に使うので、
+  認証前でもキー単位の bucket を切れる。生キーをログに残さない設計
+
+### 設計上のポイント
+
+| 項目 | 採用 | 理由 |
+|---|---|---|
+| アルゴリズム | sliding window deque | 60-s 内のヒットを timestamp で保持。固定 token bucket より burst 制御がシンプル |
+| 識別 | `sha256(X-API-Key)[:16]` または client IP | 生キーを bucket dump / ログに残さない |
+| `_MAX_IDENTITIES=4096` | 古い entry を FIFO 退避 | 攻撃者が key を回転して memory 枯渇させるのを防ぐ |
+| 対象 method | `POST/PATCH/PUT/DELETE` のみ | GET はダッシュボードが叩くので open のまま |
+| exempt | `/healthz`, `/readyz` のみ | systemd/k8s の liveness probe を 429 で殺さない |
+| store | プロセス常駐 dict | uvicorn 1 コンテナ前提。複製増えたら Redis に差し替え (`_buckets` の seam を維持) |
+
 ## 5. 監査ログ
 
 業務 audit は **サービス層から明示的に呼ぶ** ベストエフォート設計：

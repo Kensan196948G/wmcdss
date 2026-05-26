@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-41%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-51%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -75,6 +75,7 @@ flowchart LR
 | 🗄️ DB | PostgreSQL 16 | `db/migrations/` | 観測値・現場・閾値・監査ログ |
 | ⏱️ Ingester | httpx + systemd timer | `backend/app/jobs/ingest_jma{,_marine}.py`<br/>`deploy/systemd/` | AMeDAS（10 分毎）／wave nowcast（毎時）の 2 系統並走 |
 | 🔐 Auth | API Key middleware | `backend/app/core/security.py` | mutation エンドポイントを保護 |
+| 🚦 Rate Limit | Sliding window middleware | `backend/app/core/ratelimit.py` | identity 単位 (key hash / IP) の濫用防御 |
 | 📜 Audit | Service-level audit writes | `backend/app/services/audit.py` | 変更の actor/detail を永続化 |
 
 ---
@@ -125,6 +126,7 @@ open frontend/index.html   # window.WMCDSS_API_BASE は同ホスト :8003 自動
 | `WMCDSS_API_KEYS` | （空＝認証無効） | カンマ区切りの API キー一覧 |
 | `WMCDSS_CORS_ORIGINS` | 192.168.0.185:8888 等 | CORS 許可元 |
 | `WMCDSS_JMA_USER_AGENT` | `wmcdss/0.1 (+contact: …)` | JMA への User-Agent |
+| `WMCDSS_RATE_LIMIT_PER_MINUTE` | `0`（無効） | mutation の identity 単位 60-秒 sliding window cap |
 
 ---
 
@@ -151,12 +153,13 @@ docker compose exec backend pytest -q tests/
 | グループ | 件数 | 内容 |
 |---|---:|---|
 | ユニット（auth middleware） | 9 | API Key 認証・exempt パス・タイミング攻撃耐性・非 ASCII 鍵拒否・過大鍵 DoS 防御 |
+| ユニット（rate limit middleware） | 10 | sliding window・bucket 分離・window 期限切れ復活・exempt パス・identity hashing 漏洩防止 |
 | ユニット（audit hardening） | 9 | actor_from の API Key 漏洩防止・write_audit strict モードの SQLAlchemyError 伝播 |
 | ユニット（JMA AMeDAS fetcher） | 7 | パース・品質フラグ・block ロールバック・QC-drop 検出 |
 | ユニット（JMA wave fetcher） | 9 | パース・grid snap・日跨ぎ fallback・5xx 伝播・sentinel 値除外・scalar/tuple 両対応 |
 | ユニット（decisions など） | 7 | 判定ロジック・閾値マージ |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **50** | ✅ unit 41/41 passing — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **60** | ✅ unit 51/51 passing — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 

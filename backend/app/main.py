@@ -3,14 +3,22 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
 from app.core.security import APIKeyMiddleware
+from app.core.ratelimit import RateLimitMiddleware
 from app.api import health, sites, decisions, thresholds, observations, audit
 
 settings = get_settings()
 
 app = FastAPI(title=settings.app_name, version="0.1.0")
 
-# Order matters: CORS must wrap auth so 401 responses also carry CORS headers.
+# Order matters: Starlette runs the *last-added* middleware first, so the
+# effective request flow is CORS → RateLimit → APIKey → route.
+#   - CORS outermost: every response (including 401/429) carries CORS headers,
+#     otherwise browsers swallow the error before JS can read it.
+#   - RateLimit above APIKey: drop floods before spending hmac.compare_digest
+#     cycles. Identity uses a *hash* of X-API-Key, so unauthenticated and
+#     authenticated traffic share the same bucketing seam without leaking keys.
 app.add_middleware(APIKeyMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
