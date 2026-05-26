@@ -1,8 +1,9 @@
 import { WMCDSS_API_BASE } from './api';
+import { ChartColors } from './charts';
 
-// Side-effect import: api.ts assigns window.WMCDSS_API and window.WMCDSS_API_BASE
-// on load. The named import above pins WMCDSS_API_BASE into the bundle so Rollup
-// keeps the module instead of tree-shaking it away.
+// Side-effect imports: api.ts and charts.tsx assign window.* globals on load.
+// The named imports above pin each module into the bundle so Rollup keeps
+// them instead of tree-shaking the side effects away.
 
 export function App() {
   return (
@@ -14,7 +15,7 @@ export function App() {
       color: '#1f2937',
     }}>
       <h1 style={{ marginBottom: 8 }}>WMCDSS — Vite scaffold</h1>
-      <p style={{ color: '#6b7280', marginTop: 0 }}>Phase 1 (api.ts ESM port).</p>
+      <p style={{ color: '#6b7280', marginTop: 0 }}>Phase 1 (api.ts + charts.tsx ESM port).</p>
       <section style={{
         background: '#fef3c7',
         border: '1px solid #fbbf24',
@@ -25,7 +26,7 @@ export function App() {
         <strong>このページはダミーです。</strong>
         <p style={{ marginBottom: 0 }}>
           本番ダッシュボードは <code>../index.html</code> (Babel Standalone) のまま動作しています。
-          Phase 1 で <code>../api.jsx</code> を <code>./api.ts</code> として ESM 化しました。
+          Phase 1 で <code>../api.jsx</code> → <code>./api.ts</code>、<code>../charts.jsx</code> → <code>./charts.tsx</code> を ESM 化しました。
         </p>
       </section>
       <section style={{
@@ -38,8 +39,10 @@ export function App() {
         fontSize: 13,
       }}>
         <div><strong>WMCDSS_API_BASE:</strong> {WMCDSS_API_BASE}</div>
+        <div><strong>ChartColors.blue:</strong> <span style={{ color: ChartColors.blue }}>{ChartColors.blue}</span></div>
         <div style={{ color: '#6b7280', marginTop: 4 }}>
-          (resolved at module load; mirrored to <code>window.WMCDSS_API_BASE</code>)
+          (resolved at module load; mirrored to <code>window.WMCDSS_API_BASE</code> /
+          <code>window.LineChart</code> etc.)
         </div>
       </section>
     </main>
