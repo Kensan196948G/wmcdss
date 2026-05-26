@@ -4,7 +4,7 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
-最終更新: **2026-05-27**（setup-node@v6 バンプで B6 解消 — Loop 14 完）
+最終更新: **2026-05-27**（Phase 1 ESM port — `api.jsx → src/api.ts` 着地 — Loop 15 完）
 リリース絶対期限: **2026-11-25** （登録から 6 ヶ月後 — CLAUDE.md 絶対厳守）
 残日数: **約 182 日（Month 1 中盤）**
 GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [Project v2 #29](https://github.com/users/Kensan196948G/projects/29) ／ [Milestone #1 Production Release](https://github.com/Kensan196948G/wmcdss/milestone/1)
@@ -30,7 +30,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 🗄️ DB マイグレーション | 🟢 100% | `95a64d5` | 本番マイグレーションリハ未実施 |
 | ⏱️ JMA Ingester | 🟢 100% | `3ebf8fa` | AMeDAS + marine 分離完了。実 timer での連続稼働ログ／wave URL 実機検証 (Month 5) |
 | 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
-| 🖥️ Frontend | 🟡 85% | `dc89b0b` | Vite scaffold ✅（Phase 0）／.jsx → ESM 移植（Phase 1）／E2E |
+| 🖥️ Frontend | 🟡 87% | `738587c` | Vite scaffold ✅／Phase 1 `api.ts` ESM 化 ✅／残: app/dashboard/decisions 等 .jsx の ESM 移植 ／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 95% | `96aab85` | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
 | 🤖 CI | 🟢 100% | `ff725b8` | 三段ジョブ all green ／setup-node@v6 で Node 24 runtime 化。Codex/CodeRabbit 連携 (#4) のみ残課題 |
 | 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
@@ -55,6 +55,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 12 | Build | Vite Phase 0 scaffold (#1) — `frontend/vite-app/` に React 18 + Vite 6 + TS の toolchain を作成。既存 Babel Standalone (`frontend/index.html`) は無傷で fallback として残す方針。`npm run build` 検証: 26 modules transformed → **gzip 46.67 kB / 568ms**（既存構成は babel.min.js だけで ~3MB ロード）。`.gitignore` で node_modules + dist 除外、`package-lock.json` は commit して Phase 1 CI で再現可能性を担保。Phase 1 で `../*.jsx` を ES module として移植予定 | ✅ dc89b0b |
 | 13 | Build → Verify | CI `frontend-build` ジョブ追加 — Phase 1 で `.jsx` を ESM 化する前に **gating を先に整備**。Node 22 + `npm ci` (lockfile-pinned) + `npm run build`。`needs:` なしで `backend-unit` と並走 → 壁時計時間据え置き。CI run `26469645882` で **frontend 9s ／ unit 26s ／ smoke 40s** all green。CI 産出物 `index-CkP53_s4.js` がローカルビルドとハッシュ一致 → reproducibility 確認済み。**新規 deprecation 警告: `actions/setup-node@v4` 内部 Node 20 runtime (2026-09-16 削除)** — Loop 14 で `@v5` 検証予定 (B6 候補) | ✅ d1978ed |
 | 14 | Build → Verify | `actions/setup-node@v4 → @v6` バンプ — v5 で Node 24 runtime 化、v6 で npm auto-cache 縮退（明示指定済みなので無影響）。setup-python@v6 と対称化。CI run `26469869759` で **frontend 9s ／ unit 27s ／ smoke 46s** all green、annotations 0 件 → **deprecation 警告完全消滅で B6 解消**。9 月 16 日の Node 20 ランタイム削除前に窓を閉じた | ✅ ff725b8 |
+| 15 | Build → Verify | Phase 1 narrow ESM port — `frontend/api.jsx`（5.7 KB IIFE）を `frontend/vite-app/src/api.ts`（TS 化 + named exports）に複製。**dual surface**: ESM exports（後続 .jsx → .tsx 移植先用）＋ `window.WMCDSS_API` / `WMCDSS_API_BASE` 副作用（Babel Standalone fallback 互換）。`App.jsx` から `import { WMCDSS_API_BASE }` で参照し tree-shake 回避。Bundle 影響: **26 → 27 modules / gzip 46.67 → 48.15 kB (+1.48 kB)**。CI run `26470239874` で **frontend 11s ／ unit 29s ／ smoke 48s** all green。ローカル/CI 双方で hash 完全一致 (`index-DhTHn0se.js / 148.14 kB`) — reproducibility 維持。最小 blast radius で原本 `api.jsx` は無傷（並列稼働 = Phase 2 で旧版引退） | ✅ 738587c |
 
 ---
 
@@ -75,6 +76,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 
 | SHA | 種別 | 内容 |
 |---|---|---|
+| `738587c` | feat | Phase 1 ESM port — `frontend/api.jsx` → `vite-app/src/api.ts` ／dual surface (ESM + window) ／bundle +1.48 kB gzip |
 | `ff725b8` | ci | `actions/setup-node@v4 → @v6` バンプ — Node 24 runtime 化で B6 解消 ／annotations 0 件確認 |
 | `d1978ed` | ci | `frontend-build` ジョブ追加 — Node 22 + `npm ci` + Vite build ／並走で wall-clock 据え置き ／run `26469645882` green |
 | `dc89b0b` | feat | Vite Phase 0 scaffold — `frontend/vite-app/` ／React 18 + Vite 6 + TS ／gzip 46.67 kB build verified |
