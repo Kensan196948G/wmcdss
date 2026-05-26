@@ -344,6 +344,17 @@ body {
 .density-compact .data-table th,
 .density-compact .data-table td { padding: 6px 10px; }
 .density-compact .content { padding: 14px 18px; }
+.density-compact .header { padding: 0 16px; }
+.density-compact .header-title { font-size: 14px; }
+.density-compact .header-left { gap: 10px; }
+.density-compact .header-right { gap: 10px; }
+.density-compact .sidebar-logo { padding: 10px 14px; gap: 8px; }
+.density-compact .sidebar-logo-icon { width: 26px; height: 26px; font-size: 14px; }
+.density-compact .sidebar-group { padding: 8px 0 2px 0; }
+.density-compact .sidebar-group-label { padding: 0 14px; font-size: 9px; }
+.density-compact .sidebar-item { padding: 5px 14px; font-size: 12px; gap: 8px; }
+.density-compact .sidebar-item svg { width: 15px; height: 15px; }
+.density-compact .sidebar-role { padding: 8px 14px; }
 
 /* Transitions */
 .fade-in { animation: fadeIn 0.25s ease; }
