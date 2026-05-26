@@ -1,0 +1,43 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: wmcdss-db
+    environment:
+      POSTGRES_USER: wmcdss
+      POSTGRES_PASSWORD: wmcdss
+      POSTGRES_DB: wmcdss
+      TZ: Asia/Tokyo
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - wmcdss_pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wmcdss -d wmcdss"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    image: python:3.12-slim
+    container_name: wmcdss-backend
+    working_dir: /app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WMCDSS_DATABASE_URL: postgresql+asyncpg://wmcdss:wmcdss@db:5432/wmcdss
+      PYTHONUNBUFFERED: "1"
+      TZ: Asia/Tokyo
+    volumes:
+      - ./backend:/app
+    command: >
+      bash -lc "pip install --quiet -e . &&
+                uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "0.0.0.0:8003:8000"
+    restart: unless-stopped
+
+volumes:
+  wmcdss_pgdata:

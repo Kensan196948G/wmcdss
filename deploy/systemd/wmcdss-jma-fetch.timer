@@ -1,0 +1,15 @@
+[Unit]
+Description=WMCDSS - run JMA AMeDAS ingester every 10 minutes
+Documentation=man:systemd.timer(5)
+
+[Timer]
+# AMeDAS publishes at HH:00, :10, :20, ... — fire 90s past each tick so the
+# upstream file has actually appeared by the time we GET it.
+OnCalendar=*:0/10:30
+# If the system was off when a tick was due, run once at boot to catch up.
+Persistent=true
+AccuracySec=15s
+Unit=wmcdss-jma-fetch.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,22 @@
+[Unit]
+Description=WMCDSS - JMA AMeDAS observation ingester (one-shot)
+Documentation=https://www.jma.go.jp/bosai/amedas/
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Runs the job inside the already-built backend container so it shares the
+# same Python env + DB connectivity as the API service.
+ExecStart=/usr/bin/docker compose -f %h/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.yml exec -T backend python -m app.jobs.ingest_jma
+
+# JMA's public endpoints are best-effort: don't paint the timer red on transient
+# upstream failures — the job already logs them and idempotent upserts will heal
+# any gaps on the next run.
+SuccessExitStatus=0 1
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target

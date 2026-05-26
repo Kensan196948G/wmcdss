@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Env / secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Build / dist
+dist/
+build/
+*.egg
+
+# Logs / runtime
+*.log
+*.pid
+state.json
+
+# Docker / DB volumes (mounted via named volumes; nothing local)
+pgdata/
