@@ -156,12 +156,51 @@ function formatTime(d: Date): string {
   return `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// TweaksPanel のネイティブ persistence は window.parent への postMessage 依存で、
+// standalone vite-app では parent === self のため事実上 no-op。AppShell 側で
+// localStorage に直接同期する薄いラッパーを置き、refresh をまたいで値を保持する。
+// 破損や手編集に備えて isValid で narrow したうえで default に戻す。
+const TWEAK_KEY_PREFIX = 'wmcdss.tweaks.v1.';
+
+function usePersistedState<T extends string>(
+  suffix: string,
+  defaultValue: T,
+  isValid: (v: unknown) => v is T,
+): [T, (v: T) => void] {
+  const key = TWEAK_KEY_PREFIX + suffix;
+  const [value, setValue] = useState<T>(() => {
+    if (typeof window === 'undefined') return defaultValue;
+    try {
+      const raw = window.localStorage.getItem(key);
+      if (raw === null) return defaultValue;
+      const parsed: unknown = JSON.parse(raw);
+      return isValid(parsed) ? parsed : defaultValue;
+    } catch (e) {
+      console.warn(`[wmcdss] persisted tweak read failed for ${key}:`, e);
+      return defaultValue;
+    }
+  });
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(key, JSON.stringify(value));
+    } catch (e) {
+      console.warn(`[wmcdss] persisted tweak write failed for ${key}:`, e);
+    }
+  }, [key, value]);
+  return [value, setValue];
+}
+
+const isRole = (v: unknown): v is ShellRole => v === 'field' || v === 'hq';
+const isDensity = (v: unknown): v is Density => v === 'normal' || v === 'compact';
+const isTheme = (v: unknown): v is 'light' | 'dark' => v === 'light' || v === 'dark';
+
 export function AppShell() {
   const [page, setPage] = useState<PageId>('dashboard');
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
-  const [role, setRole] = useState<ShellRole>('field');
-  const [density, setDensity] = useState<Density>('normal');
-  const [theme, setTheme] = useState<'light' | 'dark'>('light');
+  const [role, setRole] = usePersistedState<ShellRole>('role', 'field', isRole);
+  const [density, setDensity] = usePersistedState<Density>('density', 'normal', isDensity);
+  const [theme, setTheme] = usePersistedState<'light' | 'dark'>('theme', 'light', isTheme);
   const [now, setNow] = useState<Date>(new Date());
 
   const openTweaks = () => {
