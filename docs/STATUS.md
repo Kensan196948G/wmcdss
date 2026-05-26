@@ -4,7 +4,7 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
-最終更新: **2026-05-27**（CI smoke verify ジョブ追加 — Loop 10 完）
+最終更新: **2026-05-27**（OpenAPI exposure 本番ポリシー — Loop 11 完）
 リリース絶対期限: **2026-11-25** （登録から 6 ヶ月後 — CLAUDE.md 絶対厳守）
 残日数: **約 182 日（Month 1 中盤）**
 GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [Project v2 #29](https://github.com/users/Kensan196948G/projects/29) ／ [Milestone #1 Production Release](https://github.com/Kensan196948G/wmcdss/milestone/1)
@@ -26,7 +26,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 
 | レイヤ | 進捗 | 直近コミット | 残課題 |
 |---|:--:|---|---|
-| 🐍 Backend API | 🟢 98% | `b17aa2e` | OpenAPI スキーマ自動公開（残）／レート制限 ✅ |
+| 🐍 Backend API | 🟢 100% | `3dce51d` | OpenAPI exposure env-gated ✅／レート制限 ✅／API key 認証 ✅ |
 | 🗄️ DB マイグレーション | 🟢 100% | `95a64d5` | 本番マイグレーションリハ未実施 |
 | ⏱️ JMA Ingester | 🟢 100% | `3ebf8fa` | AMeDAS + marine 分離完了。実 timer での連続稼働ログ／wave URL 実機検証 (Month 5) |
 | 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
@@ -51,6 +51,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 8 | Build → Verify | marine ingester 分離（Issue #2）— `jma_wave` service + `ingest_jma_marine` job + hourly timer + unit テスト +9 件 (32→41)／CI run `26467717952` 28s green／Issue #2 closed | ✅ 3ebf8fa |
 | 9 | Build → Verify | RateLimitMiddleware 導入 — sliding window deque ／identity = `sha256(X-API-Key)[:16]` or IP ／CORS→RateLimit→APIKey の三段／unit +10 件 (41→51) all green ／CI run `26468154402` 30s green | ✅ b17aa2e |
 | 10 | Build → Verify | CI smoke verify ジョブ追加 — `backend-smoke` job が compose 起動 → `/readyz` ポーリング → `pytest tests/test_api_smoke.py` (9 件) を実行。`needs: backend-unit` で純関数 fail を先に弾く二段構え。初回 push で exit 127 (`pytest` 未インストール) → dev extras を container 内に layered install するステップ追加 → CI run `26468562824` で unit 23s + smoke 40s 双方 green | ✅ 6d7b200 |
+| 11 | Build → Verify | OpenAPI 本番公開ポリシー — `WMCDSS_EXPOSE_OPENAPI` (default true) ／false で `openapi_url=docs_url=redoc_url=None` を渡し `/openapi.json`・`/docs`・`/redoc` を 404 化。「dev open, prod locked」を `api_keys=[]` と同様の env スイッチで実装。unit +4 件 (51→55) — default-on / disabled / `/healthz` 残存 / `/` endpoints list 残存 を分離検証。`importlib.reload(main_mod)` で FastAPI ctor の `openapi_url` 固定をフィクスチャで覆す構造。CI run `26468982461` unit 24s + smoke 48s 双方 green | ✅ 3dce51d |
 
 ---
 
@@ -70,6 +71,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 
 | SHA | 種別 | 内容 |
 |---|---|---|
+| `3dce51d` | feat | OpenAPI exposure env-gated — `WMCDSS_EXPOSE_OPENAPI=false` で /docs・/redoc・/openapi.json を 404 ／tests +4 |
 | `6d7b200` | ci | smoke job 内で dev extras を layered install（exit 127 修正） |
 | `847f11a` | ci | `backend-smoke` job 追加 — compose 起動 + `/readyz` ポーリング + smoke 9 件 |
 | `b17aa2e` | feat | RateLimitMiddleware — sliding window per identity (key hash / IP) ／tests +10 |

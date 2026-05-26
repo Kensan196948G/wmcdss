@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-51%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-55%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -127,6 +127,7 @@ open frontend/index.html   # window.WMCDSS_API_BASE は同ホスト :8003 自動
 | `WMCDSS_CORS_ORIGINS` | 192.168.0.185:8888 等 | CORS 許可元 |
 | `WMCDSS_JMA_USER_AGENT` | `wmcdss/0.1 (+contact: …)` | JMA への User-Agent |
 | `WMCDSS_RATE_LIMIT_PER_MINUTE` | `0`（無効） | mutation の identity 単位 60-秒 sliding window cap |
+| `WMCDSS_EXPOSE_OPENAPI` | `true`（dev） | `false` で `/openapi.json`・`/docs`・`/redoc` を 404 に — 本番でスキーマを匿名公開しない |
 
 ---
 
@@ -158,8 +159,9 @@ docker compose exec backend pytest -q tests/
 | ユニット（JMA AMeDAS fetcher） | 7 | パース・品質フラグ・block ロールバック・QC-drop 検出 |
 | ユニット（JMA wave fetcher） | 9 | パース・grid snap・日跨ぎ fallback・5xx 伝播・sentinel 値除外・scalar/tuple 両対応 |
 | ユニット（decisions など） | 7 | 判定ロジック・閾値マージ |
+| ユニット（OpenAPI exposure policy） | 4 | env スイッチで `/openapi.json`・`/docs`・`/redoc` を 404 化／無効でも `/healthz` ・`/` endpoints list は残る |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **60** | ✅ unit 51/51 passing — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **64** | ✅ unit 55/55 passing — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 
