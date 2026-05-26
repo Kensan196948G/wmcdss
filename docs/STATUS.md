@@ -4,7 +4,7 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
-最終更新: **2026-05-27**（Loop 17 — `charts.jsx → src/charts.tsx` ESM port 着地）
+最終更新: **2026-05-27**（Loop 18 — `data.jsx → src/data.ts` ESM port 着地）
 リリース絶対期限: **2026-11-25** （登録から 6 ヶ月後 — CLAUDE.md 絶対厳守）
 残日数: **約 182 日（Month 1 中盤）**
 GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [Project v2 #29](https://github.com/users/Kensan196948G/projects/29) ／ [Milestone #1 Production Release](https://github.com/Kensan196948G/wmcdss/milestone/1)
@@ -30,7 +30,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 🗄️ DB マイグレーション | 🟢 100% | `95a64d5` | 本番マイグレーションリハ未実施 |
 | ⏱️ JMA Ingester | 🟢 100% | `3ebf8fa` | AMeDAS + marine 分離完了。実 timer での連続稼働ログ／wave URL 実機検証 (Month 5) |
 | 🔐 Auth / Audit | 🟢 100% | (docs only) | 鍵ローテーション運用フロー定義済み（SECURITY.md §5）。actor 漏洩経路除去＋strict audit 適用済み |
-| 🖥️ Frontend | 🟡 89% | `42b237e` | Vite scaffold ✅／Phase 1 `api.ts` + `charts.tsx` ESM 化 ✅／残: app/dashboard/decisions の ESM 移植 ／E2E |
+| 🖥️ Frontend | 🟡 92% | `4fdcfba` | Vite scaffold ✅／Phase 1 `api.ts` + `charts.tsx` + `data.ts` ESM 化 ✅／残: dashboard/decisions の ESM 移植 ／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 95% | `96aab85` | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
 | 🤖 CI | 🟢 100% | `ff725b8` | 三段ジョブ all green ／setup-node@v6 で Node 24 runtime 化。Codex/CodeRabbit 連携 (#4) のみ残課題 |
 | 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
@@ -58,6 +58,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 15 | Build → Verify | Phase 1 narrow ESM port — `frontend/api.jsx`（5.7 KB IIFE）を `frontend/vite-app/src/api.ts`（TS 化 + named exports）に複製。**dual surface**: ESM exports（後続 .jsx → .tsx 移植先用）＋ `window.WMCDSS_API` / `WMCDSS_API_BASE` 副作用（Babel Standalone fallback 互換）。`App.jsx` から `import { WMCDSS_API_BASE }` で参照し tree-shake 回避。Bundle 影響: **26 → 27 modules / gzip 46.67 → 48.15 kB (+1.48 kB)**。CI run `26470239874` で **frontend 11s ／ unit 29s ／ smoke 48s** all green。ローカル/CI 双方で hash 完全一致 (`index-DhTHn0se.js / 148.14 kB`) — reproducibility 維持。最小 blast radius で原本 `api.jsx` は無傷（並列稼働 = Phase 2 で旧版引退） | ✅ 738587c |
 | 16 | Improve (docs) | 鍵ローテーション運用フロー定義 — `docs/SECURITY.md` §5 を「将来課題」プレースホルダから 9 ステップ無停止ローテ runbook（90 日サイクル）＋緊急ローテ（漏洩時）＋ロールバック 4 行表＋audit 照会例の正本に置換。`§5.1 設計前提` で `@lru_cache get_settings` ⇒ 再起動必須／`restart: unless-stopped` で validation crash 自動復旧／512 byte 上限を明示。新 `§6 将来課題` に bcrypt ハッシュ保存・401 連発 short-ban・mTLS/OAuth2・キー世代 audit 紐付けを移送。**ドライブバイ修正**: `.env.production.example` の制約コメント "max 1024 bytes per key" は誤り（実装は `_MAX_KEY_LEN = 512`）→ 512 bytes に訂正、"non-ASCII rejected at startup" も per-request fail-closed の実装に合わせて修正。Docs-only につき CI 非対象 | ✅ 4a8b37a |
 | 17 | Build → Verify | Phase 1 leaf-node ESM port — `frontend/charts.jsx`（5 SVG components + ChartColors palette、依存ゼロの leaf）を `frontend/vite-app/src/charts.tsx`（335 行 TS 化 + 完全型付け）に複製。**dual surface**: `LineChart` / `BarChart` / `WindRose` / `Sparkline` / `GaugeMeter` の named exports（後続 .tsx 移植先用）＋ `Object.assign(window, { LineChart, ... })` 副作用（Babel Standalone fallback 互換）。型ポート中に **silent bug 2 件を発見＆修正**: ① `threshAngle && marker` の truthy check は threshold=0 で marker が描かれない（`threshAngle !== null` に変更）／② `angles[dirs.indexOf(d.dir)] || angles[0]` は北 (index 0 = 0° = falsy) で常時 north fallback（`??` に変更）。`App.jsx` から `import { ChartColors }` で参照し tree-shake 回避（api.ts と同パターン）。Bundle 影響: **27 → 28 modules / gzip 48.15 → 50.08 kB (+1.93 kB)**。CI run `26470877797` で **frontend 9s ／ unit 26s ／ smoke 51s** all green。leaf-first 戦略を採用した理由は依存ゼロ＝既存 caller を一切壊さない最小 blast radius のため（decisions.jsx は api.ts に依存、dashboard.jsx は charts.tsx に依存 → Phase 1 後半は dual-surface の caller 側検証として活用） | ✅ 42b237e |
+| 18 | Build → Verify | Phase 1 leaf-node ESM port — `frontend/data.jsx`（6 sites + decision logic、`Math`/`window` のみに依存する leaf）を `frontend/vite-app/src/data.ts`（331 行 TS 化 + 完全型付け）に複製。**13 named exports**: `SITES` / `generateWeather` / `generateMarine` / `FORECAST_DAYS` / `WEATHER_ICONS` / `generateHourlyWind` / `generateHourlyWave` / `generateHistoricalMonthly` / `AUDIT_LOG` / `ETL_JOBS` / `STATUS_LABEL` / `STATUS_CLASS` / `TYPE_LABEL` / `getDecision`。**dual surface**: ESM + `Object.assign(window, { ... })`（Babel Standalone fallback 互換）。型ポート中に **暗黙契約を明示化**: `SiteThresholds.waveHeight: number \| null`（旧 .jsx は `m.waveHeight > undefined === false` で偶然動いていた → `getDecision` に `waveLimit !== null` 明示 gate を挿入、land 海象比較を構造的に遮断）。**Exhaustive maps**: `Record<WeatherKind, string>` / `Record<Status, string>` / `Record<SiteKind, string>` で将来の追加（例: 雷）が compile error になる構造に。`App.jsx` から `import { SITES }` で参照し tree-shake 回避（marine/land 内訳カウンタを表示）。Bundle 影響: **28 → 29 modules / gzip 50.08 → 52.96 kB (+2.88 kB)**。CI run `26471283441` で **frontend 9s ／ unit 24s ／ smoke 44s** all green。これで Phase 1 leaf 3 件（api / charts / data）全完了 — Phase 2 では decisions.jsx / dashboard.jsx が完全 ESM 依存チェーン上で移植可能に | ✅ 4fdcfba |
 
 ---
 
@@ -78,6 +79,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 
 | SHA | 種別 | 内容 |
 |---|---|---|
+| `4fdcfba` | feat | Loop 18 — Phase 1 ESM port `frontend/data.jsx` → `vite-app/src/data.ts` ／13 named exports + 完全型付け ／`waveHeight: number \| null` 明示化で land 海象比較を構造的に遮断 ／bundle +2.88 kB gzip |
 | `42b237e` | feat | Loop 17 — Phase 1 ESM port `frontend/charts.jsx` → `vite-app/src/charts.tsx` ／dual surface (ESM + window) ／threshold=0 と北方位の silent bug 同時修正 ／bundle +1.93 kB gzip |
 | `4a8b37a` | docs | Loop 16 — `SECURITY.md` §5 鍵ローテーション運用フロー定義（9 ステップ無停止＋緊急＋rollback 表）／`.env.production.example` の制約コメント整合 (1024→512, startup→per-request) |
 | `738587c` | feat | Phase 1 ESM port — `frontend/api.jsx` → `vite-app/src/api.ts` ／dual surface (ESM + window) ／bundle +1.48 kB gzip |
