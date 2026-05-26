@@ -4,7 +4,7 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
-最終更新: **2026-05-27**（OpenAPI exposure 本番ポリシー — Loop 11 完）
+最終更新: **2026-05-27**（Vite scaffold Phase 0 着地 — Loop 12 完）
 リリース絶対期限: **2026-11-25** （登録から 6 ヶ月後 — CLAUDE.md 絶対厳守）
 残日数: **約 182 日（Month 1 中盤）**
 GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [Project v2 #29](https://github.com/users/Kensan196948G/projects/29) ／ [Milestone #1 Production Release](https://github.com/Kensan196948G/wmcdss/milestone/1)
@@ -30,7 +30,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 🗄️ DB マイグレーション | 🟢 100% | `95a64d5` | 本番マイグレーションリハ未実施 |
 | ⏱️ JMA Ingester | 🟢 100% | `3ebf8fa` | AMeDAS + marine 分離完了。実 timer での連続稼働ログ／wave URL 実機検証 (Month 5) |
 | 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
-| 🖥️ Frontend | 🟡 80% | `3ac56d6` | バンドル化（Babel Standalone → Vite）／E2E |
+| 🖥️ Frontend | 🟡 85% | `dc89b0b` | Vite scaffold ✅（Phase 0）／.jsx → ESM 移植（Phase 1）／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 95% | `96aab85` | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
 | 🤖 CI | 🟢 100% | `6d7b200` | Codex/CodeRabbit 連携 (#4) のみ。unit + smoke 二段ジョブ green |
 | 📚 Docs | 🟢 95% | `fc49421` | ARCHITECTURE.md §9 CI 二段構え追加済み |
@@ -52,6 +52,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 9 | Build → Verify | RateLimitMiddleware 導入 — sliding window deque ／identity = `sha256(X-API-Key)[:16]` or IP ／CORS→RateLimit→APIKey の三段／unit +10 件 (41→51) all green ／CI run `26468154402` 30s green | ✅ b17aa2e |
 | 10 | Build → Verify | CI smoke verify ジョブ追加 — `backend-smoke` job が compose 起動 → `/readyz` ポーリング → `pytest tests/test_api_smoke.py` (9 件) を実行。`needs: backend-unit` で純関数 fail を先に弾く二段構え。初回 push で exit 127 (`pytest` 未インストール) → dev extras を container 内に layered install するステップ追加 → CI run `26468562824` で unit 23s + smoke 40s 双方 green | ✅ 6d7b200 |
 | 11 | Build → Verify | OpenAPI 本番公開ポリシー — `WMCDSS_EXPOSE_OPENAPI` (default true) ／false で `openapi_url=docs_url=redoc_url=None` を渡し `/openapi.json`・`/docs`・`/redoc` を 404 化。「dev open, prod locked」を `api_keys=[]` と同様の env スイッチで実装。unit +4 件 (51→55) — default-on / disabled / `/healthz` 残存 / `/` endpoints list 残存 を分離検証。`importlib.reload(main_mod)` で FastAPI ctor の `openapi_url` 固定をフィクスチャで覆す構造。CI run `26468982461` unit 24s + smoke 48s 双方 green | ✅ 3dce51d |
+| 12 | Build | Vite Phase 0 scaffold (#1) — `frontend/vite-app/` に React 18 + Vite 6 + TS の toolchain を作成。既存 Babel Standalone (`frontend/index.html`) は無傷で fallback として残す方針。`npm run build` 検証: 26 modules transformed → **gzip 46.67 kB / 568ms**（既存構成は babel.min.js だけで ~3MB ロード）。`.gitignore` で node_modules + dist 除外、`package-lock.json` は commit して Phase 1 CI で再現可能性を担保。Phase 1 で `../*.jsx` を ES module として移植予定 | ✅ dc89b0b |
 
 ---
 
@@ -71,6 +72,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 
 | SHA | 種別 | 内容 |
 |---|---|---|
+| `dc89b0b` | feat | Vite Phase 0 scaffold — `frontend/vite-app/` ／React 18 + Vite 6 + TS ／gzip 46.67 kB build verified |
 | `3dce51d` | feat | OpenAPI exposure env-gated — `WMCDSS_EXPOSE_OPENAPI=false` で /docs・/redoc・/openapi.json を 404 ／tests +4 |
 | `6d7b200` | ci | smoke job 内で dev extras を layered install（exit 127 修正） |
 | `847f11a` | ci | `backend-smoke` job 追加 — compose 起動 + `/readyz` ポーリング + smoke 9 件 |

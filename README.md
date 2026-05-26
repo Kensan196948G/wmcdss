@@ -118,6 +118,19 @@ curl -s http://localhost:8003/healthz
 open frontend/index.html   # window.WMCDSS_API_BASE は同ホスト :8003 自動推定
 ```
 
+### 🆕 Vite ビルド（Phase 0, scaffold のみ）
+
+本番ダッシュボードは引き続き上記の Babel Standalone で配信されます。
+`frontend/vite-app/` 配下は **Phase 1 で `../*.jsx` を ES module 化する移植先**であり、
+現状はビルドパイプライン疎通確認のみのスキャフォルドです。
+
+```bash
+cd frontend/vite-app
+npm install                     # Vite 6 + React 18 + TS
+npm run dev                     # HMR dev server → http://localhost:5173
+npm run build                   # → dist/   (検証済: 26 modules, gzip ~47 kB)
+```
+
 ### 環境変数（主なもの）
 
 | 変数 | 既定 | 用途 |
