@@ -108,9 +108,113 @@ CORS ヘッダが付与され、ブラウザは body を読める。
 | ステージング | `stg-xxx` | 認証有効 — 本番と同じ挙動 |
 | 本番 | `prod-xxx,prod-yyy` | 認証有効 — 複数キーでローテーション可能 |
 
-## 5. 将来課題
+## 5. 鍵ローテーション運用フロー
+
+### 5.1 設計前提
+
+- `WMCDSS_API_KEYS` は **カンマ区切り複数キー**を受け付ける（`_key_matches` がリスト走査）。
+- ローテ中は **新旧 2 本を並行受理** → クライアント切替完了後に旧を削除する 2 段階で実行。
+- env 変更を反映するには **プロセス再起動が必須**（`@lru_cache get_settings`）。
+- 再起動は graceful drain しないので、ローテ実施中は短時間の `5xx` / `401` 窓を許容する
+  運用窓（例: 業務外時間）を選ぶ。`restart: unless-stopped` が即時復旧を保証。
+- **鍵の上限**: `app/core/security.py` の `_MAX_KEY_LEN = 512` バイト。
+  これを超える `X-API-Key` は受信側で reject されるため、生成・配布する鍵もこの長さ以内に収める。
+
+### 5.2 通常ローテーション（計画的・無停止）
+
+期待頻度: **90 日ごと**（規定）。
+
+```bash
+# ─── ① 新キー生成（オペレータホスト）─────────────────────────
+NEW_KEY=$(python -c "import secrets; print(secrets.token_urlsafe(48))")
+echo "$NEW_KEY"  # ※ secret store にも保管
+
+# ─── ② .env.production に追記（旧キー残置）──────────────────
+# 編集前:
+#   WMCDSS_API_KEYS=ops-prod-aaaa,ops-prod-bbbb
+# 編集後:
+#   WMCDSS_API_KEYS=ops-prod-aaaa,ops-prod-bbbb,<NEW_KEY>
+# ※ pydantic-settings はパース失敗時に backend が起動しない。
+#    保存前に `python -c "import os; print(os.environ['WMCDSS_API_KEYS'].split(','))"`
+#    などで分割結果を確認。
+
+# ─── ③ backend だけ再起動（DB は触らない）────────────────────
+ssh prod-host
+cd /opt/wmcdss
+docker compose restart backend
+docker compose logs --tail=20 backend | grep -i "starting\|listening"
+
+# ─── ④ ヘルスチェック ───────────────────────────────────────
+curl -sf http://localhost:8003/readyz
+# → {"status":"ok"}
+
+# ─── ⑤ 新キー疎通確認（mutation で 200）──────────────────────
+curl -sS -X POST http://localhost:8003/api/v1/sites \
+  -H "X-API-Key: $NEW_KEY" \
+  -H "X-Actor: rotation-check" \
+  -H "Content-Type: application/json" \
+  -d '{"code":"_rotation_probe","name":"_rotation_probe","kind":"land","lat":0,"lon":0}'
+# 想定: 201 か 409 (重複)。401 が返ったら ② の env 反映を再確認。
+
+# ─── ⑥ クライアント側を新キーに切替 ─────────────────────────
+# - フロント (`.env.production` の WMCDSS_API_KEY)
+# - JMA ingester systemd unit (`deploy/systemd/wmcdss-jma-fetch.service` の Environment=)
+# - 監視・cron スクリプト等
+# 切替後、各クライアントで mutation 系を 1 回叩いて 200 を確認。
+
+# ─── ⑦ 旧キー利用が止まったか audit_log で確認 ──────────────
+# ※ audit_log には actor (X-Actor) しか残らない設計なので、X-Actor を
+#    キー世代と紐付けて発行している場合は actor で世代を判定する。
+#    そうでなければ、切替確認は ⑥ のクライアント側証跡をもって完了とする。
+
+# ─── ⑧ 旧キーを .env.production から削除 ────────────────────
+# 編集後:
+#   WMCDSS_API_KEYS=ops-prod-bbbb,<NEW_KEY>
+docker compose restart backend
+docker compose logs --tail=20 backend
+
+# ─── ⑨ 旧キー停止確認（旧キーで 401 になること）──────────────
+curl -i -X POST http://localhost:8003/api/v1/sites \
+  -H "X-API-Key: ops-prod-aaaa" \
+  -H "X-Actor: rotation-old-key-check"
+# 想定: HTTP/1.1 401 missing or invalid X-API-Key
+```
+
+### 5.3 緊急ローテーション（鍵漏洩・侵害疑い）
+
+- ② の「旧キー残置」フェーズを **省略** し、新キー単独で env を上書き → ③ 再起動。
+- 旧キー利用者は一時的に 401 になる前提で告知する。
+- 漏洩経路（git 履歴・ログ・チャット添付）の事後調査は別タスクで継続。
+- `audit_log` を漏洩疑い時刻範囲で grep し、actor＝漏洩鍵世代の異常 mutation がないか確認。
+
+### 5.4 失敗時のロールバック
+
+| 症状 | 想定原因 | 復旧 |
+|---|---|---|
+| backend がクラッシュループ | `WMCDSS_API_KEYS` の引用符・改行混入 / 非 ASCII / 長さ超過 | 旧 `.env.production` を `git show` から復元し再起動。secret store の値とも diff |
+| 全クライアントが 401 | env 反映前の再起動忘れ / cache | `docker compose restart backend` を再実行 |
+| 一部クライアントが 401 | クライアント側の鍵差し替えミス | クライアント env を再確認 — backend 側は触らない |
+| `audit_log` が書かれない | X-Actor 未送出 / DB 接続切れ | backend ログで `audit:` warn を確認 — DB 再接続 |
+
+### 5.5 監査ログ照会例
+
+```bash
+# ローテーション時刻前後の mutation 一覧（DB 直接照会）
+docker compose exec db psql -U wmcdss -d wmcdss -c "
+  SELECT created_at, actor, action, target_type, target_id
+  FROM audit_log
+  WHERE created_at >= NOW() - INTERVAL '24 hours'
+  ORDER BY created_at DESC
+  LIMIT 100;
+"
+```
+
+## 6. 将来課題
 
 - [ ] **キーのハッシュ保存**: 現状は env 文字列を直接突き合わせ。漏洩時の被害を狭めるため、
       DB に bcrypt/scrypt ハッシュで保存し、actor 単位で発行・失効する形に移行検討。
-- [ ] **レート制限**: 認証失敗の連続回数で短期 ban。
+- [ ] **認証失敗の連続回数で短期 ban**: 現状の sliding-window rate limit は成功・失敗を
+      区別しない。401 連発を別 bucket で短期 ban する設計に拡張検討。
 - [ ] **mTLS / OAuth2**: 外部クライアント（他社システム連携）が増えたら検討。
+- [ ] **キー世代の audit 紐付け**: `X-Actor` 命名規約に世代 ID を含めるか、
+      別ヘッダ `X-Key-Generation` を導入して `audit_log.detail` に保存する案を検討。

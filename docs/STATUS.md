@@ -4,7 +4,7 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
-最終更新: **2026-05-27**（Phase 1 ESM port — `api.jsx → src/api.ts` 着地 — Loop 15 完）
+最終更新: **2026-05-27**（Loop 16 — 鍵ローテーション運用フロー定義 + `.env` doc 整合）
 リリース絶対期限: **2026-11-25** （登録から 6 ヶ月後 — CLAUDE.md 絶対厳守）
 残日数: **約 182 日（Month 1 中盤）**
 GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [Project v2 #29](https://github.com/users/Kensan196948G/projects/29) ／ [Milestone #1 Production Release](https://github.com/Kensan196948G/wmcdss/milestone/1)
@@ -29,7 +29,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 🐍 Backend API | 🟢 100% | `3dce51d` | OpenAPI exposure env-gated ✅／レート制限 ✅／API key 認証 ✅ |
 | 🗄️ DB マイグレーション | 🟢 100% | `95a64d5` | 本番マイグレーションリハ未実施 |
 | ⏱️ JMA Ingester | 🟢 100% | `3ebf8fa` | AMeDAS + marine 分離完了。実 timer での連続稼働ログ／wave URL 実機検証 (Month 5) |
-| 🔐 Auth / Audit | 🟢 100% | (pending) | 鍵ローテーション運用フロー未定。actor 漏洩経路除去＋strict audit 適用済み |
+| 🔐 Auth / Audit | 🟢 100% | (docs only) | 鍵ローテーション運用フロー定義済み（SECURITY.md §5）。actor 漏洩経路除去＋strict audit 適用済み |
 | 🖥️ Frontend | 🟡 87% | `738587c` | Vite scaffold ✅／Phase 1 `api.ts` ESM 化 ✅／残: app/dashboard/decisions 等 .jsx の ESM 移植 ／E2E |
 | 🛠️ Infra (compose / systemd) | 🟢 95% | `96aab85` | `.env.production.example` 作成済 — `.env.production` は gitignore で保護 |
 | 🤖 CI | 🟢 100% | `ff725b8` | 三段ジョブ all green ／setup-node@v6 で Node 24 runtime 化。Codex/CodeRabbit 連携 (#4) のみ残課題 |
@@ -56,6 +56,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 | 13 | Build → Verify | CI `frontend-build` ジョブ追加 — Phase 1 で `.jsx` を ESM 化する前に **gating を先に整備**。Node 22 + `npm ci` (lockfile-pinned) + `npm run build`。`needs:` なしで `backend-unit` と並走 → 壁時計時間据え置き。CI run `26469645882` で **frontend 9s ／ unit 26s ／ smoke 40s** all green。CI 産出物 `index-CkP53_s4.js` がローカルビルドとハッシュ一致 → reproducibility 確認済み。**新規 deprecation 警告: `actions/setup-node@v4` 内部 Node 20 runtime (2026-09-16 削除)** — Loop 14 で `@v5` 検証予定 (B6 候補) | ✅ d1978ed |
 | 14 | Build → Verify | `actions/setup-node@v4 → @v6` バンプ — v5 で Node 24 runtime 化、v6 で npm auto-cache 縮退（明示指定済みなので無影響）。setup-python@v6 と対称化。CI run `26469869759` で **frontend 9s ／ unit 27s ／ smoke 46s** all green、annotations 0 件 → **deprecation 警告完全消滅で B6 解消**。9 月 16 日の Node 20 ランタイム削除前に窓を閉じた | ✅ ff725b8 |
 | 15 | Build → Verify | Phase 1 narrow ESM port — `frontend/api.jsx`（5.7 KB IIFE）を `frontend/vite-app/src/api.ts`（TS 化 + named exports）に複製。**dual surface**: ESM exports（後続 .jsx → .tsx 移植先用）＋ `window.WMCDSS_API` / `WMCDSS_API_BASE` 副作用（Babel Standalone fallback 互換）。`App.jsx` から `import { WMCDSS_API_BASE }` で参照し tree-shake 回避。Bundle 影響: **26 → 27 modules / gzip 46.67 → 48.15 kB (+1.48 kB)**。CI run `26470239874` で **frontend 11s ／ unit 29s ／ smoke 48s** all green。ローカル/CI 双方で hash 完全一致 (`index-DhTHn0se.js / 148.14 kB`) — reproducibility 維持。最小 blast radius で原本 `api.jsx` は無傷（並列稼働 = Phase 2 で旧版引退） | ✅ 738587c |
+| 16 | Improve (docs) | 鍵ローテーション運用フロー定義 — `docs/SECURITY.md` §5 を「将来課題」プレースホルダから 9 ステップ無停止ローテ runbook（90 日サイクル）＋緊急ローテ（漏洩時）＋ロールバック 4 行表＋audit 照会例の正本に置換。`§5.1 設計前提` で `@lru_cache get_settings` ⇒ 再起動必須／`restart: unless-stopped` で validation crash 自動復旧／512 byte 上限を明示。新 `§6 将来課題` に bcrypt ハッシュ保存・401 連発 short-ban・mTLS/OAuth2・キー世代 audit 紐付けを移送。**ドライブバイ修正**: `.env.production.example` の制約コメント "max 1024 bytes per key" は誤り（実装は `_MAX_KEY_LEN = 512`）→ 512 bytes に訂正、"non-ASCII rejected at startup" も per-request fail-closed の実装に合わせて修正。Docs-only につき CI 非対象 | ✅ (pending) |
 
 ---
 
@@ -76,6 +77,7 @@ GitHub: [`Kensan196948G/wmcdss`](https://github.com/Kensan196948G/wmcdss) ／ [P
 
 | SHA | 種別 | 内容 |
 |---|---|---|
+| (pending) | docs | Loop 16 — `SECURITY.md` §5 鍵ローテーション運用フロー定義（9 ステップ無停止＋緊急＋rollback 表）／`.env.production.example` の制約コメント整合 (1024→512, startup→per-request) |
 | `738587c` | feat | Phase 1 ESM port — `frontend/api.jsx` → `vite-app/src/api.ts` ／dual surface (ESM + window) ／bundle +1.48 kB gzip |
 | `ff725b8` | ci | `actions/setup-node@v4 → @v6` バンプ — Node 24 runtime 化で B6 解消 ／annotations 0 件確認 |
 | `d1978ed` | ci | `frontend-build` ジョブ追加 — Node 22 + `npm ci` + Vite build ／並走で wall-clock 据え置き ／run `26469645882` green |
