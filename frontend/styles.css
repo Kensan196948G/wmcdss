@@ -390,3 +390,34 @@ body {
   height: 100%; border-radius: 3px;
   transition: width 0.6s ease;
 }
+
+/* Dark theme — overrides :root variables when html/body or app-layout carries
+   .theme-dark or [data-theme="dark"]. Twin-selector design echoes the dual
+   declaration in app-shell.tsx (className + data-theme) so a host that only
+   wires one of the two still gets the dark palette. */
+.theme-dark,
+[data-theme="dark"] {
+  --bg: #0c1623;
+  --surface: #15243a;
+  --surface-alt: #1b2d47;
+  --border: #2b4163;
+  --border-light: #233755;
+  --text: #e6edf6;
+  --text-secondary: #b6c3d6;
+  --text-muted: #7e8fa8;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+  --shadow-md: 0 2px 8px rgba(0,0,0,0.5);
+  --shadow-lg: 0 4px 16px rgba(0,0,0,0.6);
+
+  --status-ok-bg: #0f3a25;
+  --status-ok-border: #1f6a44;
+  --status-warn-bg: #3a2a0d;
+  --status-warn-border: #7a5a1d;
+  --status-danger-bg: #3a1614;
+  --status-danger-border: #7a3530;
+}
+.theme-dark body,
+[data-theme="dark"] body {
+  background: var(--bg);
+  color: var(--text);
+}
