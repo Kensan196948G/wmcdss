@@ -73,7 +73,7 @@ flowchart LR
 
 | レイヤ | 技術 | パス | 役割 |
 |---|---|---|---|
-| 🖥️ Frontend | React 18 + Vite 6 + TypeScript（**全 15 ページ ESM port 完了 ＋ density/dark/role 永続化**）<br/>React + Babel Standalone（並行稼働 fallback） | `frontend/vite-app/`（primary, nginx 配信）<br/>`frontend/`（fallback, 静的） | ダッシュボード・現場/閾値管理画面（mock 警告帯付き・localStorage 永続化） |
+| 🖥️ Frontend | React 18 + Vite 6 + TypeScript（**全 15 ページ ESM port 完了 ＋ density/dark/role 永続化 ＋ Babel Standalone 完全退役 Loop 44**） | `frontend/vite-app/`（唯一の entry, nginx multi-stage 配信） | ダッシュボード・現場/閾値管理画面（mock 警告帯付き・localStorage 永続化） |
 | 🌐 Frontend エッジ | nginx 1.27-alpine（multi-stage Docker build, lazy DNS） | `frontend/vite-app/Dockerfile`<br/>`frontend/vite-app/nginx.conf` | Vite 静的配信 ＋ `/api/` reverse proxy ＋ `/readyz` passthrough |
 | 🐍 Backend API | FastAPI + SQLAlchemy 2.0 async | `backend/app/` | 観測値・閾値・判定 REST API |
 | 🗄️ DB | PostgreSQL 16 | `db/migrations/` | 観測値・現場・閾値・監査ログ |
@@ -119,17 +119,18 @@ curl -s http://localhost:8003/healthz
 #  → {"status":"ok"}
 
 # 4. ブラウザ
-open frontend/index.html   # window.WMCDSS_API_BASE は同ホスト :8003 自動推定
+open http://localhost:8080/   # docker compose の nginx service (frontend/vite-app)
+#                              # window.WMCDSS_API_BASE は同ホスト :8003 自動推定
 ```
 
-### 🆕 Vite ビルド（**全ページ ESM port 完了 ＋ Docker 配信 hardened**）
+### 🆕 Vite ビルド（**全ページ ESM port 完了 ＋ Docker 配信 hardened ＋ Babel Standalone 完全退役**）
 
-`frontend/vite-app/` は **Phase 1（15 ページ ESM port）→ Phase 2 入口（Loop 26 で本番 entry 化）→ TweaksPanel/role/density/dark/persistence 配線（Loop 29-34）→ docker-compose 配下に nginx service 化（Loop 36）→ Dockerfile build context-escape ＋ nginx eager DNS の 2 件 latent bug を解消（Loop 38）**まで前進。Babel Standalone 系統（`frontend/index.html`）は fallback として並行稼働中。
+`frontend/vite-app/` は **Phase 1（15 ページ ESM port）→ Phase 2 入口（Loop 26 で本番 entry 化）→ TweaksPanel/role/density/dark/persistence 配線（Loop 29-34）→ docker-compose 配下に nginx service 化（Loop 36）→ Dockerfile build context-escape ＋ nginx eager DNS の 2 件 latent bug を解消（Loop 38）→ Babel Standalone 系統（`frontend/index.html` ＋ 11 `.jsx` ファイル計 3,190 行）を完全退役（Loop 44）**まで前進。
 
 - ✅ `src/api.ts` — `../api.jsx` の ESM/TS 版（named exports ＋ `window.WMCDSS_API` 副作用維持）
 - ✅ `src/app-shell.tsx` — root sidebar + header + 15-page router（`PageId` 15-member literal union ＋ exhaustive `Record<PageId, string>`）＋ density / role / dark mode 配線（Loop 30）
 - ✅ `src/{dashboard,decisions,weather-marine,analysis,site-pages,admin-pages,concrete-marine-work,charts,data}.tsx` — 全 15 ページ ESM port 完
-- ✅ `src/main.tsx` — `WMCDSS_API.initFromBackend()` を `.finally(render)` chain で先行実行 ＋ inline `<MockBanner />` で `window.BACKEND_STATUS?.ok` 未接続時に「施工判断には使用しないでください」赤帯表示（legacy index.html Root と意味論一致）／成功時は live sites 数を緑帯表示（Loop 33）
+- ✅ `src/main.tsx` — `WMCDSS_API.initFromBackend()` を `.finally(render)` chain で先行実行 ＋ inline `<MockBanner />` で `window.BACKEND_STATUS?.ok` 未接続時に「施工判断には使用しないでください」赤帯表示／成功時は live sites 数を緑帯表示（Loop 33、Loop 44 で唯一の entry point に昇格）
 - ✅ `src/tweaks-panel.tsx` — Loop 29 で ESM port 完了、Loop 32 で `localStorage` 永続化、Loop 34 で `.density-compact` を header/sidebar に拡張
 - ✅ `src/styles.css` — Loop 31 で `import './styles.css'` 経由に正規化、Loop 38 で `vite-app/src/` 配下に移設して Docker build context 内に閉じ込め
 - ✅ `Dockerfile`（multi-stage `node:22-alpine` build → `nginx:1.27-alpine` runtime）／ `nginx.conf`（`resolver 127.0.0.11 valid=10s` ＋ `set $backend_upstream ...` で **lazy DNS**、compose 外 standalone 起動でも nginx が clean に立ち上がる）
