@@ -63,6 +63,12 @@ jobs:
           docker compose logs backend
           exit 1
 
+      - name: Install dev extras inside backend container
+        # compose's startup command installs the package without dev extras
+        # (matches production image semantics). Smoke needs pytest+httpx, so
+        # we layer them on after the container is up.
+        run: docker compose exec -T backend pip install --quiet -e ".[dev]"
+
       - name: Run smoke tests against compose network
         run: |
           docker compose exec -T \
