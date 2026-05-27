@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-116%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-122%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vitest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -80,6 +80,7 @@ flowchart LR
 | ⏱️ Ingester | httpx + systemd timer | `backend/app/jobs/ingest_jma{,_marine}.py`<br/>`deploy/systemd/` | AMeDAS（10 分毎）／wave nowcast（毎時）の 2 系統並走 |
 | 🔐 Auth | API Key middleware | `backend/app/core/security.py` | mutation エンドポイントを保護 |
 | 🚦 Rate Limit | Sliding window middleware | `backend/app/core/ratelimit.py` | identity 単位 (key hash / IP) の濫用防御 |
+| 📊 Monitoring | prometheus_client 0.21+ | `backend/app/core/monitoring.py`<br/>`backend/app/api/metrics.py` | Prometheus 形式 `/metrics` エンドポイント — リクエスト数・レイテンシヒストグラム（Loop 50） |
 | 📜 Audit | Service-level audit writes | `backend/app/services/audit.py` | 変更の actor/detail を永続化 |
 
 ---
@@ -89,6 +90,7 @@ flowchart LR
 | Method | Path | 認証 | 用途 |
 |---|---|---|---|
 | `GET`  | `/healthz` `/readyz` | 不要 | プロセス/DB liveness |
+| `GET`  | `/metrics` | 不要 | Prometheus スクレープエンドポイント（`text/plain; version=0.0.4`） |
 | `GET`  | `/api/v1/sites` | 不要 | 現場一覧 |
 | `POST` | `/api/v1/sites` | 🔐 必要 | 現場登録（`audit_log` に記録） |
 | `POST` | `/api/v1/decisions` | 🔐 必要 | 期間内観測値から判定を計算（`audit_log` に記録） |
@@ -189,10 +191,11 @@ docker compose exec backend pytest -q tests/
 | ユニット（decisions） | 18 | 判定ロジック・閾値マージ・境界値・OR-merge 優先度・欠測補完（Loop 35 で 7 → 18 へ拡張） |
 | ユニット（OpenAPI exposure policy） | 4 | env スイッチで `/openapi.json`・`/docs`・`/redoc` を 404 化／無効でも `/healthz` ・`/` endpoints list は残る |
 | ユニット（health / readiness probes） | 3 | `/healthz` は常時 200・`/readyz` は DB 健全時 200／DB 失敗時 **503**（Loop 45 — orchestrator contract pin: k8s/docker healthcheck/LB/`curl -sf` が HTTP status のみで readiness を判定するため、`{"status":"degraded"}` を 200 で返す silent failure を構造修正） |
+| ユニット（Prometheus `/metrics`） | 6 | 200/content-type/auth 免除/rate-limit 免除/`wmcdss_http_requests_total` カウンター/`wmcdss_http_request_duration_seconds` ヒストグラム の存在を構造 pin — prometheus scraper は認証不要（Loop 50） |
 | ユニット（frontend data.ts） | 11 | `getDecision` 全分岐（ok / danger-wind / danger-wave / danger-multi / land 陸上 null gate）・`STATUS_LABEL` / `STATUS_CLASS` / `TYPE_LABEL` 定数 mapping — vitest 3.x（Loop 47） |
 | **E2E（Playwright / Firefox）** | **5** | **sidebar・status badge・気象データ/海上作業ナビゲーション・ダッシュボード復帰 — `vite preview` のみ（backend 不要、Loop 49）** |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **130** | ✅ backend unit 105/105 + frontend unit 11/11 + E2E 5/5 — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **136** | ✅ backend unit 111/111 + frontend unit 11/11 + E2E 5/5 — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 
@@ -200,7 +203,7 @@ docker compose exec backend pytest -q tests/
 
 | ジョブ | ステップ | 並走 | 失敗時の影響 |
 |---|---|:--:|---|
-| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (105 件) | — | ❌ マージブロック |
+| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (111 件) | — | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | unit 後 | ❌ マージブロック |
 | `frontend-unit` (Loop 47 追加) | `npm ci` ／ `vitest run` (11 件) | backend-unit と並走 | ❌ マージブロック |
 | `frontend-build` (`needs: frontend-unit`) | `npm ci` ／ `npm run build` ／ bundle size 報告 | unit 後 | ❌ マージブロック |

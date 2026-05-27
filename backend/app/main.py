@@ -4,7 +4,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.core.security import APIKeyMiddleware
 from app.core.ratelimit import RateLimitMiddleware
-from app.api import health, sites, decisions, thresholds, observations, audit
+from app.core.monitoring import MetricsMiddleware
+from app.api import health, sites, decisions, thresholds, observations, audit, metrics
 
 settings = get_settings()
 
@@ -19,12 +20,11 @@ if not settings.expose_openapi:
 app = FastAPI(**_fastapi_kwargs)
 
 # Order matters: Starlette runs the *last-added* middleware first, so the
-# effective request flow is CORS → RateLimit → APIKey → route.
-#   - CORS outermost: every response (including 401/429) carries CORS headers,
-#     otherwise browsers swallow the error before JS can read it.
-#   - RateLimit above APIKey: drop floods before spending hmac.compare_digest
-#     cycles. Identity uses a *hash* of X-API-Key, so unauthenticated and
-#     authenticated traffic share the same bucketing seam without leaking keys.
+# effective request flow is Metrics → CORS → RateLimit → APIKey → route.
+#   - Metrics outermost: records every request including 401/429 rejections,
+#     giving a complete picture of traffic (not just successful requests).
+#   - CORS next: every response carries CORS headers before auth/rate checks.
+#   - RateLimit above APIKey: drop floods before spending hmac.compare_digest.
 app.add_middleware(APIKeyMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(
@@ -34,8 +34,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(MetricsMiddleware)
 
 app.include_router(health.router)
+app.include_router(metrics.router)
 app.include_router(sites.router, prefix="/api/v1")
 app.include_router(decisions.router, prefix="/api/v1")
 app.include_router(thresholds.router, prefix="/api/v1")
@@ -52,6 +54,7 @@ async def root():
         "endpoints": [
             "/healthz",
             "/readyz",
+            "/metrics",
             "/api/v1/sites",
             "/api/v1/decisions",
             "/api/v1/thresholds",

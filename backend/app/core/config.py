@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     auth_required_methods: list[str] = ["POST", "PATCH", "PUT", "DELETE"]
     # Note: "/" intentionally NOT here. GETs are already exempt via
     # auth_required_methods; listing "/" makes _exempt() refactors risky.
-    auth_exempt_paths: list[str] = ["/healthz", "/readyz", "/docs", "/openapi.json"]
+    auth_exempt_paths: list[str] = ["/healthz", "/readyz", "/docs", "/openapi.json", "/metrics"]
 
     # Rate limit: sliding window per identity (X-API-Key hash or client IP).
     # 0 = disabled (dev default; production sets e.g. 60). Applies to the same
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     # Health/ready probes must never 429 or systemd/k8s would mark the service
     # unhealthy under load. Kept separate from `auth_exempt_paths` because the
     # threat models diverge (auth-exempt ≠ should-bypass-DoS-protection).
-    rate_limit_exempt_paths: list[str] = ["/healthz", "/readyz"]
+    rate_limit_exempt_paths: list[str] = ["/healthz", "/readyz", "/metrics"]
 
 
 @lru_cache
