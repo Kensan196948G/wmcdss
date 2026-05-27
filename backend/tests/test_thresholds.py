@@ -122,6 +122,7 @@ def test_list_thresholds_with_work_type_filter():
     c = TestClient(_make_app(_FakeDB(_FakeResult(rows=[]))))
     r = c.get("/thresholds?work_type=marine_lift")
     assert r.status_code == 200
+    assert r.json() == []
 
 
 # ---------------------------------------------------------------------------
