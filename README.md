@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-107%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-116%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vitest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -181,8 +181,8 @@ docker compose exec backend pytest -q tests/
 
 | グループ | 件数 | 内容 |
 |---|---:|---|
-| ユニット（auth middleware） | 23 | API Key 認証・exempt パス・タイミング攻撃耐性・非 ASCII 鍵拒否・過大鍵 DoS 防御・header 多重指定・空 keys 設定の閉鎖（Loop 37 で 9 → 23 へ拡張） |
-| ユニット（rate limit middleware） | 13 | sliding window・bucket 分離・window 期限切れ復活・exempt パス・identity hashing 漏洩防止／**FIFO identity eviction 3 件（Loop 41 — `_MAX_IDENTITIES=4096` の X-API-Key 量産 DoS 防壁を構造検証）** |
+| ユニット（auth middleware） | 28 | API Key 認証・exempt パス・タイミング攻撃耐性・非 ASCII 鍵拒否・過大鍵 DoS 防御・header 多重指定・空 keys 設定の閉鎖（Loop 37 で 9 → 23 へ拡張）／**境界値 + パス prefix 5 件（Loop 48 — 空白パディング鍵拒否・512 境界包含・サブパス exempt・隣接パス漏洩防止）** |
+| ユニット（rate limit middleware） | 17 | sliding window・bucket 分離・window 期限切れ復活・exempt パス・identity hashing 漏洩防止／**FIFO identity eviction 3 件（Loop 41）**／**境界値 4 件（Loop 48 — client=None identity・window 境界厳密一致・PUT/PATCH/DELETE rate-limit・最終許可リクエストの remaining=0）** |
 | ユニット（audit hardening） | 9 | actor_from の API Key 漏洩防止・write_audit strict モードの SQLAlchemyError 伝播 |
 | ユニット（JMA AMeDAS fetcher） | 12 | パース・品質フラグ・block ロールバック・QC-drop 検出／**error-propagation 6 件（Loop 42 — 429/401/503 raise・ReadTimeout/ConnectError 伝播・両 block 200+空 body の None 返却を `httpx.MockTransport` handler raise 技法で構造 pin）** |
 | ユニット（JMA wave fetcher） | 14 | パース・grid snap・日跨ぎ fallback・sentinel 値除外・scalar/tuple 両対応／**error-propagation 5 件（Loop 43 — Loop 42 pattern を `jma_wave.py:148-167` に水平展開、5xx は既 pin で 429/401/ReadTimeout/ConnectError/両 day 200+空 body の 5 分岐を独立 pin）** |
@@ -191,7 +191,7 @@ docker compose exec backend pytest -q tests/
 | ユニット（health / readiness probes） | 3 | `/healthz` は常時 200・`/readyz` は DB 健全時 200／DB 失敗時 **503**（Loop 45 — orchestrator contract pin: k8s/docker healthcheck/LB/`curl -sf` が HTTP status のみで readiness を判定するため、`{"status":"degraded"}` を 200 で返す silent failure を構造修正） |
 | ユニット（frontend data.ts） | 11 | `getDecision` 全分岐（ok / danger-wind / danger-wave / danger-multi / land 陸上 null gate）・`STATUS_LABEL` / `STATUS_CLASS` / `TYPE_LABEL` 定数 mapping — vitest 3.x（Loop 47） |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **116** | ✅ backend unit 96/96 + frontend unit 11/11 — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **125** | ✅ backend unit 105/105 + frontend unit 11/11 — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 
@@ -199,7 +199,7 @@ docker compose exec backend pytest -q tests/
 
 | ジョブ | ステップ | 並走 | 失敗時の影響 |
 |---|---|:--:|---|
-| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (96 件) | — | ❌ マージブロック |
+| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (105 件) | — | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | unit 後 | ❌ マージブロック |
 | `frontend-unit` (Loop 47 追加) | `npm ci` ／ `vitest run` (11 件) | backend-unit と並走 | ❌ マージブロック |
 | `frontend-build` (`needs: frontend-unit`) | `npm ci` ／ `npm run build` ／ bundle size 報告 | unit 後 | ❌ マージブロック |

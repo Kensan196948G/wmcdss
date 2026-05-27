@@ -212,3 +212,45 @@ def test_actor_from_does_not_fall_back_to_api_key():
     out = security_mod.actor_from(_req_with({"X-API-Key": "supersecret"}))
     assert out == "anonymous"
     assert "supersecret" not in out
+
+
+# ---------------------------------------------------------------------------
+# Loop 48 — security pivot: boundary cases + path-prefix edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_whitespace_padded_key_rejected(make_app):
+    # Keys must match exactly. Silent trimming would allow " secret " to bypass
+    # authentication where "secret" is the configured key — a silent mismatch
+    # caused by client-side formatting bugs.
+    r = TestClient(make_app(["secret"])).post("/w", headers={"X-API-Key": " secret "})
+    assert r.status_code == 401
+
+
+def test_key_exactly_max_len_is_processed_not_size_rejected(make_app):
+    # _MAX_KEY_LEN=512: `len > 512` is the guard, so a 512-char key passes the
+    # size guard and reaches hmac.compare_digest (where it correctly fails to
+    # match "secret"). Confirms the boundary is inclusive, not off-by-one.
+    assert TestClient(make_app(["secret"])).post(
+        "/w", headers={"X-API-Key": "a" * 512}
+    ).status_code == 401
+
+
+def test_key_one_over_max_len_early_rejected():
+    # 513 chars exceeds _MAX_KEY_LEN — guard fires before any hmac work.
+    assert security_mod._key_matches("a" * 513, ["secret"]) is False
+
+
+def test_exempt_subpath_is_also_exempt(make_app):
+    # /healthz is in auth_exempt_paths. A subpath /healthz/sub should also
+    # be exempt via the prefix match ("/healthz/" prefix). The middleware
+    # calls call_next which returns 404 (no route) rather than a 401.
+    r = TestClient(make_app(["secret"])).post("/healthz/sub")
+    assert r.status_code == 404  # allowed through middleware, no route registered
+
+
+def test_exempt_prefix_does_not_bleed_to_adjacent_path(make_app):
+    # /healthzother starts with "/healthz" but NOT with "/healthz/" — the
+    # prefix check must not exempt it. A POST without a key must still get 401.
+    r = TestClient(make_app(["secret"])).post("/healthzother")
+    assert r.status_code == 401

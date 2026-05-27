@@ -193,3 +193,71 @@ def test_evicted_identity_starts_fresh_quota(monkeypatch):
     allowed, remaining, _ = b.hit("k:victim", limit=3, window_s=60.0, now=1003.0)
     assert allowed is True
     assert remaining == 2  # limit 3 − 1 fresh hit
+
+
+# ---------------------------------------------------------------------------
+# Loop 48 — security pivot: boundary cases + identity edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_identity_no_client_no_api_key():
+    # When both X-API-Key is absent AND request.client is None (e.g. ASGI
+    # internal calls), _identity must return "i:?" — no crash.
+    class FakeReq:
+        headers = {}
+        client = None
+    assert ratelimit_mod._identity(FakeReq()) == "i:?"
+
+
+def test_window_resets_at_exactly_window_boundary(make_app, monkeypatch):
+    # Sliding window uses `dq[0] <= cutoff` where cutoff = now - window_s.
+    # At t = t0 + 60.0 exactly: cutoff == t0 so the first hit IS evicted.
+    # This confirms the boundary is inclusive — quota fully restores at the
+    # edge rather than one tick later.
+    now = {"t": 1000.0}
+    monkeypatch.setattr(ratelimit_mod.time, "monotonic", lambda: now["t"])
+
+    c = TestClient(make_app(rate_limit_per_minute=1))
+    assert c.post("/w").status_code == 200  # t=1000.0, bucket: [1000.0]
+    assert c.post("/w").status_code == 429  # still t=1000.0, at limit
+
+    now["t"] = 1060.0  # exactly one window later: 1000.0 + 60.0
+    assert c.post("/w").status_code == 200  # window evicted, quota restored
+
+
+def test_put_patch_delete_are_rate_limited(monkeypatch):
+    # rate_limit_methods includes PUT/PATCH/DELETE alongside POST. Confirm all
+    # three mutation methods consume quota — not just POST (the fixture default).
+    fake = config_mod.Settings(rate_limit_per_minute=1)
+    monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
+    monkeypatch.setattr(ratelimit_mod, "_config", config_mod)
+    ratelimit_mod._buckets.reset()
+
+    app = FastAPI()
+    app.add_middleware(RateLimitMiddleware)
+
+    @app.put("/w")
+    async def put_w(): return {"ok": True}
+
+    @app.patch("/w")
+    async def patch_w(): return {"ok": True}
+
+    @app.delete("/w")
+    async def delete_w(): return {"ok": True}
+
+    for method in ("put", "patch", "delete"):
+        ratelimit_mod._buckets.reset()
+        c = TestClient(app)
+        assert getattr(c, method)("/w").status_code == 200, f"{method} first"
+        assert getattr(c, method)("/w").status_code == 429, f"{method} second"
+
+
+def test_last_allowed_request_remaining_zero(make_app):
+    # The Nth request (exactly at limit) must be allowed and report
+    # X-RateLimit-Remaining: 0 — confirming the header reflects post-hit state.
+    c = TestClient(make_app(rate_limit_per_minute=2))
+    assert c.post("/w").headers["X-RateLimit-Remaining"] == "1"
+    r = c.post("/w")  # second = last allowed
+    assert r.status_code == 200
+    assert r.headers["X-RateLimit-Remaining"] == "0"
+    assert c.post("/w").status_code == 429  # third = blocked
