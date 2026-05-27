@@ -5,8 +5,8 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-96%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
-[![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
+[![tests](https://img.shields.io/badge/tests-107%20unit%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vitest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
 [![postgres](https://img.shields.io/badge/Postgres-16-336791)]()
@@ -189,21 +189,23 @@ docker compose exec backend pytest -q tests/
 | ユニット（decisions） | 18 | 判定ロジック・閾値マージ・境界値・OR-merge 優先度・欠測補完（Loop 35 で 7 → 18 へ拡張） |
 | ユニット（OpenAPI exposure policy） | 4 | env スイッチで `/openapi.json`・`/docs`・`/redoc` を 404 化／無効でも `/healthz` ・`/` endpoints list は残る |
 | ユニット（health / readiness probes） | 3 | `/healthz` は常時 200・`/readyz` は DB 健全時 200／DB 失敗時 **503**（Loop 45 — orchestrator contract pin: k8s/docker healthcheck/LB/`curl -sf` が HTTP status のみで readiness を判定するため、`{"status":"degraded"}` を 200 で返す silent failure を構造修正） |
+| ユニット（frontend data.ts） | 11 | `getDecision` 全分岐（ok / danger-wind / danger-wave / danger-multi / land 陸上 null gate）・`STATUS_LABEL` / `STATUS_CLASS` / `TYPE_LABEL` 定数 mapping — vitest 3.x（Loop 47） |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **105** | ✅ unit 96/96 passing — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **116** | ✅ backend unit 96/96 + frontend unit 11/11 — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 
-`push` / `pull_request` (→ `main`) で `.github/workflows/ci.yml` が **四段ジョブ**として起動：
+`push` / `pull_request` (→ `main`) で `.github/workflows/ci.yml` が **五段ジョブ**として起動：
 
 | ジョブ | ステップ | 並走 | 失敗時の影響 |
 |---|---|:--:|---|
 | `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (96 件) | — | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | unit 後 | ❌ マージブロック |
-| `frontend-build` | `npm ci` (lockfile-pinned) ／ `npm run build` ／ bundle size 報告 | unit と並走 | ❌ マージブロック |
+| `frontend-unit` (Loop 47 追加) | `npm ci` ／ `vitest run` (11 件) | backend-unit と並走 | ❌ マージブロック |
+| `frontend-build` (`needs: frontend-unit`) | `npm ci` ／ `npm run build` ／ bundle size 報告 | unit 後 | ❌ マージブロック |
 | `frontend-docker` (Loop 38 追加) | `docker buildx build` で `frontend/vite-app/Dockerfile` を multi-stage build（host の `npm run build` では検出不能な Docker context-escape ／ nginx eager DNS を機械検出） | unit と並走 | ❌ マージブロック |
 
-> 📝 unit を先に落とすことで、compose 起動 (〜90s) のコストを回帰の早期発見と引き換えに最小化。`frontend-build` と `frontend-docker` は `backend-unit` と並走し、壁時計時間に影響しない (実測: frontend-build 9s ／ frontend-docker 〜45s ／ unit 26s ／ smoke 40s)。smoke は同じコマンドでローカルでも再現可能 (`docker compose exec backend pytest tests/test_api_smoke.py`)。
+> 📝 backend-unit と frontend-unit が並走してトータル壁時計時間を最小化。`frontend-build` は `frontend-unit` 通過後のみ起動し、vitest が落ちているときに重い build を走らせない。smoke は同じコマンドでローカルでも再現可能 (`docker compose exec backend pytest tests/test_api_smoke.py`)。
 
 ---
 

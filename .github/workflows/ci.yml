@@ -83,12 +83,9 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  frontend-build:
-    name: frontend / vite build (scaffold)
+  frontend-unit:
+    name: frontend / vitest (pure-function)
     runs-on: ubuntu-latest
-    # No `needs:` — frontend toolchain is independent of backend tests, so
-    # this job runs in parallel and shortens the critical path. It will be
-    # promoted to required-status once Phase 1 ports real .jsx modules.
     defaults:
       run:
         working-directory: frontend/vite-app
@@ -99,22 +96,37 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          # setup-node hashes the lockfile to compute the cache key, so it
-          # must point at the file we actually use for installs.
           cache-dependency-path: frontend/vite-app/package-lock.json
 
       - name: Install (clean, lockfile-pinned)
-        # `npm ci` refuses to mutate the lockfile — exactly what we want in
-        # CI so a stray dependency drift fails loudly instead of silently
-        # producing a different bundle than the developer just tested.
+        run: npm ci
+
+      - name: Run vitest
+        run: npm test
+
+  frontend-build:
+    name: frontend / vite build (scaffold)
+    runs-on: ubuntu-latest
+    needs: frontend-unit
+    defaults:
+      run:
+        working-directory: frontend/vite-app
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/vite-app/package-lock.json
+
+      - name: Install (clean, lockfile-pinned)
         run: npm ci
 
       - name: Build
         run: npm run build
 
       - name: Report bundle size
-        # Surface bundle bytes in the job log so size regressions are easy
-        # to spot in PR diffs. Phase 1 may turn this into an artifact upload.
         run: |
           echo "::group::dist/ contents"
           ls -lah dist
