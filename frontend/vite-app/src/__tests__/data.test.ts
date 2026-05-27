@@ -5,7 +5,36 @@ import {
   TYPE_LABEL,
   SITES,
   getDecision,
+  generateWeather,
+  generateMarine,
+  generateHourlyWind,
+  generateHourlyWave,
+  generateHistoricalMonthly,
+  FORECAST_DAYS,
+  WEATHER_ICONS,
+  AUDIT_LOG,
+  ETL_JOBS,
+  type Site,
+  type SiteThresholds,
 } from '../data';
+
+function synthSite(id: string, thresholds: SiteThresholds): Site {
+  return {
+    id,
+    name: 'Synthetic Test Site',
+    shortName: 'Synth',
+    type: 'marine',
+    lat: 0,
+    lng: 0,
+    station: 'Test',
+    marinePoint: 'Test',
+    status: 'ok',
+    manager: 'Test',
+    contractor: 'Test',
+    period: '2025/01/01 〜 2027/12/31',
+    thresholds,
+  };
+}
 
 describe('STATUS_LABEL', () => {
   it('ok → 施工可', () => {
@@ -88,5 +117,176 @@ describe('getDecision', () => {
     const result = getDecision(site);
     expect(result.status).toBe('danger');
     expect(result.reasons.some(r => r.includes('風速') && r.includes('超過'))).toBe(true);
+  });
+
+  // Wind warn branch: site-02 weather (wind=7.8), windSpeed=9 → 7.8 > 7.2 (80%) but < 9
+  it('returns warn when wind is in 80%–100% of threshold', () => {
+    const site = synthSite('site-02', { windSpeed: 9, waveHeight: 2.0, rainfall: 5, tempLow: 5, tempHigh: 35 });
+    const result = getDecision(site);
+    expect(result.status).toBe('warn');
+    expect(result.reasons.some(r => r.includes('風速') && r.includes('接近'))).toBe(true);
+  });
+
+  // Temp warn branch: site-01 weather (temp=22.4), tempLow=25 → 22.4 < 25 → warn
+  it('returns warn when temperature is below tempLow threshold', () => {
+    const site = synthSite('site-01', { windSpeed: 10, waveHeight: null, rainfall: 5, tempLow: 25, tempHigh: 35 });
+    const result = getDecision(site);
+    expect(result.status).toBe('warn');
+    expect(result.reasons.some(r => r.includes('気温') && r.includes('下回'))).toBe(true);
+  });
+
+  // Wave warn branch: site-01 marine (wave=0.8), waveHeight=0.9 → 0.8 > 0.72 (80%) but < 0.9
+  it('returns warn when wave height is in 80%–100% of threshold', () => {
+    const site = synthSite('site-01', { windSpeed: 10, waveHeight: 0.9, rainfall: 5, tempLow: 5, tempHigh: 35 });
+    const result = getDecision(site);
+    expect(result.status).toBe('warn');
+    expect(result.reasons.some(r => r.includes('有義波高') && r.includes('接近'))).toBe(true);
+  });
+});
+
+describe('generateWeather', () => {
+  it('returns a WeatherSample for a known site id', () => {
+    const w = generateWeather('site-01');
+    expect(typeof w.temp).toBe('number');
+    expect(typeof w.wind).toBe('number');
+    expect(typeof w.rain).toBe('number');
+    expect(typeof w.hum).toBe('number');
+  });
+
+  it('falls back to site-01 data for an unknown site id', () => {
+    const fallback = generateWeather('site-01');
+    const unknown = generateWeather('site-unknown-xyz');
+    expect(unknown).toEqual(fallback);
+  });
+});
+
+describe('generateMarine', () => {
+  it('returns a MarineSample for a known marine site id', () => {
+    const m = generateMarine('site-01');
+    expect(m).not.toBeNull();
+    expect(typeof m!.waveHeight).toBe('number');
+    expect(typeof m!.wavePeriod).toBe('number');
+  });
+
+  it('returns null for an unknown site id', () => {
+    expect(generateMarine('site-unknown-xyz')).toBeNull();
+  });
+});
+
+describe('generateHourlyWind', () => {
+  it('returns exactly 24 data points', () => {
+    expect(generateHourlyWind()).toHaveLength(24);
+  });
+
+  it('assigns sequential hour indices 0–23', () => {
+    const pts = generateHourlyWind();
+    pts.forEach((p, i) => expect(p.hour).toBe(i));
+  });
+
+  it('speed values are finite numbers', () => {
+    generateHourlyWind().forEach(p => {
+      expect(typeof p.speed).toBe('number');
+      expect(isFinite(p.speed)).toBe(true);
+    });
+  });
+});
+
+describe('generateHourlyWave', () => {
+  it('returns exactly 24 data points', () => {
+    expect(generateHourlyWave()).toHaveLength(24);
+  });
+
+  it('assigns sequential hour indices 0–23', () => {
+    const pts = generateHourlyWave();
+    pts.forEach((p, i) => expect(p.hour).toBe(i));
+  });
+
+  it('height values are finite numbers', () => {
+    generateHourlyWave().forEach(p => {
+      expect(typeof p.height).toBe('number');
+      expect(isFinite(p.height)).toBe(true);
+    });
+  });
+});
+
+describe('generateHistoricalMonthly', () => {
+  it('returns exactly 12 months', () => {
+    expect(generateHistoricalMonthly()).toHaveLength(12);
+  });
+
+  it('month labels run from 1月 to 12月', () => {
+    const months = generateHistoricalMonthly();
+    expect(months[0].month).toBe('1月');
+    expect(months[11].month).toBe('12月');
+  });
+
+  it('numeric fields are finite numbers', () => {
+    generateHistoricalMonthly().forEach(m => {
+      expect(isFinite(m.avgWind)).toBe(true);
+      expect(isFinite(m.maxWind)).toBe(true);
+      expect(isFinite(m.avgWave)).toBe(true);
+      expect(isFinite(m.maxWave)).toBe(true);
+      expect(isFinite(m.rainDays)).toBe(true);
+      expect(isFinite(m.totalRain)).toBe(true);
+    });
+  });
+});
+
+describe('FORECAST_DAYS', () => {
+  it('contains 7 forecast days', () => {
+    expect(FORECAST_DAYS).toHaveLength(7);
+  });
+
+  it('each entry has required fields', () => {
+    FORECAST_DAYS.forEach(d => {
+      expect(typeof d.date).toBe('string');
+      expect(typeof d.tempH).toBe('number');
+      expect(typeof d.tempL).toBe('number');
+      expect(typeof d.rain).toBe('number');
+      expect(typeof d.wind).toBe('number');
+    });
+  });
+});
+
+describe('WEATHER_ICONS', () => {
+  it('maps all four WeatherKind values to emoji strings', () => {
+    expect(WEATHER_ICONS['晴れ']).toBeTruthy();
+    expect(WEATHER_ICONS['曇り']).toBeTruthy();
+    expect(WEATHER_ICONS['雨']).toBeTruthy();
+    expect(WEATHER_ICONS['雪']).toBeTruthy();
+  });
+});
+
+describe('AUDIT_LOG', () => {
+  it('contains 10 entries', () => {
+    expect(AUDIT_LOG).toHaveLength(10);
+  });
+
+  it('each entry has id, time, user, action, target, detail', () => {
+    AUDIT_LOG.forEach(e => {
+      expect(typeof e.id).toBe('number');
+      expect(typeof e.time).toBe('string');
+      expect(typeof e.user).toBe('string');
+      expect(typeof e.action).toBe('string');
+      expect(typeof e.target).toBe('string');
+      expect(typeof e.detail).toBe('string');
+    });
+  });
+});
+
+describe('ETL_JOBS', () => {
+  it('contains 6 jobs', () => {
+    expect(ETL_JOBS).toHaveLength(6);
+  });
+
+  it('each job has id, name, schedule, lastRun, status, records', () => {
+    ETL_JOBS.forEach(j => {
+      expect(typeof j.id).toBe('number');
+      expect(typeof j.name).toBe('string');
+      expect(typeof j.schedule).toBe('string');
+      expect(typeof j.lastRun).toBe('string');
+      expect(['ok', 'warn', 'danger']).toContain(j.status);
+      expect(typeof j.records).toBe('number');
+    });
   });
 });
