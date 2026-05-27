@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-151%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-175%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vitest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -195,10 +195,12 @@ docker compose exec backend pytest -q tests/
 | ユニット（observations API） | 13 | GET weather/marine list・latest 404/200・POST ingest empty/1-row — `_FakeResult` + `_FakeDB` duck-type で全 6 エンドポイントをカバー（Loop 51） |
 | ユニット（sites API） | 6 | GET list/404/200・POST 409 重複・POST 201 新規 — `_FakeDB.refresh()` で `id`/`created_at`/`updated_at` を注入（Loop 52） |
 | ユニット（thresholds API） | 10 | GET list（site_id/work_type フィルタ）・GET 404/200・POST 201・PATCH 404/200・DELETE 404/204（Loop 52） |
+| ユニット（decisions API） | 11 | POST 400 window 逆順/同一・go/caution/stop 判定・severity 優先度（挿入順両方）・go-not-met・レスポンス shape・marine stop・write_audit strict=True ロールバック（`_FlushFailDB` + `raise_server_exceptions=False`）（Loop 53） |
+| ユニット（audit API） | 13 | GET empty/rows/actor/action/limit フィルタ・null actor・detail フィールド・limit>1000→422・t0/t1/target_type/target_id パラメータ受理・AuditOut 7 フィールド全確認（Loop 53） |
 | ユニット（frontend data.ts） | 11 | `getDecision` 全分岐（ok / danger-wind / danger-wave / danger-multi / land 陸上 null gate）・`STATUS_LABEL` / `STATUS_CLASS` / `TYPE_LABEL` 定数 mapping — vitest 3.x（Loop 47） |
 | **E2E（Playwright / Firefox）** | **5** | **sidebar・status badge・気象データ/海上作業ナビゲーション・ダッシュボード復帰 — `vite preview` のみ（backend 不要、Loop 49）** |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **165** | ✅ backend unit 140/140 + frontend unit 11/11 + E2E 5/5 — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **189** | ✅ backend unit 164/164 + frontend unit 11/11 + E2E 5/5 — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 
@@ -206,7 +208,7 @@ docker compose exec backend pytest -q tests/
 
 | ジョブ | ステップ | 並走 | 失敗時の影響 |
 |---|---|:--:|---|
-| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (140 件) | — | ❌ マージブロック |
+| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (164 件) | — | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | unit 後 | ❌ マージブロック |
 | `frontend-unit` (Loop 47 追加) | `npm ci` ／ `vitest run` (11 件) | backend-unit と並走 | ❌ マージブロック |
 | `frontend-build` (`needs: frontend-unit`) | `npm ci` ／ `npm run build` ／ bundle size 報告 | unit 後 | ❌ マージブロック |
