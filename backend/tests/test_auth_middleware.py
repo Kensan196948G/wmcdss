@@ -254,3 +254,9 @@ def test_exempt_prefix_does_not_bleed_to_adjacent_path(make_app):
     # prefix check must not exempt it. A POST without a key must still get 401.
     r = TestClient(make_app(["secret"])).post("/healthzother")
     assert r.status_code == 401
+
+
+def test_key_matches_bytes_returns_false():
+    # bytes has no .encode() → AttributeError caught at security.py:55-56.
+    # Callers are expected to pass str, but HTTP parsing could yield bytes.
+    assert security_mod._key_matches(b"secret", ["secret"]) is False  # type: ignore[arg-type]
