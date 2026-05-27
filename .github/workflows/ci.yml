@@ -178,3 +178,39 @@ jobs:
           docker logs fe-ci
           docker rm -f fe-ci
           exit 1
+
+  frontend-e2e:
+    name: frontend / playwright e2e
+    runs-on: ubuntu-latest
+    needs: frontend-build
+    defaults:
+      run:
+        working-directory: frontend/vite-app
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/vite-app/package-lock.json
+
+      - name: Install (clean, lockfile-pinned)
+        run: npm ci
+
+      - name: Install Playwright browsers
+        # Firefox is the E2E browser; chrome-headless-shell (Playwright 1.60 /
+        # build 1223) triggers SIGTRAP on Linux 6.17 kernels via seccomp filter
+        # incompatibility. Firefox 150 is stable on all supported runners.
+        run: npx playwright install --with-deps firefox
+
+      - name: Run E2E tests
+        run: npm run test:e2e
+
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: frontend/vite-app/playwright-report/
+          retention-days: 7
