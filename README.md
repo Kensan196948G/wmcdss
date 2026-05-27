@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-185%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-197%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vitest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -186,8 +186,8 @@ docker compose exec backend pytest -q tests/
 | ユニット（auth middleware） | 28 | API Key 認証・exempt パス・タイミング攻撃耐性・非 ASCII 鍵拒否・過大鍵 DoS 防御・header 多重指定・空 keys 設定の閉鎖（Loop 37 で 9 → 23 へ拡張）／**境界値 + パス prefix 5 件（Loop 48 — 空白パディング鍵拒否・512 境界包含・サブパス exempt・隣接パス漏洩防止）** |
 | ユニット（rate limit middleware） | 17 | sliding window・bucket 分離・window 期限切れ復活・exempt パス・identity hashing 漏洩防止／**FIFO identity eviction 3 件（Loop 41）**／**境界値 4 件（Loop 48 — client=None identity・window 境界厳密一致・PUT/PATCH/DELETE rate-limit・最終許可リクエストの remaining=0）** |
 | ユニット（audit hardening） | 9 | actor_from の API Key 漏洩防止・write_audit strict モードの SQLAlchemyError 伝播 |
-| ユニット（JMA AMeDAS fetcher） | 12 | パース・品質フラグ・block ロールバック・QC-drop 検出／**error-propagation 6 件（Loop 42 — 429/401/503 raise・ReadTimeout/ConnectError 伝播・両 block 200+空 body の None 返却を `httpx.MockTransport` handler raise 技法で構造 pin）** |
-| ユニット（JMA wave fetcher） | 14 | パース・grid snap・日跨ぎ fallback・sentinel 値除外・scalar/tuple 両対応／**error-propagation 5 件（Loop 43 — Loop 42 pattern を `jma_wave.py:148-167` に水平展開、5xx は既 pin で 429/401/ReadTimeout/ConnectError/両 day 200+空 body の 5 分岐を独立 pin）** |
+| ユニット（JMA AMeDAS fetcher） | 16 | パース・品質フラグ・block ロールバック・QC-drop 検出／error-propagation 6 件（Loop 42）／**純粋関数 edge case 4 件 — `_val()` 非数値・`_wind_dir_deg()` non-list/TypeError・`_latest_entry()` non-dict — `jma.py:56-57/63/66-67/84` カバレッジ完全解消（Loop 55）** |
+| ユニット（JMA wave fetcher） | 17 | パース・grid snap・日跨ぎ fallback・sentinel 値除外・scalar/tuple 両対応／error-propagation 5 件（Loop 43）／**純粋関数 edge case 3 件 — `_val()` 短リスト/非数値・`_latest_entry()` non-dict — `jma_wave.py:75/87-88/104` カバレッジ完全解消（Loop 55）** |
 | ユニット（decisions） | 18 | 判定ロジック・閾値マージ・境界値・OR-merge 優先度・欠測補完（Loop 35 で 7 → 18 へ拡張） |
 | ユニット（OpenAPI exposure policy） | 4 | env スイッチで `/openapi.json`・`/docs`・`/redoc` を 404 化／無効でも `/healthz` ・`/` endpoints list は残る |
 | ユニット（health / readiness probes） | 3 | `/healthz` は常時 200・`/readyz` は DB 健全時 200／DB 失敗時 **503**（Loop 45 — orchestrator contract pin: k8s/docker healthcheck/LB/`curl -sf` が HTTP status のみで readiness を判定するため、`{"status":"degraded"}` を 200 で返す silent failure を構造修正） |
@@ -197,13 +197,14 @@ docker compose exec backend pytest -q tests/
 | ユニット（thresholds API） | 10 | GET list（site_id/work_type フィルタ）・GET 404/200・POST 201・PATCH 404/200・DELETE 404/204（Loop 52） |
 | ユニット（decisions API） | 11 | POST 400 window 逆順/同一・go/caution/stop 判定・severity 優先度（挿入順両方）・go-not-met・レスポンス shape・marine stop・write_audit strict=True ロールバック（`_FlushFailDB` + `raise_server_exceptions=False`）（Loop 53） |
 | ユニット（audit API） | 13 | GET empty/rows/actor/action/limit フィルタ・null actor・detail フィールド・limit>1000→422・t0/t1/target_type/target_id パラメータ受理・AuditOut 7 フィールド全確認（Loop 53） |
-| ユニット（weather ingest job） | 10 | `run_once()` no-sites/成功/timeout/4xx/5xx/no-data/upsert失敗/commit失敗/audit detail/ConnectError 全 10 分岐（Loop 54） |
-| ユニット（marine ingest job） | 10 | `run_once()` no-sites-commit（marine 固有 audit 契約）/成功/timeout/429/500/no-data/upsert失敗/commit失敗/audit shape/no-sites-commit-fail（Loop 54） |
+| ユニット（weather ingest job） | 12 | `run_once()` 10 分岐（Loop 54）／**`main()` success+exception の sync テスト 2 件 — `asyncio.run` patch で `ingest_jma.py:156-165` カバレッジ解消（Loop 55）** |
+| ユニット（marine ingest job） | 12 | `run_once()` 10 分岐（Loop 54）／**`main()` success+exception の sync テスト 2 件 — `ingest_jma_marine.py:172-181` カバレッジ解消（Loop 55）** |
 | ユニット（security `_key_matches` bytes ブランチ） | 1 | `bytes` 入力 → `AttributeError` → `return False` — `security.py:55-56` カバレッジ完全解消（Loop 54） |
+| ユニット（`get_db()` async generator） | 1 | `SessionLocal` mock + `gen.__anext__()` で `session.py:12-13` カバレッジ解消（Loop 55） |
 | ユニット（frontend data.ts） | 11 | `getDecision` 全分岐（ok / danger-wind / danger-wave / danger-multi / land 陸上 null gate）・`STATUS_LABEL` / `STATUS_CLASS` / `TYPE_LABEL` 定数 mapping — vitest 3.x（Loop 47） |
 | **E2E（Playwright / Firefox）** | **5** | **sidebar・status badge・気象データ/海上作業ナビゲーション・ダッシュボード復帰 — `vite preview` のみ（backend 不要、Loop 49）** |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **200** | ✅ backend unit 185/185 + frontend unit 11/11 + E2E 5/5 — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **213** | ✅ backend unit 197/197 + frontend unit 11/11 + E2E 5/5 — coverage 99% — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 
@@ -211,7 +212,7 @@ docker compose exec backend pytest -q tests/
 
 | ジョブ | ステップ | 並走 | 失敗時の影響 |
 |---|---|:--:|---|
-| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (185 件) | — | ❌ マージブロック |
+| `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (197 件) | — | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | unit 後 | ❌ マージブロック |
 | `frontend-unit` (Loop 47 追加) | `npm ci` ／ `vitest run` (11 件) | backend-unit と並走 | ❌ マージブロック |
 | `frontend-build` (`needs: frontend-unit`) | `npm ci` ／ `npm run build` ／ bundle size 報告 | unit 後 | ❌ マージブロック |

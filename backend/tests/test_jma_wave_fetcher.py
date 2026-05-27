@@ -247,3 +247,23 @@ async def test_fetch_latest_returns_none_when_both_blocks_empty_payload(mock_cli
         )
     assert result is None
     assert len(calls) == 2  # both today and yesterday were attempted
+
+
+# ---------------------------------------------------------------------------
+# Loop 55 — pure helper edge cases (no I/O, no mocking needed)
+# ---------------------------------------------------------------------------
+
+
+def test_wave_val_returns_none_for_short_list():
+    # len(v) == 1 < 2 → jma_wave.py:74-75
+    assert jma_wave._val({"sigWaveHeight": [1.5]}, "sigWaveHeight") is None
+
+
+def test_wave_val_returns_none_for_non_numeric_raw():
+    # float("bad") → ValueError → jma_wave.py:87-88
+    assert jma_wave._val({"sigWaveHeight": ["bad", 0]}, "sigWaveHeight") is None
+
+
+def test_wave_latest_entry_returns_none_for_non_dict_value():
+    # entry is a list, not a dict → jma_wave.py:103-104
+    assert jma_wave._latest_entry({"202605261200": [1, 2, 3]}) is None

@@ -204,3 +204,28 @@ async def test_fetch_latest_returns_none_when_both_blocks_empty_payload(mock_cli
         )
     assert result is None
     assert len(calls) == 2  # both current and -3h blocks were attempted
+
+
+# ---------------------------------------------------------------------------
+# Loop 55 — pure helper edge cases (no I/O, no mocking needed)
+# ---------------------------------------------------------------------------
+
+
+def test_val_returns_none_for_non_numeric_raw():
+    # float("N/A") → ValueError → jma.py:56-57
+    assert jma._val({"k": ["N/A", 0]}, "k") is None
+
+
+def test_wind_dir_deg_returns_none_for_non_list():
+    # v is a plain int, not a list → isinstance check fails → jma.py:62-63
+    assert jma._wind_dir_deg({"windDirection": 4}) is None
+
+
+def test_wind_dir_deg_returns_none_for_bad_element():
+    # int(None) → TypeError → jma.py:66-67
+    assert jma._wind_dir_deg({"windDirection": [None, 0]}) is None
+
+
+def test_latest_entry_returns_none_for_non_dict_value():
+    # entry value is a plain string, not a dict → jma.py:83-84
+    assert jma._latest_entry({"202605261230": "bad_value"}) is None

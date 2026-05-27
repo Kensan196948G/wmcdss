@@ -266,3 +266,22 @@ async def test_marine_no_sites_commit_failure_raises():
         with pytest.raises(SQLAlchemyError):
             await ingest_marine.run_once()
     assert db.rolled_back is True
+
+
+# ---------------------------------------------------------------------------
+# Loop 55 — main() entry-point coverage (sync tests, asyncio.run mocked)
+# ---------------------------------------------------------------------------
+
+
+def test_marine_main_returns_0_on_success():
+    # main() wraps asyncio.run(run_once()). Patch to bypass event loop.
+    with patch("asyncio.run", return_value=1):
+        result = ingest_marine.main()
+    assert result == 0
+
+
+def test_marine_main_returns_1_on_exception():
+    # Crash in run_once() → main() catches, logs, returns 1.
+    with patch("asyncio.run", side_effect=Exception("marine run_once crashed")):
+        result = ingest_marine.main()
+    assert result == 1

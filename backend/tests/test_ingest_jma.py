@@ -264,3 +264,23 @@ async def test_run_once_connect_error_is_tolerated():
         n = await ingest_jma.run_once()
     assert n == 0
     assert db.committed is True
+
+
+# ---------------------------------------------------------------------------
+# Loop 55 — main() entry-point coverage (sync tests, asyncio.run mocked)
+# ---------------------------------------------------------------------------
+
+
+def test_main_returns_0_on_success():
+    # main() calls asyncio.run(run_once()). Patch asyncio.run to skip the
+    # actual event loop and confirm the exit-code logic: n >= 0 → return 0.
+    with patch("asyncio.run", return_value=1):
+        result = ingest_jma.main()
+    assert result == 0
+
+
+def test_main_returns_1_on_exception():
+    # run_once() crash → main() catches, logs, returns 1.
+    with patch("asyncio.run", side_effect=Exception("run_once crashed")):
+        result = ingest_jma.main()
+    assert result == 1
