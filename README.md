@@ -5,7 +5,7 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-282%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-318%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vitest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
 [![fastapi](https://img.shields.io/badge/FastAPI-0.115%2B-009688)]()
@@ -203,9 +203,10 @@ docker compose exec backend pytest -q tests/
 | ユニット（`get_db()` async generator） | 1 | `SessionLocal` mock + `gen.__anext__()` で `session.py:12-13` カバレッジ解消（Loop 55） |
 | ユニット（frontend data.ts） | 34 | `getDecision` 全分岐（ok/danger-wind/danger-wave/danger-multi/land 陸上 null gate/**wind-warn(80%)/temp-warn/wave-warn(80%) 合成 site**）・`STATUS_LABEL`/`STATUS_CLASS`/`TYPE_LABEL`・`generateWeather`（known/fallback）・`generateMarine`（known/null）・`generateHourlyWind`/`generateHourlyWave`/`generateHistoricalMonthly`（shape/24h/12month）・`FORECAST_DAYS`/`WEATHER_ICONS`/`AUDIT_LOG`/`ETL_JOBS` shape — `synthSite()` factory パターン（Loop 47+57） |
 | ユニット（frontend api.ts） | 51 | `APIError`・`WMCDSS_API_BASE`・`fetchJSON`（成功/4xx/5xx/body-read-fail）・`adaptSite`（全 fallback 分岐）・`fetchSitesFromBackend`/`fetchLatestWeather`/`Marine`（404/他エラー/成功）・`fetchThresholdsForSite`/`fetchAuditLog`（クエリ組み立て全分岐）・`requestDecisionFromBackend`（デフォルト 3h window 検証）・`initFromBackend`（ok/empty/unreachable/MOCK_SITES 退避）— `vi.stubGlobal('fetch')` + `vi.stubGlobal('window')` パターン（Loop 56） |
+| ユニット（frontend charts.tsx） | 36 | `ChartColors` 全 8 色 hex 検証・`LineChart`（empty→null/SVG/threshold 破線/thresholdLabel/yLabel/circle-per-point/custom-size）・`BarChart`（empty→null/viewBox/rect-per-point/yLabel）・`WindRose`（SVG/8方向ラベル/データドット数/N方向 `??` fix/empty/custom-size）・`Sparkline`（< 2 値→null/SVG/polyline/defaultSize）・`GaugeMeter`（SVG/value表示/unit/label/threshold marker/Loop17 fix threshAngle=0/red-amber-blue 色分岐/size）— `// @vitest-environment jsdom` ＋ `@testing-library/react` パターン（Loop 58） |
 | **E2E（Playwright / Firefox）** | **5** | **sidebar・status badge・気象データ/海上作業ナビゲーション・ダッシュボード復帰 — `vite preview` のみ（backend 不要、Loop 49）** |
 | API スモーク (要ライブ backend) | 9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む） |
-| **合計** | **287** | ✅ backend unit 197/197 + frontend unit 85/85 + E2E 5/5 — backend coverage 99% / data.ts coverage 93% — smoke は `docker compose up` 環境で別実行 |
+| **合計** | **323** | ✅ backend unit 197/197 + frontend unit 121/121 + E2E 5/5 — backend coverage 99% / charts.tsx coverage 100% / data.ts coverage 93% — smoke は `docker compose up` 環境で別実行 |
 
 ### 🤖 継続的インテグレーション
 
@@ -215,7 +216,7 @@ docker compose exec backend pytest -q tests/
 |---|---|:--:|---|
 | `backend-unit` | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (197 件) | — | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`) | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件) | unit 後 | ❌ マージブロック |
-| `frontend-unit` (Loop 47 追加) | `npm ci` ／ `vitest run` (85 件) | backend-unit と並走 | ❌ マージブロック |
+| `frontend-unit` (Loop 47 追加) | `npm ci` ／ `vitest run` (121 件) | backend-unit と並走 | ❌ マージブロック |
 | `frontend-build` (`needs: frontend-unit`) | `npm ci` ／ `npm run build` ／ bundle size 報告 | unit 後 | ❌ マージブロック |
 | `frontend-e2e` (`needs: frontend-build`) **Loop 49 追加** | `npm ci` ／ `playwright install --with-deps firefox` ／ `playwright test` (5 件 — `vite preview` 内蔵、backend 不要) | build 後 | ❌ マージブロック |
 | `frontend-docker` (Loop 38 追加) | `docker buildx build` で `frontend/vite-app/Dockerfile` を multi-stage build（host の `npm run build` では検出不能な Docker context-escape ／ nginx eager DNS を機械検出） | unit と並走 | ❌ マージブロック |
