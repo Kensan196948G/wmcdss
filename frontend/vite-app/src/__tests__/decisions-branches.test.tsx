@@ -142,3 +142,131 @@ describe("MarineWorkPage — ok status branches", () => {
     expect(container.textContent).toContain("適合");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Loop 77 — additional branches: warn (80% threshold) + waveLimit === null
+// ---------------------------------------------------------------------------
+//
+// Adds two cases that the danger/ok scripted sites above don't reach:
+//   - warn band: wind sitting at 80% of windSpeed (warn boundary)
+//   - waveLimit === null fallback (line 363-368 — "この現場には波高基準が設定
+//     されていません")
+
+describe("MarineWorkPage — warn band branch", () => {
+  it("renders 注意 in the WORK_TYPES table when wind sits at the warn band", () => {
+    // marine_warn fixture: wave=0.4 (just under WORK_TYPES limit 0.5 for
+    // potential warn @80%), wind=9 (windLimit=10 → 90% = warn band).
+    // generator returns wind=9, waveHeight=0.4 → CheckItem and table both
+    // resolve to warn somewhere.
+    vi.resetModules();
+    vi.doMock("../data", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../data")>();
+      return {
+        ...actual,
+        SITES: [
+          {
+            id: "marine_warn",
+            name: "Marine Warn",
+            shortName: "MW",
+            type: "marine" as const,
+            lat: 35.6,
+            lng: 139.7,
+            station: "東京",
+            marinePoint: "東京湾北部",
+            manager: "—",
+            contractor: "—",
+            period: "—",
+            status: "warn" as const,
+            thresholds: {
+              windSpeed: 10, // 80% = 8.0, danger > 10
+              waveHeight: 1.0, // 80% = 0.8, danger > 1.0
+              rainfall: 100,
+              tempLow: -50,
+              tempHigh: 100,
+            },
+          },
+        ],
+        generateWeather: () => ({
+          temp: 20,
+          hum: 60,
+          pressure: 1013,
+          wind: 9, // > 8 (warn), < 10 (not danger)
+          windDir: "N",
+          rain: 1,
+        }),
+        generateMarine: () => ({
+          waveHeight: 0.9, // > 0.8 (warn), < 1.0 (not danger)
+          wavePeriod: 6,
+          waveDir: "E",
+          tide: "上げ潮",
+          tideLevel: 1.2,
+        }),
+      };
+    });
+    return import("../decisions").then(({ MarineWorkPage: MWP }) => {
+      const { container } = render(<MWP selectedSite="marine_warn" />);
+      // Per-site CheckItem 注意 badge appears for wind / wave at 90% threshold
+      expect(container.textContent).toContain("注意");
+      vi.doUnmock("../data");
+    });
+  });
+});
+
+describe("MarineWorkPage — waveLimit null fallback", () => {
+  it("renders 'この現場には波高基準が設定されていません' when the marine site has waveHeight=null", () => {
+    vi.resetModules();
+    vi.doMock("../data", async (importOriginal) => {
+      const actual = await importOriginal<typeof import("../data")>();
+      return {
+        ...actual,
+        SITES: [
+          {
+            id: "marine_no_wave",
+            name: "Marine No Wave",
+            shortName: "MNW",
+            type: "marine" as const,
+            lat: 35.6,
+            lng: 139.7,
+            station: "東京",
+            marinePoint: "東京湾北部",
+            manager: "—",
+            contractor: "—",
+            period: "—",
+            status: "ok" as const,
+            thresholds: {
+              windSpeed: 10,
+              waveHeight: null, // triggers the line 363-368 fallback
+              rainfall: 5,
+              tempLow: 0,
+              tempHigh: 40,
+            },
+          },
+        ],
+        // Stub generators so `m` is non-null — otherwise the earlier
+        // `!w || !m` guard fires first and we get "海上工事現場がありません".
+        generateWeather: () => ({
+          temp: 20,
+          hum: 60,
+          pressure: 1013,
+          wind: 5,
+          windDir: "N",
+          rain: 1,
+        }),
+        generateMarine: () => ({
+          waveHeight: 0.5,
+          wavePeriod: 6,
+          waveDir: "E",
+          tide: "上げ潮",
+          tideLevel: 1.2,
+        }),
+      };
+    });
+    return import("../decisions").then(({ MarineWorkPage: MWP }) => {
+      const { container } = render(<MWP />);
+      expect(container.textContent).toContain(
+        "この現場には波高基準が設定されていません",
+      );
+      vi.doUnmock("../data");
+    });
+  });
+});
