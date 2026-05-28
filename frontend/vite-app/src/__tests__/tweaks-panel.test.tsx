@@ -613,6 +613,218 @@ describe("useTweaks", () => {
 });
 
 // ---------------------------------------------------------------------------
+// TweakRadio — pointerdown scrub path (covers line 462-487: segAt + onPointerDown)
+// ---------------------------------------------------------------------------
+//
+// jsdom returns a zero-size getBoundingClientRect for every element by default,
+// so segAt() can't compute a meaningful segment index. Stub the rect to a
+// realistic 200×30 box so the math (`(clientX - left - 2) / (width - 4) * n`)
+// resolves to a deterministic segment.
+
+function stubRect(el: Element, rect: Partial<DOMRect> = {}): void {
+  const r: DOMRect = {
+    x: 0,
+    y: 0,
+    top: 0,
+    left: 0,
+    right: 200,
+    bottom: 30,
+    width: 200,
+    height: 30,
+    toJSON: () => "",
+    ...(rect as DOMRect),
+  };
+  Object.defineProperty(el, "getBoundingClientRect", {
+    value: () => r,
+    configurable: true,
+  });
+}
+
+describe("TweakRadio — pointer scrub", () => {
+  it("pointerdown at the right half of the track switches to the second option", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakRadio<string>
+        label="mode"
+        value="a"
+        options={[
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const track = container.querySelector('[role="radiogroup"]') as HTMLElement;
+    stubRect(track);
+    // segAt(150) with n=2: inner=196; i = floor((150-2)/196 * 2) = 1 → 'b'
+    fireEvent.pointerDown(track, { clientX: 150 });
+    expect(onChange).toHaveBeenCalledWith("b");
+  });
+
+  it("pointermove during drag emits the new segment value", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakRadio<string>
+        label="mode"
+        value="b"
+        options={[
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const track = container.querySelector('[role="radiogroup"]') as HTMLElement;
+    stubRect(track);
+    // Start on right segment (no change — same as current 'b'), then drag left
+    fireEvent.pointerDown(track, { clientX: 150 });
+    onChange.mockClear();
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 30 }));
+    expect(onChange).toHaveBeenCalledWith("a");
+    // Clean up: simulate pointerup so window listeners detach
+    window.dispatchEvent(new PointerEvent("pointerup"));
+  });
+
+  it("pointerup removes the move/up listeners (no further onChange after release)", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakRadio<string>
+        label="mode"
+        value="a"
+        options={[
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const track = container.querySelector('[role="radiogroup"]') as HTMLElement;
+    stubRect(track);
+    fireEvent.pointerDown(track, { clientX: 30 });
+    window.dispatchEvent(new PointerEvent("pointerup"));
+    onChange.mockClear();
+    // After pointerup, move should NOT trigger onChange
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 150 }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("pointerdown on a track with no element (segAt early return) does not throw", () => {
+    // Synthesizes the trackRef.current === null branch — exercise the early
+    // return inside segAt. Normally trackRef is always populated after mount,
+    // so this is a defensive-code path.
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakRadio<string>
+        label="mode"
+        value="a"
+        options={[
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const track = container.querySelector('[role="radiogroup"]') as HTMLElement;
+    expect(() => fireEvent.pointerDown(track, { clientX: 0 })).not.toThrow();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TweakNumber — pointerdown scrub path (covers line 599-616: onScrubStart)
+// ---------------------------------------------------------------------------
+
+describe("TweakNumber — pointer scrub", () => {
+  it("pointerdown on label starts the scrub closure (no immediate onChange)", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakNumber label="x" value={10} step={1} onChange={onChange} />,
+    );
+    const lbl = container.querySelector(".twk-num-lbl") as HTMLElement;
+    fireEvent.pointerDown(lbl, { clientX: 0 });
+    expect(onChange).not.toHaveBeenCalled();
+    window.dispatchEvent(new PointerEvent("pointerup"));
+  });
+
+  it("pointermove after pointerdown emits the scrubbed value (dx*step rounded)", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakNumber label="x" value={10} step={1} onChange={onChange} />,
+    );
+    const lbl = container.querySelector(".twk-num-lbl") as HTMLElement;
+    fireEvent.pointerDown(lbl, { clientX: 0 });
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 5 }));
+    // dx=5 * step=1 = 5 → snapped = round(15/1)*1 = 15
+    expect(onChange).toHaveBeenCalledWith(15);
+    window.dispatchEvent(new PointerEvent("pointerup"));
+  });
+
+  it("scrub clamps to min when below the limit", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakNumber
+        label="x"
+        value={5}
+        min={0}
+        max={20}
+        step={1}
+        onChange={onChange}
+      />,
+    );
+    const lbl = container.querySelector(".twk-num-lbl") as HTMLElement;
+    fireEvent.pointerDown(lbl, { clientX: 0 });
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: -50 }));
+    expect(onChange).toHaveBeenCalledWith(0);
+    window.dispatchEvent(new PointerEvent("pointerup"));
+  });
+
+  it("scrub clamps to max when above the limit", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakNumber
+        label="x"
+        value={5}
+        min={0}
+        max={20}
+        step={1}
+        onChange={onChange}
+      />,
+    );
+    const lbl = container.querySelector(".twk-num-lbl") as HTMLElement;
+    fireEvent.pointerDown(lbl, { clientX: 0 });
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 999 }));
+    expect(onChange).toHaveBeenCalledWith(20);
+    window.dispatchEvent(new PointerEvent("pointerup"));
+  });
+
+  it("decimal step preserves precision via toFixed(decimals)", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakNumber label="x" value={1.0} step={0.1} onChange={onChange} />,
+    );
+    const lbl = container.querySelector(".twk-num-lbl") as HTMLElement;
+    fireEvent.pointerDown(lbl, { clientX: 0 });
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 3 }));
+    // dx=3 * step=0.1 = 0.3 → snapped = round(1.3 / 0.1) * 0.1 = 1.3
+    const lastCall = onChange.mock.calls[onChange.mock.calls.length - 1][0];
+    expect(lastCall).toBeCloseTo(1.3, 5);
+    window.dispatchEvent(new PointerEvent("pointerup"));
+  });
+
+  it("pointerup removes the listeners (no further onChange after release)", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakNumber label="x" value={10} step={1} onChange={onChange} />,
+    );
+    const lbl = container.querySelector(".twk-num-lbl") as HTMLElement;
+    fireEvent.pointerDown(lbl, { clientX: 0 });
+    window.dispatchEvent(new PointerEvent("pointerup"));
+    onChange.mockClear();
+    window.dispatchEvent(new PointerEvent("pointermove", { clientX: 100 }));
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // window side-effects (dual-surface contract)
 // ---------------------------------------------------------------------------
 
