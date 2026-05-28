@@ -316,6 +316,32 @@ describe("AppShell — sidebar navigation", () => {
     expect(activeItems.length).toBe(1);
     expect(activeItems[0].textContent).toContain("気象データ");
   });
+
+  it("breadcrumb is hidden by default (no selectedSite yet)", () => {
+    const { container } = render(<AppShell />);
+    expect(container.querySelector(".header-breadcrumb")).toBeNull();
+  });
+
+  it("clicking a site row from 現場一覧 navigates to site-detail and shows breadcrumb", () => {
+    const { container } = render(<AppShell />);
+    // 1. Navigate to 現場一覧 via sidebar
+    const sitesItem = Array.from(
+      container.querySelectorAll(".sidebar-item"),
+    ).find((el) => el.textContent?.includes("現場一覧"));
+    fireEvent.click(sitesItem!);
+    // 2. Click the first site row → navigate('site-detail', site.id)
+    const firstRow = container.querySelector(
+      "tbody tr.clickable",
+    ) as HTMLElement;
+    expect(firstRow).not.toBeNull();
+    fireEvent.click(firstRow);
+    // 3. Header title becomes 現場詳細, breadcrumb appears with site shortName
+    const headerTitle = container.querySelector(".header-title");
+    expect(headerTitle?.textContent).toBe("現場詳細");
+    const breadcrumb = container.querySelector(".header-breadcrumb");
+    expect(breadcrumb).not.toBeNull();
+    expect(breadcrumb?.textContent).toContain("▸");
+  });
 });
 
 describe("AppShell — role/theme persistence (localStorage)", () => {
