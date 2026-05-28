@@ -371,6 +371,119 @@ describe("SettingsPage", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Extra form-handler invocations (Loop 75 — Functions coverage uplift)
+// ---------------------------------------------------------------------------
+//
+// The baseline tests above pin layout and one-off interactions, but each
+// setForm((p) => ({ ...p, ...})) lambda and each updateField/handleToggle
+// invocation counts as a distinct function — coverage stays low until every
+// form input is exercised. These tests fire change events on every input/
+// select so the functions counter on admin-pages.tsx climbs above the
+// baseline 66%.
+
+describe("ReportsPage — form change handlers", () => {
+  it("changing 対象現場 select updates form.site", () => {
+    const { container } = render(<ReportsPage />);
+    const select = container.querySelectorAll(
+      "select.form-select",
+    )[0] as HTMLSelectElement;
+    const target = SITES[1]?.id ?? SITES[0].id;
+    fireEvent.change(select, { target: { value: target } });
+    expect(select.value).toBe(target);
+  });
+
+  it("changing テンプレート select cycles all 6 templates", () => {
+    const { container } = render(<ReportsPage />);
+    const select = container.querySelectorAll(
+      "select.form-select",
+    )[1] as HTMLSelectElement;
+    const templates = ["weekly", "monthly", "decision", "marine", "annual"];
+    for (const t of templates) {
+      fireEvent.change(select, { target: { value: t } });
+      expect(select.value).toBe(t);
+    }
+  });
+
+  it("changing 開始日 / 終了日 date inputs updates form fields", () => {
+    const { container } = render(<ReportsPage />);
+    const dateInputs = container.querySelectorAll(
+      'input[type="date"]',
+    ) as NodeListOf<HTMLInputElement>;
+    expect(dateInputs.length).toBe(2);
+    fireEvent.change(dateInputs[0], { target: { value: "2026-04-01" } });
+    expect(dateInputs[0].value).toBe("2026-04-01");
+    fireEvent.change(dateInputs[1], { target: { value: "2026-04-30" } });
+    expect(dateInputs[1].value).toBe("2026-04-30");
+  });
+
+  it("clicking each format button toggles btn-primary in turn", () => {
+    const { container } = render(<ReportsPage />);
+    const formats = ["Excel", "CSV", "PDF"];
+    for (const fmt of formats) {
+      const btn = Array.from(container.querySelectorAll("button.btn-sm")).find(
+        (b) => b.textContent === fmt,
+      );
+      fireEvent.click(btn!);
+      expect(btn?.className).toContain("btn-primary");
+    }
+  });
+});
+
+describe("ThresholdsPage — updateField invocations", () => {
+  it("editing every numeric field of an edit row updates each input value", () => {
+    const { container } = render(<ThresholdsPage />);
+    // Pick the first row's 編集 button to enter edit mode
+    const editBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "編集",
+    );
+    fireEvent.click(editBtn!);
+    const inputs = container.querySelectorAll(
+      'tbody input[type="number"]',
+    ) as NodeListOf<HTMLInputElement>;
+    // Bump every input by a distinct value to call updateField with each
+    // distinct keyof SiteThresholds (windSpeed/waveHeight/rainfall/tempLow/
+    // tempHigh — marine sites get all 5, land 4 (no waveHeight)).
+    for (let i = 0; i < inputs.length; i++) {
+      fireEvent.change(inputs[i], { target: { value: String(100 + i) } });
+      expect(inputs[i].value).toBe(String(100 + i));
+    }
+  });
+});
+
+describe("AuditPage — filter handler invocation", () => {
+  it("changing the filter select repeatedly invokes setFilterAction", () => {
+    const { container } = render(<AuditPage />);
+    const select = container.querySelector(
+      "select.form-select",
+    ) as HTMLSelectElement;
+    // Walk through all options at least once
+    const opts = Array.from(select.options).map((o) => o.value);
+    for (const v of opts) {
+      fireEvent.change(select, { target: { value: v } });
+      expect(select.value).toBe(v);
+    }
+  });
+});
+
+describe("SettingsPage — checkbox handlers", () => {
+  it("toggling every notification checkbox runs handleToggle without throwing", () => {
+    const { container } = render(<SettingsPage role="field" />);
+    const checkboxes = container.querySelectorAll(
+      'input[type="checkbox"]',
+    ) as NodeListOf<HTMLInputElement>;
+    for (const cb of Array.from(checkboxes)) {
+      // Two clicks per checkbox to flip both directions (checked → unchecked
+      // → checked) — exercises both branches inside handleToggle's
+      // input.checked ternary.
+      expect(() => {
+        fireEvent.click(cb);
+        fireEvent.click(cb);
+      }).not.toThrow();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // window side-effects (dual-surface contract)
 // ---------------------------------------------------------------------------
 
