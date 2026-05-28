@@ -32,6 +32,12 @@ build/
 *.pid
 state.json
 
+# Coverage outputs
+.coverage
+htmlcov/
+coverage/
+frontend/vite-app/coverage/
+
 # Docker / DB volumes (mounted via named volumes; nothing local)
 pgdata/
 
