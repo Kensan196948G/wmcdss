@@ -344,6 +344,50 @@ describe("AppShell — sidebar navigation", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// AppShell — exhaustive navigation (renderPage switch case coverage)
+// ---------------------------------------------------------------------------
+//
+// Each NAV_ITEMS label clicks into a different page; verifying the header
+// title flips to PAGE_TITLES[page] simultaneously exercises the
+// `PAGE_TITLES[page] || 'ダッシュボード'` fallback OR branch, the
+// renderPage switch case for that page, and the navigate(page) state
+// transition. Skips dashboard (default) and 現場詳細 (covered by the
+// breadcrumb integration test above — only reachable via SiteListPage row).
+
+// [sidebar nav label (short), header title (full from PAGE_TITLES)]
+// Some labels differ — UX shortens long names in the sidebar to fit the
+// narrow column, but the header always shows the canonical title.
+const NAV_TITLES: ReadonlyArray<[string, string]> = [
+  ["現場登録", "現場登録"],
+  ["気象データ", "気象データ"],
+  ["海象データ", "海象データ"],
+  ["コンクリート打設", "コンクリート打設判定"], // sidebar 短縮形
+  ["海上作業", "海上作業判定"], // sidebar 短縮形
+  ["過去データ分析", "過去データ分析"],
+  ["50年確率波", "50年確率波分析"], // sidebar 短縮形
+  ["閾値管理", "閾値管理"],
+  ["データ取得状況", "データ取得状況"],
+  ["レポート出力", "レポート出力"],
+  ["監査ログ", "監査ログ"],
+  ["設定", "設定"],
+];
+
+describe("AppShell — exhaustive sidebar navigation", () => {
+  for (const [navLabel, expectedTitle] of NAV_TITLES) {
+    it(`clicking ${navLabel} updates the header title to ${expectedTitle}`, () => {
+      const { container } = render(<AppShell />);
+      const item = Array.from(container.querySelectorAll(".sidebar-item")).find(
+        (el) => el.textContent?.includes(navLabel),
+      );
+      expect(item).not.toBeUndefined();
+      fireEvent.click(item!);
+      const headerTitle = container.querySelector(".header-title");
+      expect(headerTitle?.textContent).toBe(expectedTitle);
+    });
+  }
+});
+
 describe("AppShell — role/theme persistence (localStorage)", () => {
   it("default role is 現場 (active class on field button)", () => {
     const { container } = render(<AppShell />);
