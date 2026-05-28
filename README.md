@@ -5,8 +5,8 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-556%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
-[![frontend coverage](https://img.shields.io/badge/frontend%20coverage-96.03%25-brightgreen)](#-frontend-coverage-matrix)
+[![tests](https://img.shields.io/badge/tests-579%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![frontend coverage](https://img.shields.io/badge/frontend%20coverage-97.28%25-brightgreen)](#-frontend-coverage-matrix)
 [![backend coverage](https://img.shields.io/badge/backend%20coverage-99%25-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vitest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
@@ -221,23 +221,25 @@ docker compose exec backend pytest -q tests/
 
 ### 📊 Frontend Coverage Matrix
 
-> 12 modules / 359 tests / 96.03% statements を Loop 66 で達成。
+> 14 modules / 382 tests / 97.28% statements / 84.95% branches を Loop 72 で達成。
 
-| Module                  | Statements |   Branches |  Functions |   Tests |  Loop |
+| Module                  | Statements |   Branches |  Functions |   Tests | Loops |
 | ----------------------- | ---------: | ---------: | ---------: | ------: | ----: |
 | 🟢 `api.ts`             |     97.41% |     83.33% |       100% |      51 |    56 |
 | 🟢 `data.ts`            |       100% |     95.65% |       100% |      34 | 47+57 |
 | 🟢 `charts.tsx`         |       100% |     91.37% |       100% |      36 |    58 |
-| 🟢 `dashboard.tsx`      |       100% |     89.58% |     44.44% |      19 |    59 |
-| 🟢 `decisions.tsx`      |     96.17% |     70.27% |     66.66% |      21 |    59 |
-| 🟢 `weather-marine.tsx` |     95.22% |     77.58% |       100% |      26 |    60 |
+| 🟢 `dashboard.tsx`      |       100% |     90.56% |     77.77% |      24 | 59+71 |
+| 🟢 `decisions.tsx`      |     96.80% |     76.92% |     66.66% |      25 | 59+70 |
+| 🟢 `weather-marine.tsx` |     96.18% |     85.48% |       100% |      28 | 60+72 |
 | 🟢 `analysis.tsx`       |       100% |     92.00% |     85.71% |      27 |    61 |
-| 🟢 `app-shell.tsx`      |     92.45% |     65.51% |     80.00% |      32 |    62 |
+| 🟢 `app-shell.tsx`      |     93.77% |     71.42% |     80.00% |      34 | 62+68 |
 | 🟢 `site-pages.tsx`     |     97.65% |     81.69% |     87.50% |      31 |    63 |
-| 🟢 `tweaks-panel.tsx`   |     82.83% |     87.77% |     75.75% |      41 |    64 |
+| 🟢 `tweaks-panel.tsx`   |     91.87% |     88.67% |     86.48% |      51 | 64+67 |
 | 🟢 `admin-pages.tsx`    |     98.82% |     91.80% |     66.66% |      34 |    65 |
 | 🟢 `main.tsx`           |       100% |     90.90% |       100% |       7 |    66 |
-| **All files**           | **96.03%** | **82.67%** | **79.43%** | **359** |     — |
+| **All files**           | **97.28%** | **84.95%** | **84.13%** | **382** |     — |
+
+> セッション 2026-05-28 で Loop 59 → 72 を実行。frontend test 121 → 382 (+261, +216%)、coverage 32.26% → 97.28% (+65.02pt)。詳細: [docs/SESSION-2026-05-28.md](docs/SESSION-2026-05-28.md)
 
 ### 🤖 継続的インテグレーション
 
@@ -247,7 +249,7 @@ docker compose exec backend pytest -q tests/
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------------: | ----------------- |
 | `backend-unit`                                            | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (197 件)                                                                                                       |          —          | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`)                   | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件)                                                                           |       unit 後       | ❌ マージブロック |
-| `frontend-unit` (Loop 47 追加 / Loop 60-66 拡張)          | `npm ci` ／ `vitest run` (**359 件 / 12 files / coverage 96.03%**)                                                                                                         | backend-unit と並走 | ❌ マージブロック |
+| `frontend-unit` (Loop 47 追加 / Loop 60-72 拡張)          | `npm ci` ／ `vitest run` (**382 件 / 14 files / coverage 97.28% Stmts / 84.95% Branches**)                                                                                | backend-unit と並走 | ❌ マージブロック |
 | `frontend-build` (`needs: frontend-unit`)                 | `npm ci` ／ `npm run build` ／ bundle size 報告                                                                                                                            |       unit 後       | ❌ マージブロック |
 | `frontend-e2e` (`needs: frontend-build`) **Loop 49 追加** | `npm ci` ／ `playwright install --with-deps firefox` ／ `playwright test` (5 件 — `vite preview` 内蔵、backend 不要)                                                       |      build 後       | ❌ マージブロック |
 | `frontend-docker` (Loop 38 追加)                          | `docker buildx build` で `frontend/vite-app/Dockerfile` を multi-stage build（host の `npm run build` では検出不能な Docker context-escape ／ nginx eager DNS を機械検出） |     unit と並走     | ❌ マージブロック |
