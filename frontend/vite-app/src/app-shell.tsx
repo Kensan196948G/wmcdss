@@ -302,15 +302,28 @@ export function AppShell() {
             <button
               className={`role-btn ${role === 'field' ? 'active' : ''}`}
               onClick={() => setRole('field')}
+              title="現場担当者向け：現場の気象・判定情報を表示"
             >
-              現場
+              🏗 現場
             </button>
             <button
               className={`role-btn ${role === 'hq' ? 'active' : ''}`}
               onClick={() => setRole('hq')}
+              title="本社管理者向け：全現場の一覧・管理・設定を表示"
             >
-              本社
+              🏢 本社
             </button>
+          </div>
+          <div style={{
+            fontSize: 10,
+            color: 'rgba(255,255,255,0.45)',
+            marginTop: 6,
+            paddingLeft: 4,
+            lineHeight: 1.4,
+          }}>
+            {role === 'field'
+              ? '現場担当者向け表示'
+              : '本社管理者向け表示'}
           </div>
         </div>
       </nav>
@@ -336,6 +349,24 @@ export function AppShell() {
               <span className="badge-dot"></span> 中止 {dangerCount}
             </span>
             <span className="header-time">{formatTime(now)}</span>
+            <button
+              type="button"
+              aria-label={theme === 'dark' ? 'ライトモードに切替' : 'ダークモードに切替'}
+              title={theme === 'dark' ? 'ライトモードに切替' : 'ダークモードに切替'}
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              style={{
+                background: 'transparent',
+                border: `1px solid ${theme === 'dark' ? 'rgba(255,255,255,0.2)' : 'rgba(0,0,0,0.12)'}`,
+                borderRadius: 6,
+                padding: '4px 8px',
+                cursor: 'pointer',
+                fontSize: 16,
+                lineHeight: 1,
+                color: 'var(--text)',
+              }}
+            >
+              {theme === 'dark' ? '☀️' : '🌙'}
+            </button>
             <button
               className="header-tweaks-btn"
               type="button"

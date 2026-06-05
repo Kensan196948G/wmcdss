@@ -6,7 +6,7 @@ from app.core.security import APIKeyMiddleware
 from app.core.ratelimit import RateLimitMiddleware
 from app.core.monitoring import MetricsMiddleware
 from app.api import health, sites, decisions, thresholds, observations, audit, metrics, auth
-from app.api import analysis, reports, etl
+from app.api import analysis, reports, etl, ai
 
 settings = get_settings()
 
@@ -48,6 +48,7 @@ app.include_router(audit.router, prefix="/api/v1")
 app.include_router(analysis.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
 app.include_router(etl.router, prefix="/api/v1")
+app.include_router(ai.router, prefix="/api/v1")
 
 
 @app.get("/")

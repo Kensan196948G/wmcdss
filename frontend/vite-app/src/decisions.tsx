@@ -9,7 +9,7 @@
 // This is the first caller that *consumes* charts.tsx via ESM named import,
 // validating the dual-surface contract beyond the type-only App.jsx reference.
 
-import { useMemo, useState, type FC } from 'react';
+import { useMemo, useState, useCallback, type FC } from 'react';
 import { LineChart } from './charts';
 
 function nowJSTLabel(): string {
@@ -33,6 +33,17 @@ import {
 } from './data';
 
 type CheckStatus = Status;
+
+interface AiResult {
+  status: 'go' | 'caution' | 'stop';
+  summary: string;
+  issues: string[];
+  warnings: string[];
+  recommendations: string[];
+  confidence: '高' | '中' | '低';
+  analysis_type: string;
+  disclaimer: string;
+}
 
 export interface CheckItemProps {
   label: string;
@@ -130,11 +141,40 @@ export interface ConcretePageProps {
 
 export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
   const [siteId, setSiteId] = useState<string>(selectedSite || SITES[0].id);
+  const [aiResult, setAiResult] = useState<AiResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const site: Site = SITES.find((s) => s.id === siteId) || SITES[0];
   const w = generateWeather(site.id);
   // getDecision is kept for parity with the legacy page (used elsewhere in props
   // chains); the local concreteChecks below produce the displayed status.
   void getDecision(site);
+
+  const handleAiAnalyze = useCallback(async () => {
+    setAiLoading(true);
+    setAiResult(null);
+    try {
+      const apiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE
+        ?? `http://${window.location.hostname}:8003/api/v1`;
+      const resp = await fetch(`${apiBase}/ai/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          site_id: site.id,
+          work_type: 'concrete',
+          weather: { temp: w.temp, hum: w.hum, wind: w.wind, rain: w.rain },
+          marine: null,
+          thresholds: site.thresholds,
+        }),
+      });
+      if (resp.ok) {
+        setAiResult(await resp.json());
+      }
+    } catch {
+      // ignore network errors — AI analysis is optional
+    } finally {
+      setAiLoading(false);
+    }
+  }, [site.id, site.thresholds, w.temp, w.hum, w.wind, w.rain]);
 
   const getCheckStatus = (val: number, thresh: number, invert = false): CheckStatus => {
     if (invert) return val < thresh ? 'danger' : val < thresh * 1.2 ? 'warn' : 'ok';
@@ -226,6 +266,14 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm">📥 PDF出力</button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={handleAiAnalyze}
+            disabled={aiLoading}
+            style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            {aiLoading ? '🤖 分析中...' : '🤖 AI分析'}
+          </button>
           <button className="btn btn-sm btn-primary">🔄 再判定</button>
         </div>
       </div>
@@ -247,6 +295,67 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
           <div className={`reason-text ${overallStatus}`}>{recommendations[overallStatus]}</div>
         </div>
       </div>
+
+      {aiResult && (
+        <div className="card mb-16" style={{ border: '2px solid var(--blue-400)' }}>
+          <div className="card-header" style={{ background: 'var(--blue-50)' }}>
+            <span className="card-title" style={{ color: 'var(--blue-600)' }}>
+              🤖 AI分析結果
+              {aiResult.analysis_type === 'claude_ai' && (
+                <span style={{ fontSize: 11, marginLeft: 8, background: 'var(--blue-500)', color: '#fff', padding: '2px 8px', borderRadius: 100 }}>
+                  Claude AI
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="card-body">
+            <div style={{
+              padding: '10px 14px', borderRadius: 6, marginBottom: 12,
+              background: aiResult.status === 'go' ? 'var(--status-ok-bg)' : aiResult.status === 'caution' ? 'var(--status-warn-bg)' : 'var(--status-danger-bg)',
+              color: aiResult.status === 'go' ? 'var(--status-ok)' : aiResult.status === 'caution' ? 'var(--status-warn)' : 'var(--status-danger)',
+              fontWeight: 600,
+            }}>
+              {aiResult.status === 'go' ? '✅' : aiResult.status === 'caution' ? '⚡' : '⛔'} {aiResult.summary}
+            </div>
+
+            {aiResult.issues.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--status-danger)', marginBottom: 4 }}>⚠️ 超過項目:</div>
+                {aiResult.issues.map((issue: string, i: number) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', paddingLeft: 12 }}>• {issue}</div>
+                ))}
+              </div>
+            )}
+
+            {aiResult.warnings.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--status-warn)', marginBottom: 4 }}>📋 注意事項:</div>
+                {aiResult.warnings.map((w: string, i: number) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', paddingLeft: 12 }}>• {w}</div>
+                ))}
+              </div>
+            )}
+
+            {aiResult.recommendations.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--blue-600)', marginBottom: 4 }}>💡 推奨事項:</div>
+                {aiResult.recommendations.map((r: string, i: number) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', paddingLeft: 12 }}>• {r}</div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-light)', paddingTop: 8 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                信頼度: <strong>{aiResult.confidence}</strong>
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic', maxWidth: '70%', textAlign: 'right' }}>
+                {aiResult.disclaimer}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card mb-16">
         <div className="card-header">
@@ -349,11 +458,47 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
       ? selectedSite
       : marineSites[0]?.id ?? '',
   );
+  const [aiResult, setAiResult] = useState<AiResult | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const site = marineSites.find((s) => s.id === siteId) || marineSites[0];
   const w = site ? generateWeather(site.id) : null;
   const m = site ? generateMarine(site.id) : null;
 
   const hourlyWave = useMemo(() => generateHourlyWave(), [siteId]);
+
+  const handleAiAnalyze = useCallback(async () => {
+    if (!site || !w || !m) return;
+    setAiLoading(true);
+    setAiResult(null);
+    try {
+      const apiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE
+        ?? `http://${window.location.hostname}:8003/api/v1`;
+      const resp = await fetch(`${apiBase}/ai/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          site_id: site.id,
+          work_type: 'marine',
+          weather: { temp: w.temp, hum: w.hum, wind: w.wind, rain: w.rain },
+          marine: {
+            waveHeight: m.waveHeight,
+            wavePeriod: m.wavePeriod,
+            waveDir: m.waveDir,
+            tide: m.tide,
+            tideLevel: m.tideLevel,
+          },
+          thresholds: site.thresholds,
+        }),
+      });
+      if (resp.ok) {
+        setAiResult(await resp.json());
+      }
+    } catch {
+      // ignore network errors — AI analysis is optional
+    } finally {
+      setAiLoading(false);
+    }
+  }, [site, w, m]);
 
   if (!site || !w || !m) {
     return (
@@ -446,6 +591,14 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm">📥 PDF出力</button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={handleAiAnalyze}
+            disabled={aiLoading}
+            style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+          >
+            {aiLoading ? '🤖 分析中...' : '🤖 AI分析'}
+          </button>
           <button className="btn btn-sm btn-primary">🔄 再判定</button>
         </div>
       </div>
@@ -469,6 +622,67 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
           <div className={`reason-text ${overallStatus}`}>{recommendations[overallStatus]}</div>
         </div>
       </div>
+
+      {aiResult && (
+        <div className="card mb-16" style={{ border: '2px solid var(--blue-400)' }}>
+          <div className="card-header" style={{ background: 'var(--blue-50)' }}>
+            <span className="card-title" style={{ color: 'var(--blue-600)' }}>
+              🤖 AI分析結果
+              {aiResult.analysis_type === 'claude_ai' && (
+                <span style={{ fontSize: 11, marginLeft: 8, background: 'var(--blue-500)', color: '#fff', padding: '2px 8px', borderRadius: 100 }}>
+                  Claude AI
+                </span>
+              )}
+            </span>
+          </div>
+          <div className="card-body">
+            <div style={{
+              padding: '10px 14px', borderRadius: 6, marginBottom: 12,
+              background: aiResult.status === 'go' ? 'var(--status-ok-bg)' : aiResult.status === 'caution' ? 'var(--status-warn-bg)' : 'var(--status-danger-bg)',
+              color: aiResult.status === 'go' ? 'var(--status-ok)' : aiResult.status === 'caution' ? 'var(--status-warn)' : 'var(--status-danger)',
+              fontWeight: 600,
+            }}>
+              {aiResult.status === 'go' ? '✅' : aiResult.status === 'caution' ? '⚡' : '⛔'} {aiResult.summary}
+            </div>
+
+            {aiResult.issues.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--status-danger)', marginBottom: 4 }}>⚠️ 超過項目:</div>
+                {aiResult.issues.map((issue: string, i: number) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', paddingLeft: 12 }}>• {issue}</div>
+                ))}
+              </div>
+            )}
+
+            {aiResult.warnings.length > 0 && (
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--status-warn)', marginBottom: 4 }}>📋 注意事項:</div>
+                {aiResult.warnings.map((warn: string, i: number) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', paddingLeft: 12 }}>• {warn}</div>
+                ))}
+              </div>
+            )}
+
+            {aiResult.recommendations.length > 0 && (
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontWeight: 600, fontSize: 12, color: 'var(--blue-600)', marginBottom: 4 }}>💡 推奨事項:</div>
+                {aiResult.recommendations.map((r: string, i: number) => (
+                  <div key={i} style={{ fontSize: 12, color: 'var(--text-secondary)', paddingLeft: 12 }}>• {r}</div>
+                ))}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid var(--border-light)', paddingTop: 8 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                信頼度: <strong>{aiResult.confidence}</strong>
+              </span>
+              <span style={{ fontSize: 10, color: 'var(--text-muted)', fontStyle: 'italic', maxWidth: '70%', textAlign: 'right' }}>
+                {aiResult.disclaimer}
+              </span>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="card mb-16">
         <div className="card-header">

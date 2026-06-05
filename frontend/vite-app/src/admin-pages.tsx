@@ -724,6 +724,127 @@ export const AuditPage: FC = () => {
     [filterAction, displayLogs],
   );
 
+  const handleExportCsv = () => {
+    const header = ['日時', 'ユーザー', '操作', '対象', '詳細'];
+    const rows = filtered.map(log => [
+      log.time,
+      log.user,
+      log.action,
+      log.target,
+      log.detail,
+    ]);
+    const csv = [header, ...rows]
+      .map(row => row.map(cell => `"${String(cell ?? '').replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const bom = '﻿'; // BOM for Excel UTF-8
+    const blob = new Blob([bom + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit_log_${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportHtml = () => {
+    const rows = filtered.map(log => `
+    <tr>
+      <td>${log.time}</td>
+      <td>${log.user}</td>
+      <td><span class="badge">${log.action}</span></td>
+      <td>${log.target}</td>
+      <td>${log.detail}</td>
+    </tr>`).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>監査ログ - WMCDSS</title>
+<style>
+  body { font-family: 'Noto Sans JP', 'Meiryo', sans-serif; font-size: 13px; color: #1a2332; margin: 24px; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  .meta { color: #718096; font-size: 12px; margin-bottom: 16px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #1a5276; color: #fff; padding: 8px 12px; text-align: left; font-size: 12px; }
+  td { padding: 8px 12px; border-bottom: 1px solid #e2e8f0; vertical-align: top; }
+  tr:nth-child(even) { background: #f8f9fb; }
+  .badge { background: #eaf2f8; color: #1a5276; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
+  @media print { body { margin: 0; } }
+</style>
+</head>
+<body>
+<h1>監査ログ</h1>
+<div class="meta">出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} / 件数: ${filtered.length}件${filterAction !== 'all' ? ` / フィルタ: ${filterAction}` : ''}</div>
+<table>
+<thead><tr><th>日時</th><th>ユーザー</th><th>操作</th><th>対象</th><th>詳細</th></tr></thead>
+<tbody>${rows}</tbody>
+</table>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `audit_log_${new Date().toISOString().slice(0, 10)}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleExportPdf = () => {
+    const rows = filtered.map(log => `
+    <tr>
+      <td>${log.time}</td>
+      <td>${log.user}</td>
+      <td>${log.action}</td>
+      <td>${log.target}</td>
+      <td>${log.detail}</td>
+    </tr>`).join('');
+
+    const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>監査ログ - WMCDSS</title>
+<style>
+  body { font-family: 'Noto Sans JP', 'Meiryo', 'MS Gothic', sans-serif; font-size: 11px; color: #000; margin: 10mm; }
+  h1 { font-size: 14px; margin-bottom: 3px; }
+  .meta { color: #666; font-size: 10px; margin-bottom: 10px; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: #1a5276; color: #fff; padding: 5px 8px; text-align: left; font-size: 10px; }
+  td { padding: 5px 8px; border: 1px solid #ccc; font-size: 10px; }
+  tr:nth-child(even) { background: #f5f5f5; }
+  @media print {
+    @page { size: A4 landscape; margin: 10mm; }
+    body { margin: 0; }
+  }
+</style>
+</head>
+<body>
+<h1>📋 監査ログ</h1>
+<div class="meta">出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} / 件数: ${filtered.length}件${filterAction !== 'all' ? ` / フィルタ: ${filterAction}` : ''}</div>
+<table>
+<thead><tr><th>日時</th><th>ユーザー</th><th>操作</th><th>対象</th><th>詳細</th></tr></thead>
+<tbody>${rows}</tbody>
+</table>
+<script>window.onload = function() { window.print(); window.close(); };<\/script>
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const win = window.open(url, '_blank');
+    if (!win) {
+      // ポップアップブロック時はダウンロードにフォールバック
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `audit_log_${new Date().toISOString().slice(0, 10)}_print.html`;
+      a.click();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+  };
+
   return (
     <div>
       <div className="flex-between mb-16">
@@ -744,7 +865,11 @@ export const AuditPage: FC = () => {
             <span className="badge badge-ok" style={{ fontSize: 11 }}>実データ</span>
           )}
         </div>
-        <button className="btn btn-sm">📥 CSV出力</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-sm" onClick={handleExportCsv}>📥 CSV</button>
+          <button className="btn btn-sm" onClick={handleExportHtml}>🌐 HTML</button>
+          <button className="btn btn-sm" onClick={handleExportPdf}>📄 PDF</button>
+        </div>
       </div>
 
       <div className="card">

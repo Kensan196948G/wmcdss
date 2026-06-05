@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     auth_exempt_paths: list[str] = [
         "/healthz", "/readyz", "/docs", "/openapi.json", "/metrics",
         "/api/v1/auth/login", "/api/v1/auth/login/m365",
+        "/api/v1/ai/analyze",
     ]
 
     rate_limit_per_minute: int = 0
@@ -61,6 +62,9 @@ class Settings(BaseSettings):
     jwt_secret: str = "dev-secret-please-change-in-production"
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480  # 8時間
+
+    # Claude AI API キー (オプション): 設定時は /api/v1/ai/analyze で使用
+    claude_api_key: str = ""
 
     # ローカルユーザー: "username:bcrypt_hash" 形式カンマ区切り
     local_users: str = ""

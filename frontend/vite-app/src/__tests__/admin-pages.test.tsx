@@ -289,9 +289,11 @@ describe("AuditPage", () => {
     expect(rows.length).toBe(expectedCount);
   });
 
-  it("CSV出力 button is rendered", () => {
+  it("export buttons are rendered (CSV / HTML / PDF)", () => {
     const { container } = render(<AuditPage />);
-    expect(container.textContent).toContain("CSV出力");
+    expect(container.textContent).toContain("CSV");
+    expect(container.textContent).toContain("HTML");
+    expect(container.textContent).toContain("PDF");
   });
 });
 

@@ -269,9 +269,9 @@ describe("AppShell — first paint", () => {
     const { container } = render(<AppShell />);
     const roleButtons = container.querySelectorAll(".role-btn");
     expect(roleButtons.length).toBe(2);
-    const labels = Array.from(roleButtons).map((b) => b.textContent);
-    expect(labels).toContain("現場");
-    expect(labels).toContain("本社");
+    const labels = Array.from(roleButtons).map((b) => b.textContent ?? "");
+    expect(labels.some((l) => l.includes("現場"))).toBe(true);
+    expect(labels.some((l) => l.includes("本社"))).toBe(true);
   });
 
   it("renders the ⚙ tweaks button with aria-label 表示設定を開く", () => {
@@ -392,7 +392,7 @@ describe("AppShell — role/theme persistence (localStorage)", () => {
   it("default role is 現場 (active class on field button)", () => {
     const { container } = render(<AppShell />);
     const fieldBtn = Array.from(container.querySelectorAll(".role-btn")).find(
-      (b) => b.textContent === "現場",
+      (b) => b.textContent?.includes("現場"),
     );
     expect(fieldBtn?.className).toContain("active");
   });
@@ -400,7 +400,7 @@ describe("AppShell — role/theme persistence (localStorage)", () => {
   it("clicking 本社 button switches role and persists to localStorage", () => {
     const { container } = render(<AppShell />);
     const hqBtn = Array.from(container.querySelectorAll(".role-btn")).find(
-      (b) => b.textContent === "本社",
+      (b) => b.textContent?.includes("本社"),
     );
     fireEvent.click(hqBtn!);
     expect(hqBtn?.className).toContain("active");
@@ -411,7 +411,7 @@ describe("AppShell — role/theme persistence (localStorage)", () => {
     localStorage.setItem("wmcdss.tweaks.v1.role", '"hq"');
     const { container } = render(<AppShell />);
     const hqBtn = Array.from(container.querySelectorAll(".role-btn")).find(
-      (b) => b.textContent === "本社",
+      (b) => b.textContent?.includes("本社"),
     );
     expect(hqBtn?.className).toContain("active");
   });
@@ -420,7 +420,7 @@ describe("AppShell — role/theme persistence (localStorage)", () => {
     localStorage.setItem("wmcdss.tweaks.v1.role", '"not-a-role"');
     const { container } = render(<AppShell />);
     const fieldBtn = Array.from(container.querySelectorAll(".role-btn")).find(
-      (b) => b.textContent === "現場",
+      (b) => b.textContent?.includes("現場"),
     );
     expect(fieldBtn?.className).toContain("active");
   });
