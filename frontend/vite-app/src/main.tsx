@@ -1,8 +1,9 @@
-import { StrictMode } from 'react';
+import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { AppShell } from './app-shell';
 import { WMCDSS_API } from './api';
+import { AuthStore, LoginPage, type AuthUser } from './auth';
 import './tweaks-panel';
 import './styles.css';
 
@@ -63,6 +64,37 @@ function BackendStatusStrip() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// 認証ゲート付きアプリルート
+// ---------------------------------------------------------------------------
+
+function App() {
+  const [user, setUser] = useState<AuthUser | null>(() => {
+    // 起動時にトークンが有効かチェック
+    if (AuthStore.isAuthenticated()) {
+      return AuthStore.getUser();
+    }
+    return null;
+  });
+
+  if (!user) {
+    return (
+      <LoginPage
+        onLogin={(loggedInUser) => {
+          setUser(loggedInUser);
+        }}
+      />
+    );
+  }
+
+  return (
+    <>
+      <BackendStatusStrip />
+      <AppShell />
+    </>
+  );
+}
+
 WMCDSS_API.initFromBackend()
   .catch((e: unknown) => {
     console.warn('[wmcdss] initFromBackend failed:', e);
@@ -70,8 +102,7 @@ WMCDSS_API.initFromBackend()
   .finally(() => {
     root.render(
       <StrictMode>
-        <BackendStatusStrip />
-        <AppShell />
+        <App />
       </StrictMode>,
     );
   });

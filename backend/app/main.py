@@ -5,7 +5,7 @@ from app.core.config import get_settings
 from app.core.security import APIKeyMiddleware
 from app.core.ratelimit import RateLimitMiddleware
 from app.core.monitoring import MetricsMiddleware
-from app.api import health, sites, decisions, thresholds, observations, audit, metrics
+from app.api import health, sites, decisions, thresholds, observations, audit, metrics, auth
 
 settings = get_settings()
 
@@ -38,6 +38,7 @@ app.add_middleware(MetricsMiddleware)
 
 app.include_router(health.router)
 app.include_router(metrics.router)
+app.include_router(auth.router)   # 認証: /api/v1/auth/login, /api/v1/auth/login/m365, /api/v1/auth/me
 app.include_router(sites.router, prefix="/api/v1")
 app.include_router(decisions.router, prefix="/api/v1")
 app.include_router(thresholds.router, prefix="/api/v1")
@@ -63,5 +64,8 @@ async def root():
             "/api/v1/observations/marine",
             "/api/v1/observations/marine/latest",
             "/api/v1/audit",
+            "/api/v1/auth/login",
+            "/api/v1/auth/login/m365",
+            "/api/v1/auth/me",
         ],
     }

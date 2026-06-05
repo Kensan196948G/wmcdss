@@ -56,12 +56,24 @@ beforeEach(() => {
     AppShell: () => <div data-testid="appshell">app-shell-stub</div>,
   }));
   vi.doMock("../tweaks-panel", () => ({}));
+  // 認証済みとしてスタブ化（main.test は認証ゲートの後 AppShell のレンダーをテストする）
+  vi.doMock("../auth", () => ({
+    AuthStore: {
+      isAuthenticated: vi.fn().mockReturnValue(true),
+      getUser: vi.fn().mockReturnValue({ username: "test", displayName: "Test User", authType: "local" }),
+      clear: vi.fn(),
+      save: vi.fn(),
+      getToken: vi.fn().mockReturnValue("mock-token"),
+    },
+    LoginPage: () => <div data-testid="login-page">login-page-stub</div>,
+  }));
 });
 
 afterEach(() => {
   vi.doUnmock("../api");
   vi.doUnmock("../app-shell");
   vi.doUnmock("../tweaks-panel");
+  vi.doUnmock("../auth");
   vi.restoreAllMocks();
   while (document.body.firstChild) {
     document.body.removeChild(document.body.firstChild);

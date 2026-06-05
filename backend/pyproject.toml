@@ -15,6 +15,11 @@ dependencies = [
   "pandas>=2.2",
   "numpy>=2.0",
   "prometheus_client>=0.21",
+  # 認証関連
+  "python-jose[cryptography]>=3.3",
+  "passlib[bcrypt]>=1.7",
+  "msal>=1.28",
+  "python-multipart>=0.0.12",
 ]
 
 [project.optional-dependencies]

@@ -12,7 +12,9 @@ __pycache__/
 .env.local
 .env.production
 .env.*.local
+.env.windows
 !.env.production.example
+!.env.windows.example
 *.pem
 *.key
 

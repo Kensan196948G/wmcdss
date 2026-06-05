@@ -3,21 +3,21 @@ services:
     image: postgres:16-alpine
     container_name: wmcdss-db
     environment:
-      POSTGRES_USER: wmcdss
-      POSTGRES_PASSWORD: wmcdss
-      POSTGRES_DB: wmcdss
-      TZ: Asia/Tokyo
+      POSTGRES_USER: ${POSTGRES_USER:-wmcdss}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wmcdss}
+      POSTGRES_DB: ${POSTGRES_DB:-wmcdss}
+      TZ: ${TZ:-Asia/Tokyo}
     ports:
       - "127.0.0.1:5434:5432"
     volumes:
       - wmcdss_pgdata:/var/lib/postgresql/data
       - ./db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wmcdss -d wmcdss"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wmcdss} -d ${POSTGRES_DB:-wmcdss}"]
       interval: 5s
       timeout: 3s
       retries: 20
-    restart: unless-stopped
+    restart: always
 
   backend:
     build:
@@ -30,12 +30,33 @@ services:
       db:
         condition: service_healthy
     environment:
-      WMCDSS_DATABASE_URL: postgresql+asyncpg://wmcdss:wmcdss@db:5432/wmcdss
+      # --- Database ---
+      WMCDSS_DATABASE_URL: ${WMCDSS_DATABASE_URL:-postgresql+asyncpg://wmcdss:wmcdss@db:5432/wmcdss}
+      # --- App ---
+      WMCDSS_DEBUG: ${WMCDSS_DEBUG:-false}
+      WMCDSS_EXPOSE_OPENAPI: ${WMCDSS_EXPOSE_OPENAPI:-false}
+      # --- CORS (Windows ホスト IP:9080 を含む) ---
+      WMCDSS_CORS_ORIGINS: ${WMCDSS_CORS_ORIGINS:-http://172.23.10.251:9080,http://localhost:9080,http://127.0.0.1:9080}
+      # --- JWT 認証 ---
+      WMCDSS_JWT_SECRET: ${WMCDSS_JWT_SECRET:-dev-secret-please-change-in-production}
+      WMCDSS_JWT_EXPIRE_MINUTES: ${WMCDSS_JWT_EXPIRE_MINUTES:-480}
+      # --- ローカルユーザー (一般ログイン) ---
+      WMCDSS_LOCAL_USERS: ${WMCDSS_LOCAL_USERS:-admin:$2b$12$dev_hash_placeholder}
+      # --- Microsoft 365 / Entra ID (非対話式認証 ROPC) ---
+      WMCDSS_ENTRA_TENANT_ID: ${WMCDSS_ENTRA_TENANT_ID:-}
+      WMCDSS_ENTRA_CLIENT_ID: ${WMCDSS_ENTRA_CLIENT_ID:-}
+      WMCDSS_ENTRA_CLIENT_SECRET: ${WMCDSS_ENTRA_CLIENT_SECRET:-}
+      WMCDSS_ENTRA_AUTHORITY: ${WMCDSS_ENTRA_AUTHORITY:-}
+      WMCDSS_ENTRA_SCOPE: ${WMCDSS_ENTRA_SCOPE:-https://graph.microsoft.com/User.Read}
+      WMCDSS_ENTRA_EMAIL_DOMAIN: ${WMCDSS_ENTRA_EMAIL_DOMAIN:-mirai-const.co.jp}
+      # --- 既存 API キー (管理 API 用) ---
+      WMCDSS_API_KEYS: ${WMCDSS_API_KEYS:-}
+      WMCDSS_RATE_LIMIT_PER_MINUTE: ${WMCDSS_RATE_LIMIT_PER_MINUTE:-60}
+      # --- JMA ---
+      WMCDSS_JMA_USER_AGENT: ${WMCDSS_JMA_USER_AGENT:-wmcdss/1.0 (+contact: kensan1969@gmail.com)}
       PYTHONUNBUFFERED: "1"
-      TZ: Asia/Tokyo
+      TZ: ${TZ:-Asia/Tokyo}
     volumes:
-      # Live source mount keeps `--reload` working for app code edits.
-      # Image install of deps still owns pyproject.toml resolution.
       - ./backend:/app
     ports:
       - "0.0.0.0:8003:8000"
@@ -49,7 +70,7 @@ services:
       timeout: 5s
       retries: 6
       start_period: 30s
-    restart: unless-stopped
+    restart: always
 
   frontend:
     build:
@@ -60,8 +81,10 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "0.0.0.0:8080:80"
-    restart: unless-stopped
+      # ポート 9080 を使用 (8080 は既存サービスと競合するため)
+      # WebUI アクセス URL: http://172.23.10.251:9080
+      - "0.0.0.0:9080:80"
+    restart: always
 
 volumes:
   wmcdss_pgdata:
