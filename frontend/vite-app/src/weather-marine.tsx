@@ -6,7 +6,7 @@
 //      Standalone bundle keeps rendering these pages if it loads this build
 //      instead of weather-marine.jsx.
 
-import { useMemo, useState, type FC } from 'react';
+import { useEffect, useMemo, useState, type FC } from 'react';
 import { BarChart, ChartColors, LineChart, WindRose } from './charts';
 import {
   FORECAST_DAYS,
@@ -16,7 +16,114 @@ import {
   generateHourlyWind,
   generateMarine,
   generateWeather,
+  type CompassDir,
+  type WeatherSample,
+  type MarineSample,
 } from './data';
+
+// ---------------------------------------------------------------------------
+// Backend response shapes (as documented by the API)
+// ---------------------------------------------------------------------------
+
+interface BackendWeatherObs {
+  id: number;
+  site_id: string;
+  observed_at: string;
+  temperature_c: number | null;
+  humidity_pct: number | null;
+  pressure_hpa: number | null;
+  precip_mm: number | null;
+  wind_speed_ms: number | null;
+  wind_dir_deg: number | null;
+}
+
+interface BackendMarineObs {
+  id: number;
+  site_id: string;
+  observed_at: string;
+  sig_wave_h_m: number | null;
+  wave_period_s: number | null;
+  wave_dir_deg: number | null;
+  tide_level_m: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Convert 0-360° bearing to 16-point compass direction. */
+function degToCompass(deg: number): CompassDir {
+  const dirs: CompassDir[] = [
+    'N', 'NNE', 'NE', 'ENE',
+    'E', 'ESE', 'SE', 'SSE',
+    'S', 'SSW', 'SW', 'WSW',
+    'W', 'WNW', 'NW', 'NNW',
+  ];
+  return dirs[Math.round(deg / 22.5) % 16];
+}
+
+/** Format ISO8601 timestamp to readable Japanese locale string. */
+function formatObsTime(iso: string): string {
+  try {
+    return new Date(iso).toLocaleString('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch {
+    return iso;
+  }
+}
+
+/** Current date/time in Japanese locale (used for hardcoded-date replacement). */
+function nowJa(): string {
+  return new Date().toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+/** Adapt backend weather observation to the local WeatherSample shape. */
+function adaptBackendWeather(obs: BackendWeatherObs): WeatherSample {
+  const mock = generateWeather(obs.site_id);
+  return {
+    temp:     obs.temperature_c  ?? mock.temp,
+    hum:      obs.humidity_pct   ?? mock.hum,
+    pressure: obs.pressure_hpa   ?? mock.pressure,
+    wind:     obs.wind_speed_ms  ?? mock.wind,
+    windDir:  obs.wind_dir_deg != null ? degToCompass(obs.wind_dir_deg) : mock.windDir,
+    rain:     obs.precip_mm      ?? mock.rain,
+  };
+}
+
+/** Adapt backend marine observation to the local MarineSample shape. */
+function adaptBackendMarine(obs: BackendMarineObs, siteId: string): MarineSample {
+  const mock = generateMarine(siteId) ?? {
+    waveHeight: 0,
+    wavePeriod: 0,
+    waveDir: 'N' as CompassDir,
+    tide: '—',
+    tideLevel: 0,
+  };
+  return {
+    waveHeight: obs.sig_wave_h_m   ?? mock.waveHeight,
+    wavePeriod: obs.wave_period_s  ?? mock.wavePeriod,
+    waveDir:    obs.wave_dir_deg != null ? degToCompass(obs.wave_dir_deg) : mock.waveDir,
+    tide:       mock.tide,
+    tideLevel:  obs.tide_level_m   ?? mock.tideLevel,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
 
 type WeatherTab = 'current' | 'hourly' | 'table';
 
@@ -35,10 +142,43 @@ interface StatItem {
   alert?: StatAlert;
 }
 
+// ---------------------------------------------------------------------------
+// WeatherPage
+// ---------------------------------------------------------------------------
+
 export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
   const [siteId, setSiteId] = useState<string>(selectedSite || SITES[0].id);
   const site = SITES.find((s) => s.id === siteId) || SITES[0];
-  const w = generateWeather(site.id);
+
+  // Backend data state
+  const [backendW, setBackendW] = useState<WeatherSample | null>(null);
+  const [obsTime, setObsTime]   = useState<string>('');
+  const [isLiveData, setIsLiveData] = useState(false);
+
+  useEffect(() => {
+    setBackendW(null);
+    setObsTime('');
+    setIsLiveData(false);
+
+    const api = (window as Window & { WMCDSS_API?: { fetchLatestWeather?: (id: string) => Promise<unknown> } }).WMCDSS_API;
+    if (!api?.fetchLatestWeather) return;
+
+    let cancelled = false;
+    api.fetchLatestWeather(site.id).then((raw) => {
+      if (cancelled || !raw || typeof raw !== 'object') return;
+      const obs = raw as BackendWeatherObs;
+      setBackendW(adaptBackendWeather(obs));
+      setObsTime(obs.observed_at ? formatObsTime(obs.observed_at) : '');
+      setIsLiveData(true);
+    }).catch(() => {
+      // silently fall back to mock data
+    });
+
+    return () => { cancelled = true; };
+  }, [site.id]);
+
+  const w = backendW ?? generateWeather(site.id);
+
   const hourlyWind = useMemo(() => generateHourlyWind(), [siteId]);
   const [tab, setTab] = useState<WeatherTab>('current');
 
@@ -110,8 +250,16 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
             ))}
           </select>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          観測所: {site.station} ／ 最終取得: 2026/05/22 09:00
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span
+            className={`badge ${isLiveData ? 'badge-ok' : 'badge-warn'}`}
+            style={{ fontSize: 11 }}
+          >
+            {isLiveData ? '実データ' : 'サンプルデータ'}
+          </span>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            観測所: {site.station} ／ 最終取得: {obsTime || nowJa()}
+          </div>
         </div>
       </div>
 
@@ -330,6 +478,10 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
   );
 };
 
+// ---------------------------------------------------------------------------
+// MarinePage
+// ---------------------------------------------------------------------------
+
 export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
   const marineSites = useMemo(() => SITES.filter((s) => s.type !== 'land'), []);
   const fallbackId = marineSites[0]?.id ?? '';
@@ -337,10 +489,48 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
     selectedSite && marineSites.find((s) => s.id === selectedSite) ? selectedSite : fallbackId;
   const [siteId, setSiteId] = useState<string>(initialId);
   const site = marineSites.find((s) => s.id === siteId) || marineSites[0];
-  const m = site ? generateMarine(site.id) : null;
+
+  // Backend data state
+  const [backendM, setBackendM] = useState<MarineSample | null>(null);
+  const [obsTime, setObsTime]   = useState<string>('');
+  const [isLiveData, setIsLiveData] = useState(false);
+
+  useEffect(() => {
+    if (!site) return;
+    setBackendM(null);
+    setObsTime('');
+    setIsLiveData(false);
+
+    const api = (window as Window & { WMCDSS_API?: { fetchLatestMarine?: (id: string) => Promise<unknown> } }).WMCDSS_API;
+    if (!api?.fetchLatestMarine) return;
+
+    let cancelled = false;
+    api.fetchLatestMarine(site.id).then((raw) => {
+      if (cancelled || !raw || typeof raw !== 'object') return;
+      const obs = raw as BackendMarineObs;
+      setBackendM(adaptBackendMarine(obs, site.id));
+      setObsTime(obs.observed_at ? formatObsTime(obs.observed_at) : '');
+      setIsLiveData(true);
+    }).catch(() => {
+      // silently fall back to mock data
+    });
+
+    return () => { cancelled = true; };
+  }, [site?.id]);
+
   const hourlyWave = useMemo(() => generateHourlyWave(), [siteId]);
 
-  if (!site || !m) {
+  if (!site) {
+    return (
+      <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+        海象データのある現場がありません
+      </div>
+    );
+  }
+
+  const m = backendM ?? generateMarine(site.id);
+
+  if (!m) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
         海象データのある現場がありません
@@ -379,7 +569,18 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
             ))}
           </select>
         </div>
-        <span className="badge badge-info">観測点: {site.marinePoint}</span>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span
+            className={`badge ${isLiveData ? 'badge-ok' : 'badge-warn'}`}
+            style={{ fontSize: 11 }}
+          >
+            {isLiveData ? '実データ' : 'サンプルデータ'}
+          </span>
+          <span className="badge badge-info">観測点: {site.marinePoint}</span>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            観測日時: {obsTime || 'サンプルデータ'}
+          </span>
+        </div>
       </div>
 
       <div className="grid-3 mb-16">

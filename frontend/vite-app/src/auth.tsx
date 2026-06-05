@@ -8,6 +8,7 @@
  * main.tsx がこのモジュールを呼び出して認証ゲートとして機能させる。
  */
 import { type FC, useState } from 'react';
+import { WMCDSS_API_BASE } from './api';
 
 // ---------------------------------------------------------------------------
 // 定数
@@ -16,10 +17,11 @@ import { type FC, useState } from 'react';
 const TOKEN_KEY = 'wmcdss_access_token';
 const USER_KEY = 'wmcdss_user';
 
-// バックエンド API ベース URL（api.ts の WMCDSS_API_BASE と同様に window 変数から取得）
+// WMCDSS_API_BASE = "http://{hostname}:8003/api/v1"
+// auth エンドポイントは /auth/login, /auth/login/m365, /auth/me
+// → WMCDSS_API_BASE + "/auth/login" = "http://host:8003/api/v1/auth/login"
 function getApiBase(): string {
-  const w = window as Window & { WMCDSS_API_BASE?: string };
-  return w.WMCDSS_API_BASE ?? '/api';
+  return WMCDSS_API_BASE;
 }
 
 // ---------------------------------------------------------------------------
@@ -110,7 +112,7 @@ export const LoginPage: FC<LoginPageProps> = ({ onLogin }) => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${getApiBase()}/v1/auth/login`, {
+      const res = await fetch(`${getApiBase()}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: username.trim(), password }),
@@ -149,7 +151,7 @@ export const LoginPage: FC<LoginPageProps> = ({ onLogin }) => {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${getApiBase()}/v1/auth/login/m365`, {
+      const res = await fetch(`${getApiBase()}/auth/login/m365`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: email.trim().toLowerCase(), password: m365Password }),

@@ -118,13 +118,14 @@ describe("ThresholdsPage", () => {
 // ---------------------------------------------------------------------------
 
 describe("EtlPage", () => {
-  it("renders the 4 ETL stat cards", () => {
+  it("renders data source info section with JMA endpoints", () => {
+    // EtlPage now shows JMA data source information instead of hardcoded stats.
     const { container } = render(<EtlPage />);
     for (const label of [
-      "本日の取得回数",
-      "取得レコード数",
-      "最終取得",
-      "エラー件数",
+      "データ取得元情報",
+      "AMeDAS",
+      "波浪ナウキャスト",
+      "バックエンド接続状況",
     ]) {
       expect(container.textContent).toContain(label);
     }
@@ -145,10 +146,12 @@ describe("EtlPage", () => {
     }
   });
 
-  it("renders one row per ETL_JOBS entry", () => {
+  it("renders data-source rows + one row per ETL_JOBS entry", () => {
+    // EtlPage has two tables: data-source table (2 rows: AMeDAS + 波浪ナウキャスト)
+    // and job table (ETL_JOBS.length rows).
     const { container } = render(<EtlPage />);
     const rows = container.querySelectorAll("tbody tr");
-    expect(rows.length).toBe(ETL_JOBS.length);
+    expect(rows.length).toBe(ETL_JOBS.length + 2);
   });
 
   it("renders 手動実行 button", () => {

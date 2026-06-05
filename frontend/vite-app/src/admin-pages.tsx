@@ -1,4 +1,4 @@
-import { useMemo, useState, type ChangeEvent, type FC } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent, type FC } from 'react';
 import {
   AUDIT_LOG,
   ETL_JOBS,
@@ -180,20 +180,66 @@ export const ThresholdsPage: FC = () => {
 };
 
 // ---------- ETL Status ----------
-interface EtlStat {
+
+// Data source metadata for display
+interface EtlSource {
   label: string;
-  value: string;
-  sub: string;
+  url: string;
+  interval: string;
+  table: string;
+  data: string;
 }
 
-const ETL_STATS: EtlStat[] = [
-  { label: '本日の取得回数', value: '24', sub: '正常完了' },
-  { label: '取得レコード数', value: '2,622', sub: '本日合計' },
-  { label: '最終取得', value: '09:00', sub: '2026/05/22' },
-  { label: 'エラー件数', value: '0', sub: '過去24時間' },
+const ETL_SOURCES: EtlSource[] = [
+  {
+    label: 'AMeDAS 10分観測データ',
+    url: 'https://www.jma.go.jp/bosai/amedas/',
+    interval: '10分毎（毎時 :00, :10, :20, :30, :40, :50）',
+    table: 'weather_observations',
+    data: '気温・湿度・気圧・風速・風向・降水量',
+  },
+  {
+    label: '波浪ナウキャスト',
+    url: 'https://www.jma.go.jp/bosai/nowc/',
+    interval: '1時間毎（毎時 03分）',
+    table: 'marine_observations',
+    data: '有義波高・波周期・波向・潮位',
+  },
 ];
 
+// ETL job source/data/URL metadata keyed by job id
+const ETL_JOB_META: Record<number, { source: string; dataItems: string; url: string }> = {
+  1: {
+    source: '気象庁 AMeDAS',
+    dataItems: '気温・湿度・気圧・風速・風向・降水量',
+    url: 'https://www.jma.go.jp/bosai/amedas/',
+  },
+  2: {
+    source: '気象庁 波浪ナウキャスト',
+    dataItems: '有義波高・波周期・波向・潮位',
+    url: 'https://www.jma.go.jp/bosai/nowc/',
+  },
+  3: {
+    source: '気象庁 潮位観測',
+    dataItems: '潮位',
+    url: 'https://www.jma.go.jp/bosai/amedas/',
+  },
+};
+
+type BackendStatus = {
+  ok: boolean;
+  sites?: number;
+  [key: string]: unknown;
+};
+
 export const EtlPage: FC = () => {
+  const backendStatus = (
+    typeof window !== 'undefined'
+      ? (window as Window & { BACKEND_STATUS?: BackendStatus }).BACKEND_STATUS
+      : undefined
+  );
+  const isConnected = backendStatus?.ok === true;
+
   return (
     <div>
       <div className="flex-between mb-16">
@@ -203,39 +249,124 @@ export const EtlPage: FC = () => {
         <button className="btn btn-sm btn-primary">▶ 手動実行</button>
       </div>
 
-      <div className="grid-4 mb-16">
-        {ETL_STATS.map((s, i) => (
-          <div className="stat-card" key={i}>
-            <div className="stat-label">{s.label}</div>
-            <div className="stat-value" style={{ color: 'var(--blue-600)' }}>{s.value}</div>
-            <div className="stat-sub">{s.sub}</div>
+      {/* データ取得元情報 */}
+      <div className="card mb-16">
+        <div className="card-header">
+          <span className="card-title">データ取得元情報</span>
+        </div>
+        <div className="card-body">
+          <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+            取得元: 気象庁（JMA）公開API
           </div>
-        ))}
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>データ種別</th>
+                <th>取得データ</th>
+                <th>取得間隔</th>
+                <th>格納テーブル</th>
+                <th>URL</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ETL_SOURCES.map((src, i) => (
+                <tr key={i}>
+                  <td style={{ fontWeight: 600 }}>{src.label}</td>
+                  <td style={{ fontSize: 12 }}>{src.data}</td>
+                  <td style={{ fontSize: 12 }}>{src.interval}</td>
+                  <td>
+                    <code style={{ fontSize: 11, background: 'var(--bg-muted, #f3f4f6)', padding: '2px 6px', borderRadius: 4 }}>
+                      {src.table}
+                    </code>
+                  </td>
+                  <td>
+                    <a
+                      href={src.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      style={{ fontSize: 11, color: 'var(--blue-600)', wordBreak: 'break-all' }}
+                    >
+                      {src.url}
+                    </a>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
+      {/* バックエンド接続状況 */}
+      <div className="grid-2 mb-16">
+        <div className="stat-card">
+          <div className="stat-label">バックエンド接続状況</div>
+          <div className="stat-value" style={{ fontSize: 14, color: isConnected ? 'var(--status-ok)' : 'var(--status-warn, #d97706)' }}>
+            {isConnected ? '✅ バックエンド接続中' : '⚠️ バックエンド未接続（サンプルデータ表示中）'}
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">取得実績（現場数）</div>
+          <div className="stat-value" style={{ color: 'var(--blue-600)' }}>
+            {isConnected && backendStatus?.sites != null
+              ? String(backendStatus.sites)
+              : '—'}
+          </div>
+          <div className="stat-sub">{isConnected ? '接続中の現場数' : '未接続'}</div>
+        </div>
+      </div>
+
+      {/* ジョブ一覧 */}
       <div className="card">
         <div className="card-header"><span className="card-title">ジョブ一覧</span></div>
         <table className="data-table">
           <thead>
-            <tr><th>ジョブ名</th><th>スケジュール</th><th>最終実行</th><th>ステータス</th><th>取得件数</th><th>操作</th></tr>
+            <tr>
+              <th>ジョブ名</th>
+              <th>取得元</th>
+              <th>取得データ</th>
+              <th>URL</th>
+              <th>スケジュール</th>
+              <th>最終実行</th>
+              <th>ステータス</th>
+              <th>取得件数</th>
+              <th>操作</th>
+            </tr>
           </thead>
           <tbody>
-            {ETL_JOBS.map((job) => (
-              <tr key={job.id}>
-                <td style={{ fontWeight: 600 }}>{job.name}</td>
-                <td>{job.schedule}</td>
-                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{job.lastRun}</td>
-                <td>
-                  <span className="badge badge-ok">
-                    <span className="badge-dot"></span>正常
-                  </span>
-                </td>
-                <td style={{ fontVariantNumeric: 'tabular-nums' }}>{job.records.toLocaleString()}</td>
-                <td>
-                  <button className="btn btn-sm">▶ 実行</button>
-                </td>
-              </tr>
-            ))}
+            {ETL_JOBS.map((job) => {
+              const meta = ETL_JOB_META[job.id];
+              return (
+                <tr key={job.id}>
+                  <td style={{ fontWeight: 600 }}>{job.name}</td>
+                  <td style={{ fontSize: 12 }}>{meta?.source ?? '—'}</td>
+                  <td style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{meta?.dataItems ?? '—'}</td>
+                  <td>
+                    {meta?.url ? (
+                      <a
+                        href={meta.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{ fontSize: 11, color: 'var(--blue-600)', wordBreak: 'break-all' }}
+                      >
+                        {meta.url}
+                      </a>
+                    ) : '—'}
+                  </td>
+                  <td>{job.schedule}</td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{job.lastRun}</td>
+                  <td>
+                    <span className={`badge ${job.status === 'ok' ? 'badge-ok' : 'badge-warn'}`}>
+                      <span className="badge-dot"></span>
+                      {job.status === 'ok' ? '正常' : job.status}
+                    </span>
+                  </td>
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{job.records.toLocaleString()}</td>
+                  <td>
+                    <button className="btn btn-sm">▶ 実行</button>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -403,16 +534,79 @@ export const ReportsPage: FC = () => {
 };
 
 // ---------- Audit Log ----------
+
+interface BackendAuditEntry {
+  id: number;
+  occurred_at: string;
+  actor: string | null;
+  action: string;
+  target_type: string | null;
+  target_id: number | string | null;
+  detail: Record<string, unknown> | string | null;
+}
+
+function formatJST(isoStr: string): string {
+  try {
+    const d = new Date(isoStr);
+    return d.toLocaleString('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    });
+  } catch {
+    return isoStr;
+  }
+}
+
+function formatDetail(detail: BackendAuditEntry['detail']): string {
+  if (detail == null) return '';
+  if (typeof detail === 'string') return detail;
+  return JSON.stringify(detail);
+}
+
 export const AuditPage: FC = () => {
   const [filterAction, setFilterAction] = useState<string>('all');
+  const [backendLogs, setBackendLogs] = useState<typeof AUDIT_LOG | null>(null);
+  const [isRealData, setIsRealData] = useState(false);
+
+  useEffect(() => {
+    const api = (window as Window & { WMCDSS_API?: { fetchAuditLog: Function } }).WMCDSS_API;
+    if (!api?.fetchAuditLog) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const result: BackendAuditEntry[] = await api.fetchAuditLog({ limit: 100 });
+        if (cancelled || !Array.isArray(result)) return;
+        const converted = result.map((entry) => ({
+          id: entry.id,
+          time: formatJST(entry.occurred_at),
+          user: entry.actor ?? 'システム',
+          action: entry.action,
+          target: [entry.target_type, entry.target_id].filter(Boolean).join(' #') || '—',
+          detail: formatDetail(entry.detail),
+        }));
+        setBackendLogs(converted);
+        setIsRealData(true);
+      } catch {
+        // fall through to AUDIT_LOG fallback
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const displayLogs = backendLogs ?? AUDIT_LOG;
 
   const actions = useMemo(
-    () => Array.from(new Set(AUDIT_LOG.map((l) => l.action))),
-    [],
+    () => Array.from(new Set(displayLogs.map((l) => l.action))),
+    [displayLogs],
   );
   const filtered = useMemo(
-    () => (filterAction === 'all' ? AUDIT_LOG : AUDIT_LOG.filter((l) => l.action === filterAction)),
-    [filterAction],
+    () => (filterAction === 'all' ? displayLogs : displayLogs.filter((l) => l.action === filterAction)),
+    [filterAction, displayLogs],
   );
 
   return (
@@ -431,6 +625,9 @@ export const AuditPage: FC = () => {
               <option key={a} value={a}>{a}</option>
             ))}
           </select>
+          {isRealData && (
+            <span className="badge badge-ok" style={{ fontSize: 11 }}>実データ</span>
+          )}
         </div>
         <button className="btn btn-sm">📥 CSV出力</button>
       </div>
@@ -470,8 +667,36 @@ const NOTIFICATION_PREFS: { label: string; defaultVal: boolean }[] = [
   { label: 'データ取得エラー時に通知', defaultVal: true },
 ];
 
+const SETTINGS_KEY = 'wmcdss_settings';
+
+interface PersistedSettings {
+  name: string;
+  email: string;
+}
+
+function loadSettings(role: Role): PersistedSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PersistedSettings>;
+      return {
+        name: parsed.name ?? (role === 'field' ? '田中 太郎' : '山田 部長'),
+        email: parsed.email ?? 'tanaka@example.co.jp',
+      };
+    }
+  } catch {
+    // ignore parse errors
+  }
+  return {
+    name: role === 'field' ? '田中 太郎' : '山田 部長',
+    email: 'tanaka@example.co.jp',
+  };
+}
+
 export const SettingsPage: FC<SettingsProps> = ({ role }) => {
   const [saved, setSaved] = useState(false);
+  const [name, setName] = useState(() => loadSettings(role).name);
+  const [email, setEmail] = useState(() => loadSettings(role).email);
 
   // Preserves the original DOM-mutation toggle: the checkbox is hidden and a
   // sibling div is repositioned by hand. Keeping byte-equivalence rather than
@@ -487,6 +712,17 @@ export const SettingsPage: FC<SettingsProps> = ({ role }) => {
     }
   };
 
+  const handleSave = () => {
+    try {
+      const data: PersistedSettings = { name, email };
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(data));
+    } catch {
+      // ignore storage errors
+    }
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
   return (
     <div style={{ maxWidth: 640 }}>
       <div className="card mb-16">
@@ -497,7 +733,8 @@ export const SettingsPage: FC<SettingsProps> = ({ role }) => {
               <label className="form-label">名前</label>
               <input
                 className="form-input"
-                defaultValue={role === 'field' ? '田中 太郎' : '山田 部長'}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
               />
             </div>
             <div className="form-group">
@@ -510,7 +747,11 @@ export const SettingsPage: FC<SettingsProps> = ({ role }) => {
           </div>
           <div className="form-group">
             <label className="form-label">メールアドレス</label>
-            <input className="form-input" defaultValue="tanaka@example.co.jp" />
+            <input
+              className="form-input"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
           </div>
         </div>
       </div>
@@ -591,10 +832,7 @@ export const SettingsPage: FC<SettingsProps> = ({ role }) => {
 
       <button
         className="btn btn-primary"
-        onClick={() => {
-          setSaved(true);
-          setTimeout(() => setSaved(false), 2000);
-        }}
+        onClick={handleSave}
       >
         設定を保存
       </button>

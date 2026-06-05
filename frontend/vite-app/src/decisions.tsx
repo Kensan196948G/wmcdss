@@ -11,6 +11,13 @@
 
 import { useMemo, useState, type FC } from 'react';
 import { LineChart } from './charts';
+
+function nowJSTLabel(): string {
+  return new Date().toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  }) + ' 時点';
+}
 import {
   FORECAST_DAYS,
   SITES,
@@ -233,7 +240,7 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
               コンクリート打設判定：
               {overallStatus === 'ok' ? '施工可' : overallStatus === 'warn' ? '注意' : '中止推奨'}
             </div>
-            <div className="decision-sub">{site.shortName} ／ 2026年5月22日 09:00 時点</div>
+            <div className="decision-sub">{site.shortName} ／ {nowJSTLabel()}</div>
           </div>
         </div>
         <div className="decision-body">
@@ -454,7 +461,7 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
               {overallStatus === 'ok' ? '施工可' : overallStatus === 'warn' ? '注意' : '中止推奨'}
             </div>
             <div className="decision-sub">
-              {site.shortName} ／ 観測点: {site.marinePoint} ／ 2026年5月22日 09:00
+              {site.shortName} ／ 観測点: {site.marinePoint} ／ {nowJSTLabel()}
             </div>
           </div>
         </div>

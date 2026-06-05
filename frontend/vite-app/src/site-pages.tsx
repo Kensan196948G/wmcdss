@@ -25,6 +25,13 @@
 
 import { useMemo, useState, type ChangeEvent } from 'react';
 import { ChartColors, LineChart } from './charts';
+
+function nowJSTLabel(): string {
+  return new Date().toLocaleString('ja-JP', {
+    timeZone: 'Asia/Tokyo', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit',
+  }) + ' 時点';
+}
 import {
   SITES,
   STATUS_CLASS,
@@ -235,7 +242,27 @@ export function SiteRegisterPage({ navigate }: SiteRegisterPageProps) {
     setForm((prev) => ({ ...prev, [key]: val }));
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    try {
+      const api = (window as Window & { WMCDSS_API?: { fetchJSON?: Function } }).WMCDSS_API;
+      if (api?.fetchJSON) {
+        await api.fetchJSON('/sites', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            code: `SITE-${Date.now().toString(36).toUpperCase()}`,
+            name: form.name,
+            kind: form.type,
+            lat: Number(form.lat),
+            lon: Number(form.lng),
+            jma_station_id: form.station || null,
+            address: null,
+          }),
+        });
+      }
+    } catch {
+      // バックエンド未接続時はフォールバック（モック動作）
+    }
     setSaved(true);
     setTimeout(() => navigate('sites'), 1200);
   };
@@ -441,7 +468,7 @@ export function SiteRegisterPage({ navigate }: SiteRegisterPageProps) {
       </div>
 
       <div style={{ display: 'flex', gap: 8 }}>
-        <button className="btn btn-primary" onClick={handleSave}>
+        <button className="btn btn-primary" onClick={() => { void handleSave(); }}>
           登録する
         </button>
         <button className="btn" onClick={() => navigate('sites')}>
@@ -559,7 +586,7 @@ export function SiteDetailPage({ navigate, selectedSite }: SiteDetailPageProps) 
           </div>
           <div>
             <div className="decision-title">総合判定：{STATUS_LABEL[decision.status]}</div>
-            <div className="decision-sub">2026年5月22日 09:00 時点</div>
+            <div className="decision-sub">{nowJSTLabel()}</div>
           </div>
         </div>
         <div className="decision-body">
