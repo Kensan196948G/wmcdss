@@ -1131,6 +1131,15 @@ export const AiSettingsPage: FC = () => {
   const apiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE
     ?? `http://${window.location.hostname}:8003/api/v1`;
 
+  // /ai/settings と /ai/test は JWT 認証が必要（セキュリティ修正）。
+  // ログイン済みの JWT トークンを Authorization ヘッダーに付与する。
+  const authHeaders = (): Record<string, string> => {
+    const token = typeof localStorage !== 'undefined'
+      ? localStorage.getItem('wmcdss_access_token')
+      : null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
   const [settings, setSettings] = useState<AiSettingsState | null>(null);
   const [apiKey, setApiKey] = useState('');
   const [showKey, setShowKey] = useState(false);
@@ -1143,7 +1152,10 @@ export const AiSettingsPage: FC = () => {
 
   const doLoadSettings = (signal?: AbortSignal) => {
     setLoading(true);
-    fetch(`${apiBase}/ai/settings`, signal ? { signal } : undefined)
+    fetch(`${apiBase}/ai/settings`, {
+      headers: authHeaders(),
+      ...(signal ? { signal } : {}),
+    })
       .then((resp) => {
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         return resp.json() as Promise<AiSettingsState>;
@@ -1189,7 +1201,7 @@ export const AiSettingsPage: FC = () => {
     try {
       const resp = await fetch(`${apiBase}/ai/test`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ api_key: apiKey, model }),
       });
       const data = await resp.json() as { ok: boolean; message: string };
@@ -1207,7 +1219,7 @@ export const AiSettingsPage: FC = () => {
     try {
       const resp = await fetch(`${apiBase}/ai/settings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
         body: JSON.stringify({ api_key: apiKey, model }),
       });
       if (resp.ok) {

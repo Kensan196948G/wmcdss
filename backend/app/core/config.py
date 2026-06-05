@@ -49,7 +49,10 @@ class Settings(BaseSettings):
     auth_exempt_paths: list[str] = [
         "/healthz", "/readyz", "/docs", "/openapi.json", "/metrics",
         "/api/v1/auth/login", "/api/v1/auth/login/m365",
-        "/api/v1/ai/analyze", "/api/v1/ai/settings", "/api/v1/ai/test",
+        # /ai/analyze は認証なしで呼べるが、/ai/settings と /ai/test は
+        # 認証済みユーザー（JWT）のみ許可する（下記 ai.py Depends を参照）。
+        # 誤って exempt_paths に追加しないこと。
+        "/api/v1/ai/analyze",
     ]
 
     rate_limit_per_minute: int = 0

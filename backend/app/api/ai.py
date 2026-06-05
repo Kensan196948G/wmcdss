@@ -21,8 +21,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+
+# JWT 認証依存関係 — /ai/settings と /ai/test はログイン済みユーザーのみ許可。
+# app.api.auth → app.core.auth → app.core.config のチェーンは一方向なので循環なし。
+from app.api.auth import UserInfo, get_current_user
 
 log = logging.getLogger(__name__)
 
@@ -65,13 +69,23 @@ def _load_settings_file() -> None:
 
 
 def _save_settings_file() -> None:
-    """Persist _ai_settings to the JSON file.  Fails silently if not writable."""
+    """Persist _ai_settings to disk with restrictive permissions (0o600).
+
+    The parent directory is created with mode 0o700 so no other OS user can
+    list or read the credential file even if umask allows group/world bits.
+    Fails silently when the volume is read-only or permissions cannot be set.
+    """
     try:
-        _SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
-        _SETTINGS_FILE.write_text(
-            json.dumps(_ai_settings, ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        _SETTINGS_FILE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Use os.open() to set 0o600 atomically at creation time instead of
+        # relying on Path.write_text() which uses the process umask.
+        fd = os.open(
+            str(_SETTINGS_FILE),
+            os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+            0o600,
         )
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(_ai_settings, fh, ensure_ascii=False, indent=2)
     except Exception:  # noqa: BLE001
         log.warning("Failed to save AI settings to %s; operating in-memory only", _SETTINGS_FILE)
 
@@ -400,7 +414,9 @@ async def _call_claude(prompt: str, api_key: str, model: str = "claude-sonnet-4-
 # ---------------------------------------------------------------------------
 
 @router.get("/ai/settings", response_model=AiSettingsResponse)
-async def get_ai_settings() -> AiSettingsResponse:
+async def get_ai_settings(
+    _current_user: UserInfo = Depends(get_current_user),
+) -> AiSettingsResponse:
     """Return current AI settings (API key is masked to last 4 chars)."""
     api_key = _get_api_key()
     return AiSettingsResponse(
@@ -413,7 +429,10 @@ async def get_ai_settings() -> AiSettingsResponse:
 
 
 @router.post("/ai/settings", response_model=AiSettingsSaveResponse)
-async def save_ai_settings(body: AiSettingsSaveRequest) -> AiSettingsSaveResponse:
+async def save_ai_settings(
+    body: AiSettingsSaveRequest,
+    _current_user: UserInfo = Depends(get_current_user),
+) -> AiSettingsSaveResponse:
     """Save API key and model.  Pass empty string for api_key to delete the stored key."""
     global _ai_settings
 
@@ -434,7 +453,10 @@ async def save_ai_settings(body: AiSettingsSaveRequest) -> AiSettingsSaveRespons
 
 
 @router.post("/ai/test", response_model=AiTestResponse)
-async def test_ai_connection(body: AiTestRequest) -> AiTestResponse:
+async def test_ai_connection(
+    body: AiTestRequest,
+    _current_user: UserInfo = Depends(get_current_user),
+) -> AiTestResponse:
     """Send a minimal test request to the Anthropic API to verify the key."""
     start = time.monotonic()
     try:
