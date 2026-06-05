@@ -34,6 +34,7 @@ export interface AdaptedSite {
   name: string;
   shortName: string;
   type: BackendSite['kind'];
+  area: string;
   lat: number;
   lng: number;
   station: string;
@@ -115,6 +116,7 @@ export function adaptSite(backendSite: BackendSite, mockFallback?: Partial<Adapt
     name: backendSite.name,
     shortName: fallback.shortName || backendSite.name.slice(0, 8),
     type: backendSite.kind,
+    area: fallback.area || '',
     lat: backendSite.lat,
     lng: backendSite.lon,
     station: fallback.station || backendSite.jma_station_id || '',

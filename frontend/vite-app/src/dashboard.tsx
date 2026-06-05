@@ -1,4 +1,4 @@
-import { useEffect, useRef, type FC } from 'react';
+import { useEffect, useRef, useState, type FC } from 'react';
 import {
   FORECAST_DAYS, SITES, STATUS_CLASS, STATUS_LABEL, TYPE_LABEL, WEATHER_ICONS,
   generateMarine, generateWeather, getDecision,
@@ -16,20 +16,37 @@ declare global {
 }
 declare const L: any;
 
+const AREA_VIEW: Record<string, [number, number, number]> = {
+  '全国':   [36.0, 137.0, 5],
+  '北海道': [43.2, 142.0, 7],
+  '東北':   [39.0, 140.5, 7],
+  '関東':   [35.6, 139.8, 8],
+  '中部':   [35.2, 137.2, 7],
+  '近畿':   [34.7, 135.4, 8],
+  '中国':   [34.5, 132.5, 8],
+  '四国':   [33.8, 133.5, 8],
+  '九州':   [32.8, 130.5, 7],
+  '沖縄':   [26.2, 127.7, 9],
+};
+
+export const AREAS = Object.keys(AREA_VIEW);
+
 export interface MapViewProps {
   sites: Site[];
   onSiteClick?: (id: string) => void;
   selectedSite?: string | null;
+  selectedArea?: string | null;
 }
 
-export const MapView: FC<MapViewProps> = ({ sites, onSiteClick }) => {
+export const MapView: FC<MapViewProps> = ({ sites, onSiteClick, selectedArea }) => {
   const mapRef = useRef<HTMLDivElement | null>(null);
   const mapInst = useRef<any>(null);
   const markersRef = useRef<any[]>([]);
 
   useEffect(() => {
     if (!mapRef.current || mapInst.current) return;
-    const map = L.map(mapRef.current, { zoomControl: false }).setView([35.48, 139.85], 10);
+    const [lat, lng, zoom] = AREA_VIEW['全国'];
+    const map = L.map(mapRef.current, { zoomControl: false }).setView([lat, lng], zoom);
     L.control.zoom({ position: 'topright' }).addTo(map);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
@@ -38,6 +55,13 @@ export const MapView: FC<MapViewProps> = ({ sites, onSiteClick }) => {
     mapInst.current = map;
     setTimeout(() => map.invalidateSize(), 100);
   }, []);
+
+  useEffect(() => {
+    const map = mapInst.current;
+    if (!map) return;
+    const [lat, lng, zoom] = AREA_VIEW[selectedArea ?? '全国'] ?? AREA_VIEW['全国'];
+    map.setView([lat, lng], zoom, { animate: true });
+  }, [selectedArea]);
 
   useEffect(() => {
     const map = mapInst.current;
@@ -161,35 +185,69 @@ export interface AlertBannerProps {
   sites: Site[];
 }
 
+const MAX_CHIPS = 5;
+
+const AlertRow: FC<{
+  icon: string;
+  label: string;
+  color: string;
+  bg: string;
+  border: string;
+  sites: Site[];
+}> = ({ icon, label, color, bg, border, sites }) => {
+  if (sites.length === 0) return null;
+  const visible = sites.slice(0, MAX_CHIPS);
+  const rest = sites.length - MAX_CHIPS;
+  return (
+    <div style={{
+      background: bg, border: `1px solid ${border}`,
+      borderRadius: 'var(--radius-md)', padding: '8px 14px',
+      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+    }}>
+      <span style={{ fontSize: 16, flexShrink: 0 }}>{icon}</span>
+      <span style={{ fontWeight: 700, fontSize: 12, color, flexShrink: 0, minWidth: 60 }}>{label}</span>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flex: 1 }}>
+        {visible.map((s) => (
+          <span key={s.id} title={getDecision(s).reasons[0]} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 4,
+            padding: '2px 10px', borderRadius: 100, fontSize: 11, fontWeight: 600,
+            background: `${color}18`, color, border: `1px solid ${color}40`,
+            cursor: 'default', whiteSpace: 'nowrap',
+          }}>
+            {s.shortName}
+          </span>
+        ))}
+        {rest > 0 && (
+          <span style={{
+            padding: '2px 10px', borderRadius: 100, fontSize: 11, fontWeight: 600,
+            background: 'var(--bg-muted)', color: 'var(--text-muted)',
+            border: '1px solid var(--border)', whiteSpace: 'nowrap',
+          }}>
+            +{rest}件
+          </span>
+        )}
+      </div>
+    </div>
+  );
+};
+
 export const AlertBanner: FC<AlertBannerProps> = ({ sites }) => {
   const dangerSites = sites.filter((s) => s.status === 'danger');
   const warnSites = sites.filter((s) => s.status === 'warn');
   if (dangerSites.length === 0 && warnSites.length === 0) return null;
 
   return (
-    <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {dangerSites.map((s) => (
-        <div key={s.id} style={{
-          background: 'var(--status-danger-bg)', border: '1px solid var(--status-danger-border)',
-          borderRadius: 'var(--radius-md)', padding: '10px 16px',
-          display: 'flex', alignItems: 'center', gap: 10, fontSize: 13,
-        }}>
-          <span style={{ fontSize: 18 }}>⚠</span>
-          <span style={{ fontWeight: 600, color: 'var(--status-danger)' }}>中止推奨</span>
-          <span>{s.shortName} — {getDecision(s).reasons[0]}</span>
-        </div>
-      ))}
-      {warnSites.map((s) => (
-        <div key={s.id} style={{
-          background: 'var(--status-warn-bg)', border: '1px solid var(--status-warn-border)',
-          borderRadius: 'var(--radius-md)', padding: '10px 16px',
-          display: 'flex', alignItems: 'center', gap: 10, fontSize: 13,
-        }}>
-          <span style={{ fontSize: 18 }}>⚡</span>
-          <span style={{ fontWeight: 600, color: 'var(--status-warn)' }}>注意</span>
-          <span>{s.shortName} — {getDecision(s).reasons[0]}</span>
-        </div>
-      ))}
+    <div style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <AlertRow
+        icon="⚠" label="中止推奨"
+        color="var(--status-danger)" bg="var(--status-danger-bg)" border="var(--status-danger-border)"
+        sites={dangerSites}
+      />
+      <AlertRow
+        icon="⚡" label="注意"
+        color="var(--status-warn)" bg="var(--status-warn-bg)" border="var(--status-warn-border)"
+        sites={warnSites}
+      />
     </div>
   );
 };
@@ -200,9 +258,12 @@ export interface DashboardPageProps {
 }
 
 export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => {
-  const okCount = SITES.filter((s) => s.status === 'ok').length;
-  const warnCount = SITES.filter((s) => s.status === 'warn').length;
-  const dangerCount = SITES.filter((s) => s.status === 'danger').length;
+  const [selectedArea, setSelectedArea] = useState<string | null>(null);
+
+  const visibleSites = selectedArea ? SITES.filter((s) => s.area === selectedArea) : SITES;
+  const okCount = visibleSites.filter((s) => s.status === 'ok').length;
+  const warnCount = visibleSites.filter((s) => s.status === 'warn').length;
+  const dangerCount = visibleSites.filter((s) => s.status === 'danger').length;
   const today = FORECAST_DAYS[0];
 
   return (
@@ -212,9 +273,9 @@ export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => 
       <div className="grid-4 mb-16">
         <div className="stat-card">
           <div className="stat-label">管理現場数</div>
-          <div className="stat-value" style={{ color: 'var(--blue-500)' }}>{SITES.length}</div>
+          <div className="stat-value" style={{ color: 'var(--blue-500)' }}>{visibleSites.length}</div>
           <div className="stat-sub">
-            陸上 {SITES.filter((s) => s.type === 'land').length} / 海上 {SITES.filter((s) => s.type === 'marine' || s.type === 'both').length}
+            陸上 {visibleSites.filter((s) => s.type === 'land').length} / 海上 {visibleSites.filter((s) => s.type === 'marine' || s.type === 'both').length}
           </div>
         </div>
         <div className="stat-card">
@@ -236,15 +297,39 @@ export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => 
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 16 }}>
         <div className="card" style={{ overflow: 'hidden' }}>
-          <div className="card-header">
-            <span className="card-title">現場マップ — 東京湾岸エリア</span>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              {today.weather} {WEATHER_ICONS[today.weather]} {today.tempL}〜{today.tempH}℃
-            </span>
+          <div className="card-header" style={{ flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', alignItems: 'center' }}>
+              <span className="card-title">現場マップ — {selectedArea ?? '全国'}</span>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                {today.weather} {WEATHER_ICONS[today.weather]} {today.tempL}〜{today.tempH}℃
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              {AREAS.map((area) => (
+                <button
+                  key={area}
+                  onClick={() => setSelectedArea(area === '全国' ? null : area === selectedArea ? null : area)}
+                  style={{
+                    padding: '2px 10px', fontSize: 11, fontWeight: 600,
+                    borderRadius: 100, cursor: 'pointer', border: '1px solid',
+                    borderColor: (area === '全国' ? !selectedArea : area === selectedArea)
+                      ? 'var(--blue-500)' : 'var(--border)',
+                    background: (area === '全国' ? !selectedArea : area === selectedArea)
+                      ? 'var(--blue-500)' : 'transparent',
+                    color: (area === '全国' ? !selectedArea : area === selectedArea)
+                      ? '#fff' : 'var(--text-muted)',
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  {area}
+                </button>
+              ))}
+            </div>
           </div>
           <div style={{ height: 420 }}>
             <MapView
-              sites={SITES}
+              sites={visibleSites}
+              selectedArea={selectedArea}
               onSiteClick={(id) => { navigate('site-detail', id); }}
             />
           </div>
@@ -252,9 +337,9 @@ export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => 
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: 480, overflowY: 'auto' }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', padding: '0 2px' }}>
-            現場ステータス（{SITES.length}件）
+            現場ステータス（{visibleSites.length}件{selectedArea ? ` / ${selectedArea}` : ''}）
           </div>
-          {SITES.map((site) => (
+          {visibleSites.map((site) => (
             <SiteStatusCard key={site.id} site={site} density={density}
               onClick={(id) => navigate('site-detail', id)} />
           ))}
