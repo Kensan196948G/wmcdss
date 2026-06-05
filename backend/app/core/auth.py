@@ -12,30 +12,29 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import bcrypt as _bcrypt
 import httpx
 from jose import JWTError, jwt
-from passlib.context import CryptContext
 
 from app.core.config import get_settings
 
 log = logging.getLogger(__name__)
 
-_pwd_ctx = CryptContext(schemes=["bcrypt"], deprecated="auto")
-
 
 # ---------------------------------------------------------------------------
 # パスワードユーティリティ
+# bcrypt を直接使用 (passlib は bcrypt>=4 と非互換のため回避)
 # ---------------------------------------------------------------------------
 
 def verify_password(plain: str, hashed: str) -> bool:
     try:
-        return _pwd_ctx.verify(plain, hashed)
+        return _bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
     except Exception:
         return False
 
 
 def hash_password(plain: str) -> str:
-    return _pwd_ctx.hash(plain)
+    return _bcrypt.hashpw(plain.encode("utf-8"), _bcrypt.gensalt()).decode("utf-8")
 
 
 # ---------------------------------------------------------------------------

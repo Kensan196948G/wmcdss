@@ -17,7 +17,7 @@ dependencies = [
   "prometheus_client>=0.21",
   # 認証関連
   "python-jose[cryptography]>=3.3",
-  "passlib[bcrypt]>=1.7",
+  "bcrypt>=3.2",
   "msal>=1.28",
   "python-multipart>=0.0.12",
 ]

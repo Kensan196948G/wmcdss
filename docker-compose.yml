@@ -31,29 +31,29 @@ services:
         condition: service_healthy
     environment:
       # --- Database ---
-      WMCDSS_DATABASE_URL: ${WMCDSS_DATABASE_URL:-postgresql+asyncpg://wmcdss:wmcdss@db:5432/wmcdss}
+      WMCDSS_DATABASE_URL: "${WMCDSS_DATABASE_URL:-postgresql+asyncpg://wmcdss:wmcdss@db:5432/wmcdss}"
       # --- App ---
       WMCDSS_DEBUG: ${WMCDSS_DEBUG:-false}
       WMCDSS_EXPOSE_OPENAPI: ${WMCDSS_EXPOSE_OPENAPI:-false}
-      # --- CORS (Windows ホスト IP:9080 を含む) ---
-      WMCDSS_CORS_ORIGINS: ${WMCDSS_CORS_ORIGINS:-http://172.23.10.251:9080,http://localhost:9080,http://127.0.0.1:9080}
+      # --- CORS: コンマ区切り URL 文字列 (str フィールド cors_origins_raw にマップ) ---
+      WMCDSS_CORS_ORIGINS_RAW: "${WMCDSS_CORS_ORIGINS_RAW:-http://172.23.10.251:9080,http://localhost:9080,http://127.0.0.1:9080}"
+      # --- API キー: コンマ区切り文字列 (str フィールド api_keys_raw にマップ) ---
+      WMCDSS_API_KEYS_RAW: "${WMCDSS_API_KEYS_RAW:-}"
+      WMCDSS_RATE_LIMIT_PER_MINUTE: ${WMCDSS_RATE_LIMIT_PER_MINUTE:-60}
       # --- JWT 認証 ---
       WMCDSS_JWT_SECRET: ${WMCDSS_JWT_SECRET:-dev-secret-please-change-in-production}
       WMCDSS_JWT_EXPIRE_MINUTES: ${WMCDSS_JWT_EXPIRE_MINUTES:-480}
       # --- ローカルユーザー (一般ログイン) ---
-      WMCDSS_LOCAL_USERS: ${WMCDSS_LOCAL_USERS:-admin:$2b$12$dev_hash_placeholder}
+      WMCDSS_LOCAL_USERS: "${WMCDSS_LOCAL_USERS:-}"
       # --- Microsoft 365 / Entra ID (非対話式認証 ROPC) ---
       WMCDSS_ENTRA_TENANT_ID: ${WMCDSS_ENTRA_TENANT_ID:-}
       WMCDSS_ENTRA_CLIENT_ID: ${WMCDSS_ENTRA_CLIENT_ID:-}
       WMCDSS_ENTRA_CLIENT_SECRET: ${WMCDSS_ENTRA_CLIENT_SECRET:-}
-      WMCDSS_ENTRA_AUTHORITY: ${WMCDSS_ENTRA_AUTHORITY:-}
-      WMCDSS_ENTRA_SCOPE: ${WMCDSS_ENTRA_SCOPE:-https://graph.microsoft.com/User.Read}
+      WMCDSS_ENTRA_AUTHORITY: "${WMCDSS_ENTRA_AUTHORITY:-}"
+      WMCDSS_ENTRA_SCOPE: "${WMCDSS_ENTRA_SCOPE:-https://graph.microsoft.com/User.Read}"
       WMCDSS_ENTRA_EMAIL_DOMAIN: ${WMCDSS_ENTRA_EMAIL_DOMAIN:-mirai-const.co.jp}
-      # --- 既存 API キー (管理 API 用) ---
-      WMCDSS_API_KEYS: ${WMCDSS_API_KEYS:-}
-      WMCDSS_RATE_LIMIT_PER_MINUTE: ${WMCDSS_RATE_LIMIT_PER_MINUTE:-60}
       # --- JMA ---
-      WMCDSS_JMA_USER_AGENT: ${WMCDSS_JMA_USER_AGENT:-wmcdss/1.0 (+contact: kensan1969@gmail.com)}
+      WMCDSS_JMA_USER_AGENT: "${WMCDSS_JMA_USER_AGENT:-wmcdss/1.0 (+contact: kensan1969@gmail.com)}"
       PYTHONUNBUFFERED: "1"
       TZ: ${TZ:-Asia/Tokyo}
     volumes:
