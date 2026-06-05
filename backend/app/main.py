@@ -6,6 +6,7 @@ from app.core.security import APIKeyMiddleware
 from app.core.ratelimit import RateLimitMiddleware
 from app.core.monitoring import MetricsMiddleware
 from app.api import health, sites, decisions, thresholds, observations, audit, metrics, auth
+from app.api import analysis, reports, etl
 
 settings = get_settings()
 
@@ -44,6 +45,9 @@ app.include_router(decisions.router, prefix="/api/v1")
 app.include_router(thresholds.router, prefix="/api/v1")
 app.include_router(observations.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
+app.include_router(analysis.router, prefix="/api/v1")
+app.include_router(reports.router, prefix="/api/v1")
+app.include_router(etl.router, prefix="/api/v1")
 
 
 @app.get("/")
@@ -67,5 +71,10 @@ async def root():
             "/api/v1/auth/login",
             "/api/v1/auth/login/m365",
             "/api/v1/auth/me",
+            "/api/v1/observations/historical",
+            "/api/v1/analysis/wave50",
+            "/api/v1/reports",
+            "/api/v1/etl/run/{job_id}",
+            "/api/v1/etl/status",
         ],
     }

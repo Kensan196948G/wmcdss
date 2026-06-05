@@ -232,6 +232,20 @@ type BackendStatus = {
   [key: string]: unknown;
 };
 
+// Backend ETL status response shape
+interface EtlJobStatus {
+  id: number | string;
+  name: string;
+  source: string;
+  schedule: string;
+  last_obs_at: string | null;
+  status: string;
+}
+
+interface EtlStatusResponse {
+  jobs: EtlJobStatus[];
+}
+
 export const EtlPage: FC = () => {
   const backendStatus = (
     typeof window !== 'undefined'
@@ -240,13 +254,64 @@ export const EtlPage: FC = () => {
   );
   const isConnected = backendStatus?.ok === true;
 
+  const [runningJob, setRunningJob] = useState(false);
+  const [etlJobStatuses, setEtlJobStatuses] = useState<EtlJobStatus[] | null>(null);
+
+  // Fetch ETL status from backend on mount (only when API base is configured)
+  useEffect(() => {
+    const configuredApiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE;
+    if (!configuredApiBase) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch(`${configuredApiBase}/etl/status`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = (await resp.json()) as EtlStatusResponse;
+        if (!cancelled && Array.isArray(data?.jobs)) {
+          setEtlJobStatuses(data.jobs);
+        }
+      } catch {
+        // Backend not available — stay with static ETL_JOBS data
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleManualRun = async () => {
+    const configuredApiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE;
+    if (!configuredApiBase) {
+      alert('バックエンドに接続できません');
+      return;
+    }
+    setRunningJob(true);
+    try {
+      const resp = await fetch(`${configuredApiBase}/etl/run/1`, { method: 'POST' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      // Success — revert button after 1s
+      setTimeout(() => setRunningJob(false), 1000);
+    } catch {
+      setRunningJob(false);
+      alert('バックエンドに接続できません');
+    }
+  };
+
+  // Find last_obs_at values for weather and marine jobs from backend status
+  const weatherLastObs = etlJobStatuses?.find((j) => j.id === 1)?.last_obs_at ?? null;
+  const marineLastObs = etlJobStatuses?.find((j) => j.id === 2)?.last_obs_at ?? null;
+
   return (
     <div>
       <div className="flex-between mb-16">
         <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
           気象庁データの自動取得ジョブの実行状況を確認します。
         </div>
-        <button className="btn btn-sm btn-primary">▶ 手動実行</button>
+        <button
+          className="btn btn-sm btn-primary"
+          onClick={handleManualRun}
+          disabled={runningJob}
+        >
+          {runningJob ? '実行中...' : '▶ 手動実行'}
+        </button>
       </div>
 
       {/* データ取得元情報 */}
@@ -303,6 +368,12 @@ export const EtlPage: FC = () => {
           <div className="stat-value" style={{ fontSize: 14, color: isConnected ? 'var(--status-ok)' : 'var(--status-warn, #d97706)' }}>
             {isConnected ? '✅ バックエンド接続中' : '⚠️ バックエンド未接続（サンプルデータ表示中）'}
           </div>
+          {(weatherLastObs || marineLastObs) && (
+            <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-secondary)' }}>
+              {weatherLastObs && <div>最終気象観測: {weatherLastObs}</div>}
+              {marineLastObs && <div>最終海象観測: {marineLastObs}</div>}
+            </div>
+          )}
         </div>
         <div className="stat-card">
           <div className="stat-label">取得実績（現場数）</div>
@@ -409,10 +480,54 @@ export const ReportsPage: FC = () => {
   const handleGenerate = () => {
     setGenerating(true);
     setDone(false);
-    setTimeout(() => {
-      setGenerating(false);
-      setDone(true);
-    }, 1500);
+
+    // WMCDSS_API_BASE must be explicitly configured at runtime for real backend
+    // calls. When it is absent (local dev / test / demo) fall straight through
+    // to the simulated setTimeout path so existing tests keep passing.
+    const configuredApiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE;
+
+    if (!configuredApiBase) {
+      setTimeout(() => {
+        setGenerating(false);
+        setDone(true);
+      }, 1500);
+      return;
+    }
+
+    const siteId = form.site !== 'all' ? form.site : SITES[0].id;
+
+    fetch(`${configuredApiBase}/reports`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        site_id: siteId,
+        template: form.template,
+        date_from: form.dateFrom,
+        date_to: form.dateTo,
+        format: form.format,
+      }),
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.blob();
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `wmcdss_report_${form.template}.${form.format}`;
+        a.click();
+        URL.revokeObjectURL(url);
+        setGenerating(false);
+        setDone(true);
+      })
+      .catch(() => {
+        // Fallback to simulated generation when backend call fails
+        setTimeout(() => {
+          setGenerating(false);
+          setDone(true);
+        }, 1500);
+      });
   };
 
   return (

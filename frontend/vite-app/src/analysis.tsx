@@ -7,9 +7,64 @@
 //      Standalone bundle keeps rendering these pages if it loads this build
 //      instead of analysis.jsx.
 
-import { useMemo, useState, type FC } from 'react';
+import { useEffect, useMemo, useState, type FC } from 'react';
 import { BarChart, ChartColors, LineChart } from './charts';
 import { SITES, generateHistoricalMonthly } from './data';
+
+// Backend API base URL — injected at runtime via window.WMCDSS_API_BASE or
+// falls back to same-origin so the dev proxy can handle /api/v1 routes.
+function getApiBase(): string {
+  return (
+    (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE ??
+    '/api/v1'
+  );
+}
+
+// Month index 0–11 → Japanese label
+const MONTH_LABELS = [
+  '1月', '2月', '3月', '4月', '5月', '6月',
+  '7月', '8月', '9月', '10月', '11月', '12月',
+];
+
+// Backend /observations/historical response shape
+interface HistoricalBackendMonth {
+  month: number;
+  avg_wind_ms: number | null;
+  max_wind_ms: number | null;
+  avg_temp_c: number | null;
+  total_rain_mm: number | null;
+  rain_days: number | null;
+  avg_wave_h_m: number | null;
+  max_wave_h_m: number | null;
+}
+
+interface HistoricalBackendResponse {
+  site_id: string;
+  year: number;
+  data_source: string;
+  months: HistoricalBackendMonth[];
+}
+
+// Backend /analysis/wave50 response shape
+interface Wave50AnnualMax {
+  year: number;
+  max_wave_h_m: number;
+}
+
+interface Wave50ReturnPeriod {
+  period_years: number;
+  wave_h_m: number;
+}
+
+interface Wave50BackendResponse {
+  site_id: string;
+  method: string;
+  data_years: number;
+  sufficient_data: boolean;
+  annual_max: Wave50AnnualMax[];
+  return_periods: Wave50ReturnPeriod[];
+  note?: string;
+}
 
 type MetricKey = 'wind' | 'wave' | 'rain';
 
@@ -28,26 +83,146 @@ export const HistoricalPage: FC<HistoricalPageProps> = ({ selectedSite }) => {
   const [siteId, setSiteId] = useState<string>(selectedSite || SITES[0].id);
   const [year, setYear] = useState<string>('2025');
   const [metric, setMetric] = useState<MetricKey>('wind');
-  const site = SITES.find((s) => s.id === siteId) || SITES[0];
-  const monthly = useMemo(() => generateHistoricalMonthly(), [siteId, year]);
+  const [loading, setLoading] = useState(false);
+  const [isSampleData, setIsSampleData] = useState(false);
+  // backendMonthly: null = not yet fetched / fallback to mock
+  const [backendMonthly, setBackendMonthly] = useState<HistoricalBackendMonth[] | null>(null);
 
-  const chartData: Record<MetricKey, MetricSpec> = {
-    wind: {
-      data: monthly.map((m) => ({ label: m.month, value: m.maxWind })),
-      label: '最大風速 (m/s)',
-      color: ChartColors.blue,
-    },
-    wave: {
-      data: monthly.map((m) => ({ label: m.month, value: m.maxWave })),
-      label: '最大波高 (m)',
-      color: ChartColors.lightBlue,
-    },
-    rain: {
-      data: monthly.map((m) => ({ label: m.month, value: m.totalRain })),
-      label: '月間降水量 (mm)',
-      color: ChartColors.lightBlue,
-    },
-  };
+  const site = SITES.find((s) => s.id === siteId) || SITES[0];
+
+  // Fetch historical data from backend whenever site or year changes.
+  // Backend is only attempted when window.WMCDSS_API or window.WMCDSS_API_BASE
+  // is explicitly set — avoids unwanted fetch calls in test / demo environments.
+  useEffect(() => {
+    const api = (window as Window & { WMCDSS_API?: { fetchJSON?: (path: string) => Promise<unknown> } }).WMCDSS_API;
+    const configuredApiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE;
+
+    if (!api?.fetchJSON && !configuredApiBase) {
+      // No backend configured — use sample data immediately
+      setBackendMonthly(null);
+      setIsSampleData(true);
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setIsSampleData(false);
+
+    (async () => {
+      try {
+        let data: HistoricalBackendResponse | null = null;
+
+        if (api?.fetchJSON) {
+          data = (await api.fetchJSON(
+            `/observations/historical?site_id=${siteId}&year=${year}`,
+          )) as HistoricalBackendResponse;
+        } else {
+          // Direct fetch using configured base URL
+          const resp = await fetch(
+            `${configuredApiBase}/observations/historical?site_id=${siteId}&year=${year}`,
+          );
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          data = (await resp.json()) as HistoricalBackendResponse;
+        }
+
+        if (!cancelled && data?.months && Array.isArray(data.months)) {
+          setBackendMonthly(data.months);
+        } else if (!cancelled) {
+          setBackendMonthly(null);
+          setIsSampleData(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setBackendMonthly(null);
+          setIsSampleData(true);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [siteId, year]);
+
+  // Mock fallback (used when backend is unavailable)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const mockMonthly = useMemo(() => generateHistoricalMonthly(), [siteId, year]);
+
+  const chartData: Record<MetricKey, MetricSpec> = useMemo(() => {
+    if (backendMonthly) {
+      // Build 12-entry arrays from backend data, filling missing months with 0
+      const byMonth: Record<number, HistoricalBackendMonth> = {};
+      for (const m of backendMonthly) byMonth[m.month] = m;
+
+      return {
+        wind: {
+          data: MONTH_LABELS.map((lbl, i) => ({
+            label: lbl,
+            value: byMonth[i + 1]?.max_wind_ms ?? 0,
+          })),
+          label: '最大風速 (m/s)',
+          color: ChartColors.blue,
+        },
+        wave: {
+          data: MONTH_LABELS.map((lbl, i) => ({
+            label: lbl,
+            value: byMonth[i + 1]?.max_wave_h_m ?? 0,
+          })),
+          label: '最大波高 (m)',
+          color: ChartColors.lightBlue,
+        },
+        rain: {
+          data: MONTH_LABELS.map((lbl, i) => ({
+            label: lbl,
+            value: byMonth[i + 1]?.total_rain_mm ?? 0,
+          })),
+          label: '月間降水量 (mm)',
+          color: ChartColors.lightBlue,
+        },
+      };
+    }
+
+    // Fallback to mock data
+    return {
+      wind: {
+        data: mockMonthly.map((m) => ({ label: m.month, value: m.maxWind })),
+        label: '最大風速 (m/s)',
+        color: ChartColors.blue,
+      },
+      wave: {
+        data: mockMonthly.map((m) => ({ label: m.month, value: m.maxWave })),
+        label: '最大波高 (m)',
+        color: ChartColors.lightBlue,
+      },
+      rain: {
+        data: mockMonthly.map((m) => ({ label: m.month, value: m.totalRain })),
+        label: '月間降水量 (mm)',
+        color: ChartColors.lightBlue,
+      },
+    };
+  }, [backendMonthly, mockMonthly]);
+
+  // For the table — use backend monthly or mock monthly
+  const tableMonthly = useMemo(() => {
+    if (backendMonthly) {
+      const byMonth: Record<number, HistoricalBackendMonth> = {};
+      for (const m of backendMonthly) byMonth[m.month] = m;
+      return MONTH_LABELS.map((lbl, i) => {
+        const bm = byMonth[i + 1];
+        return {
+          month: lbl,
+          avgWind: bm?.avg_wind_ms ?? 0,
+          maxWind: bm?.max_wind_ms ?? 0,
+          avgWave: bm?.avg_wave_h_m ?? 0,
+          maxWave: bm?.max_wave_h_m ?? 0,
+          rainDays: bm?.rain_days ?? 0,
+          totalRain: bm?.total_rain_mm ?? 0,
+        };
+      });
+    }
+    return mockMonthly;
+  }, [backendMonthly, mockMonthly]);
 
   const current = chartData[metric];
   const waveLimit = site.thresholds.waveHeight;
@@ -127,7 +302,15 @@ export const HistoricalPage: FC<HistoricalPageProps> = ({ selectedSite }) => {
           <span className="card-title">
             {current.label} — {year}年 月別推移
           </span>
-          <button className="btn btn-sm">📥 CSV出力</button>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            {loading && (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>データ取得中...</span>
+            )}
+            {!loading && isSampleData && (
+              <span className="badge badge-warn" style={{ fontSize: 11 }}>サンプルデータ</span>
+            )}
+            <button className="btn btn-sm">📥 CSV出力</button>
+          </div>
         </div>
         <div className="card-body">
           {metric === 'rain' ? (
@@ -170,7 +353,7 @@ export const HistoricalPage: FC<HistoricalPageProps> = ({ selectedSite }) => {
               </tr>
             </thead>
             <tbody>
-              {monthly.map((m, i) => (
+              {tableMonthly.map((m, i) => (
                 <tr key={i}>
                   <td style={{ fontWeight: 600 }}>{m.month}</td>
                   <td style={{ fontVariantNumeric: 'tabular-nums' }}>{m.avgWind} m/s</td>
@@ -220,11 +403,71 @@ interface ReturnPeriodRow {
   wind: string;
 }
 
-export const Wave50Page: FC = () => {
+interface Wave50PageProps {
+  selectedSite?: string;
+}
+
+export const Wave50Page: FC<Wave50PageProps> = ({ selectedSite }) => {
   const [point, setPoint] = useState<WavePointKey>('東京湾北部');
   const [method, setMethod] = useState<MethodKey>('gumbel');
+  const [backendData, setBackendData] = useState<Wave50BackendResponse | null>(null);
+  const [insufficientWarning, setInsufficientWarning] = useState(false);
 
-  const returnPeriods = useMemo<ReturnPeriodRow[]>(() => {
+  // Effective site_id for backend calls: prop → SITES[0]
+  const effectiveSiteId = selectedSite ?? SITES[0].id;
+
+  // Fetch wave50 analysis from backend whenever site or method changes.
+  // Only runs when window.WMCDSS_API or window.WMCDSS_API_BASE is configured.
+  useEffect(() => {
+    // genpareto is local-only (not supported by backend)
+    if (method === 'genpareto') {
+      setBackendData(null);
+      setInsufficientWarning(false);
+      return;
+    }
+
+    const api = (window as Window & { WMCDSS_API?: { fetchJSON?: (path: string) => Promise<unknown> } }).WMCDSS_API;
+    const configuredApiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE;
+
+    if (!api?.fetchJSON && !configuredApiBase) {
+      // No backend configured — use static fallback
+      return;
+    }
+
+    let cancelled = false;
+    (async () => {
+      try {
+        let data: Wave50BackendResponse | null = null;
+
+        if (api?.fetchJSON) {
+          data = (await api.fetchJSON(
+            `/analysis/wave50?site_id=${effectiveSiteId}&method=${method}`,
+          )) as Wave50BackendResponse;
+        } else {
+          const resp = await fetch(
+            `${configuredApiBase}/analysis/wave50?site_id=${effectiveSiteId}&method=${method}`,
+          );
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          data = (await resp.json()) as Wave50BackendResponse;
+        }
+
+        if (!cancelled && data) {
+          setBackendData(data);
+          setInsufficientWarning(data.sufficient_data === false);
+        }
+      } catch {
+        if (!cancelled) {
+          setBackendData(null);
+          setInsufficientWarning(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [effectiveSiteId, method]);
+
+  // ---- Static fallback (used when backend data not available) ----
+  const fallbackReturnPeriods = useMemo<ReturnPeriodRow[]>(() => {
     const base =
       point === '東京湾北部' ? 2.8 : point === '東京湾中部' ? 3.2 : point === '東京湾南部' ? 3.8 : 3.0;
     return [
@@ -239,13 +482,35 @@ export const Wave50Page: FC = () => {
     ];
   }, [point]);
 
-  const annualMax = useMemo(() => {
+  const fallbackAnnualMax = useMemo(() => {
     const base = point === '東京湾北部' ? 1.8 : 2.1;
     return Array.from({ length: 20 }, (_, i) => ({
       label: `${2006 + i}`,
       value: +(base + Math.random() * 1.2 + Math.sin(i * 0.5) * 0.3).toFixed(2),
     }));
   }, [point]);
+
+  // ---- Derived display values ----
+  const returnPeriods: ReturnPeriodRow[] = useMemo(() => {
+    if (backendData?.return_periods?.length) {
+      return backendData.return_periods.map((rp) => ({
+        period: rp.period_years,
+        wave: rp.wave_h_m.toFixed(2),
+        wind: '—',
+      }));
+    }
+    return fallbackReturnPeriods;
+  }, [backendData, fallbackReturnPeriods]);
+
+  const annualMax = useMemo(() => {
+    if (backendData?.annual_max?.length) {
+      return backendData.annual_max.map((a) => ({
+        label: String(a.year),
+        value: a.max_wave_h_m,
+      }));
+    }
+    return fallbackAnnualMax;
+  }, [backendData, fallbackAnnualMax]);
 
   const wavePoints: WavePointKey[] = ['東京湾北部', '東京湾中部', '東京湾南部', '東京湾東部'];
   const methodLabel: Record<MethodKey, string> = {
@@ -262,12 +527,31 @@ export const Wave50Page: FC = () => {
   const annualAvg = annualMax.reduce((a, b) => a + b.value, 0) / annualMax.length;
   const annualMaxObserved = Math.max(...annualMax.map((a) => a.value));
 
+  // Conditions metadata — prefer backend data when available
+  const dataPeriod = useMemo(() => {
+    if (backendData?.annual_max?.length) {
+      const years = backendData.annual_max.map((a) => a.year);
+      const minYear = Math.min(...years);
+      const maxYear = Math.max(...years);
+      return `${minYear}年〜${maxYear}年（${backendData.data_years}年間）`;
+    }
+    return '2006年〜2025年（20年間）';
+  }, [backendData]);
+
+  const dataSource = backendData
+    ? '気象庁 波浪ナウキャスト (backend DB)'
+    : '気象庁 沿岸波浪モデル（5km格子）';
+
+  const sampleCount = backendData
+    ? String(backendData.data_years)
+    : '20';
+
   const conditions: [string, string][] = [
-    ['データ期間', '2006年〜2025年（20年間）'],
+    ['データ期間', dataPeriod],
     ['観測点', point],
-    ['データソース', '気象庁 沿岸波浪モデル（5km格子）'],
+    ['データソース', dataSource],
     ['推定手法', methodFullLabel[method]],
-    ['サンプル数', '20（年最大値）'],
+    ['サンプル数', `${sampleCount}（年最大値）`],
     ['最終算出日', '2026/05/01'],
   ];
 
@@ -308,6 +592,21 @@ export const Wave50Page: FC = () => {
         </div>
         <button className="btn btn-sm">📥 Excel出力</button>
       </div>
+
+      {insufficientWarning && (
+        <div style={{
+          background: 'var(--status-warn-bg, #fffbeb)',
+          border: '1px solid var(--status-warn-border, #fcd34d)',
+          borderRadius: 'var(--radius-md, 6px)',
+          padding: '10px 16px',
+          fontSize: 13,
+          color: 'var(--status-warn, #d97706)',
+          fontWeight: 500,
+          marginBottom: 16,
+        }}>
+          ⚠️ データ期間が短いため推定精度が低い可能性があります
+        </div>
+      )}
 
       <div className="grid-3 mb-16">
         <div className="stat-card" style={{ borderLeft: '4px solid var(--blue-400)' }}>
