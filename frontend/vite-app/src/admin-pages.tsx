@@ -724,6 +724,17 @@ export const AuditPage: FC = () => {
     [filterAction, displayLogs],
   );
 
+  // HTML エスケープヘルパー — エクスポート HTML への XSS を防ぐ。
+  // 監査ログの actor/action/target/detail フィールドにはユーザー入力由来の
+  // 文字列が含まれる可能性があるため、全フィールドをエスケープする。
+  const esc = (s: unknown): string =>
+    String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
   const handleExportCsv = () => {
     const header = ['日時', 'ユーザー', '操作', '対象', '詳細'];
     const rows = filtered.map(log => [
@@ -747,14 +758,18 @@ export const AuditPage: FC = () => {
   };
 
   const handleExportHtml = () => {
+    // 全フィールドを esc() でエスケープして XSS を防ぐ
     const rows = filtered.map(log => `
     <tr>
-      <td>${log.time}</td>
-      <td>${log.user}</td>
-      <td><span class="badge">${log.action}</span></td>
-      <td>${log.target}</td>
-      <td>${log.detail}</td>
+      <td>${esc(log.time)}</td>
+      <td>${esc(log.user)}</td>
+      <td><span class="badge">${esc(log.action)}</span></td>
+      <td>${esc(log.target)}</td>
+      <td>${esc(log.detail)}</td>
     </tr>`).join('');
+
+    // meta 行の filterAction もエスケープ
+    const filterMeta = filterAction !== 'all' ? ` / フィルタ: ${esc(filterAction)}` : '';
 
     const html = `<!DOCTYPE html>
 <html lang="ja">
@@ -775,7 +790,7 @@ export const AuditPage: FC = () => {
 </head>
 <body>
 <h1>監査ログ</h1>
-<div class="meta">出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} / 件数: ${filtered.length}件${filterAction !== 'all' ? ` / フィルタ: ${filterAction}` : ''}</div>
+<div class="meta">出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} / 件数: ${filtered.length}件${filterMeta}</div>
 <table>
 <thead><tr><th>日時</th><th>ユーザー</th><th>操作</th><th>対象</th><th>詳細</th></tr></thead>
 <tbody>${rows}</tbody>
@@ -793,15 +808,21 @@ export const AuditPage: FC = () => {
   };
 
   const handleExportPdf = () => {
+    // 全フィールドを esc() でエスケープして XSS を防ぐ
     const rows = filtered.map(log => `
     <tr>
-      <td>${log.time}</td>
-      <td>${log.user}</td>
-      <td>${log.action}</td>
-      <td>${log.target}</td>
-      <td>${log.detail}</td>
+      <td>${esc(log.time)}</td>
+      <td>${esc(log.user)}</td>
+      <td>${esc(log.action)}</td>
+      <td>${esc(log.target)}</td>
+      <td>${esc(log.detail)}</td>
     </tr>`).join('');
 
+    // meta 行の filterAction もエスケープ
+    const filterMeta = filterAction !== 'all' ? ` / フィルタ: ${esc(filterAction)}` : '';
+
+    // <script> タグはユーザーデータを含まず window.print()/close() のみを実行するため安全。
+    // ただし全テーブルデータは esc() でエスケープ済みであることが前提。
     const html = `<!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -822,8 +843,8 @@ export const AuditPage: FC = () => {
 </style>
 </head>
 <body>
-<h1>📋 監査ログ</h1>
-<div class="meta">出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} / 件数: ${filtered.length}件${filterAction !== 'all' ? ` / フィルタ: ${filterAction}` : ''}</div>
+<h1>&#128203; 監査ログ</h1>
+<div class="meta">出力日時: ${new Date().toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })} / 件数: ${filtered.length}件${filterMeta}</div>
 <table>
 <thead><tr><th>日時</th><th>ユーザー</th><th>操作</th><th>対象</th><th>詳細</th></tr></thead>
 <tbody>${rows}</tbody>
