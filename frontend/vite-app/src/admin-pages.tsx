@@ -1111,6 +1111,291 @@ export const SettingsPage: FC<SettingsProps> = ({ role }) => {
   );
 };
 
+// ---------- AI Settings ----------
+
+interface AiSettingsState {
+  configured: boolean;
+  key_preview: string | null;
+  model: string;
+  source: string;
+  supported_models: { id: string; label: string }[];
+}
+
+const DEFAULT_SUPPORTED_MODELS: { id: string; label: string }[] = [
+  { id: 'claude-opus-4-8', label: 'claude-opus-4-8　最高精度・低速' },
+  { id: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6　推奨・バランス型 ★' },
+  { id: 'claude-haiku-4-5', label: 'claude-haiku-4-5　高速・軽量' },
+];
+
+export const AiSettingsPage: FC = () => {
+  const apiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE
+    ?? `http://${window.location.hostname}:8003/api/v1`;
+
+  const [settings, setSettings] = useState<AiSettingsState | null>(null);
+  const [apiKey, setApiKey] = useState('');
+  const [showKey, setShowKey] = useState(false);
+  const [model, setModel] = useState('claude-sonnet-4-6');
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [saveResult, setSaveResult] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const doLoadSettings = (signal?: AbortSignal) => {
+    setLoading(true);
+    fetch(`${apiBase}/ai/settings`, signal ? { signal } : undefined)
+      .then((resp) => {
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return resp.json() as Promise<AiSettingsState>;
+      })
+      .then((data) => {
+        setSettings(data);
+        setModel(data.model || 'claude-sonnet-4-6');
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
+        // バックエンド未接続 — localStorage から読み込みを試みる
+        try {
+          const raw = localStorage.getItem('wmcdss_ai_settings');
+          if (raw) {
+            const parsed = JSON.parse(raw) as Partial<AiSettingsState>;
+            setModel(parsed.model ?? 'claude-sonnet-4-6');
+          }
+        } catch {
+          // ignore
+        }
+        setSettings(null);
+        setLoading(false);
+      });
+  };
+
+  const loadSettings = () => doLoadSettings();
+
+  useEffect(() => {
+    const controller = new AbortController();
+    doLoadSettings(controller.signal);
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleTest = async () => {
+    if (!apiKey.trim()) {
+      setTestResult({ ok: false, message: 'API キーを入力してください' });
+      return;
+    }
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const resp = await fetch(`${apiBase}/ai/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: apiKey, model }),
+      });
+      const data = await resp.json() as { ok: boolean; message: string };
+      setTestResult(data);
+    } catch {
+      setTestResult({ ok: false, message: 'バックエンドに接続できません' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaveResult(null);
+    try {
+      const resp = await fetch(`${apiBase}/ai/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ api_key: apiKey, model }),
+      });
+      if (resp.ok) {
+        const data = await resp.json() as { key_preview?: string };
+        setSaveResult(`設定を保存しました。キー: ${data.key_preview || '(削除)'}`);
+        // 設定を再読込
+        loadSettings();
+        setApiKey(''); // 入力欄クリア
+      } else {
+        setSaveResult('保存に失敗しました');
+      }
+    } catch {
+      // バックエンド未接続時は localStorage に保存
+      try {
+        localStorage.setItem('wmcdss_ai_settings', JSON.stringify({ model }));
+        setSaveResult('設定をローカルに保存しました（バックエンド未接続）');
+      } catch {
+        setSaveResult('バックエンドに接続できません');
+      }
+    } finally {
+      setSaving(false);
+      setTimeout(() => setSaveResult(null), 5000);
+    }
+  };
+
+  const supportedModels = settings?.supported_models ?? DEFAULT_SUPPORTED_MODELS;
+
+  return (
+    <div style={{ maxWidth: 720 }}>
+      {/* Anthropic Claude API 設定 */}
+      <div className="card mb-16">
+        <div className="card-header">
+          <span className="card-title">Anthropic Claude API 設定</span>
+        </div>
+        <div className="card-body">
+          {loading ? (
+            <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>読み込み中...</div>
+          ) : (
+            <>
+              {/* 接続状態 */}
+              <div className="form-group">
+                <label className="form-label">接続状態</label>
+                <div style={{ fontSize: 13, fontWeight: 500, color: settings?.configured ? 'var(--status-ok)' : 'var(--status-warn, #d97706)' }}>
+                  {settings?.configured ? '✅ 接続済み' : '❌ 未設定'}
+                </div>
+                {settings?.key_preview && (
+                  <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                    キー参照: {settings.key_preview}
+                  </div>
+                )}
+              </div>
+
+              {/* API キー入力 */}
+              <div className="form-group">
+                <label className="form-label">API キー</label>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input
+                    className="form-input"
+                    type={showKey ? 'text' : 'password'}
+                    placeholder="sk-ant-..."
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    style={{ flex: 1 }}
+                  />
+                  <button
+                    className="btn btn-sm"
+                    type="button"
+                    onClick={() => setShowKey((v) => !v)}
+                    title={showKey ? 'キーを非表示' : 'キーを表示'}
+                  >
+                    {showKey ? '🙈 非表示' : '👁 表示'}
+                  </button>
+                </div>
+              </div>
+
+              {/* モデル選択 */}
+              <div className="form-group">
+                <label className="form-label">モデル</label>
+                <select
+                  className="form-select"
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                >
+                  {supportedModels.map((m) => (
+                    <option key={m.id} value={m.id}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* ボタン */}
+              <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                <button
+                  className="btn btn-sm"
+                  type="button"
+                  onClick={handleTest}
+                  disabled={testing}
+                >
+                  {testing ? '接続中...' : '🔌 接続テスト'}
+                </button>
+                <button
+                  className="btn btn-sm btn-primary"
+                  type="button"
+                  onClick={handleSave}
+                  disabled={saving}
+                >
+                  {saving ? '保存中...' : '💾 設定を保存'}
+                </button>
+              </div>
+
+              {/* テスト結果 */}
+              {testResult && (
+                <div style={{
+                  marginTop: 12,
+                  fontSize: 13,
+                  color: testResult.ok ? 'var(--status-ok)' : 'var(--status-danger, #dc2626)',
+                  fontWeight: 500,
+                }}>
+                  {testResult.ok ? '✅' : '❌'} {testResult.message}
+                </div>
+              )}
+
+              {/* 保存結果 */}
+              {saveResult && (
+                <div style={{
+                  marginTop: 12,
+                  fontSize: 13,
+                  color: 'var(--status-ok)',
+                  fontWeight: 500,
+                }}>
+                  ✓ {saveResult}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* 使用状況 */}
+      <div className="card mb-16">
+        <div className="card-header">
+          <span className="card-title">使用状況</span>
+        </div>
+        <div className="card-body">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
+            <div>
+              <span style={{ color: 'var(--text-secondary)' }}>分析エンジン: </span>
+              <span style={{ fontWeight: 500 }}>
+                {settings?.configured ? 'Claude AI' : 'ルールベース'}
+              </span>
+            </div>
+            <div>
+              <span style={{ color: 'var(--text-secondary)' }}>設定元: </span>
+              <span style={{ fontWeight: 500 }}>
+                {settings?.source === 'ui' ? 'UI設定'
+                  : settings?.source === 'env' ? '環境変数'
+                  : '未設定'}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 対応モデル一覧 */}
+      <div className="card">
+        <div className="card-header">
+          <span className="card-title">対応モデル一覧</span>
+        </div>
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>モデルID</th>
+              <th>特徴</th>
+            </tr>
+          </thead>
+          <tbody>
+            {supportedModels.map((m) => (
+              <tr key={m.id}>
+                <td style={{ fontFamily: 'monospace', fontSize: 12 }}>{m.id}</td>
+                <td style={{ fontSize: 12 }}>{m.label.replace(m.id, '').trim()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
 declare global {
   interface Window {
     ThresholdsPage?: typeof ThresholdsPage;
@@ -1118,6 +1403,7 @@ declare global {
     ReportsPage?: typeof ReportsPage;
     AuditPage?: typeof AuditPage;
     SettingsPage?: typeof SettingsPage;
+    AiSettingsPage?: typeof AiSettingsPage;
   }
 }
 
@@ -1128,5 +1414,6 @@ if (typeof window !== 'undefined') {
     ReportsPage,
     AuditPage,
     SettingsPage,
+    AiSettingsPage,
   });
 }

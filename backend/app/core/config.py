@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     auth_exempt_paths: list[str] = [
         "/healthz", "/readyz", "/docs", "/openapi.json", "/metrics",
         "/api/v1/auth/login", "/api/v1/auth/login/m365",
-        "/api/v1/ai/analyze",
+        "/api/v1/ai/analyze", "/api/v1/ai/settings", "/api/v1/ai/test",
     ]
 
     rate_limit_per_minute: int = 0

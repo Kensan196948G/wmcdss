@@ -163,6 +163,7 @@ describe("PAGE_TITLES", () => {
       "reports",
       "audit",
       "settings",
+      "ai-settings",
     ];
     for (const id of ids) {
       expect(typeof PAGE_TITLES[id]).toBe("string");
@@ -358,7 +359,11 @@ describe("AppShell — sidebar navigation", () => {
 // [sidebar nav label (short), header title (full from PAGE_TITLES)]
 // Some labels differ — UX shortens long names in the sidebar to fit the
 // narrow column, but the header always shows the canonical title.
-const NAV_TITLES: ReadonlyArray<[string, string]> = [
+// exact: true → textContent must equal the label exactly (used when one label
+// is a substring of another, e.g. "設定" ⊂ "AI設定・管理").
+type NavTitleEntry = readonly [navLabel: string, expectedTitle: string, exact?: boolean];
+
+const NAV_TITLES: ReadonlyArray<NavTitleEntry> = [
   ["現場登録", "現場登録"],
   ["気象データ", "気象データ"],
   ["海象データ", "海象データ"],
@@ -370,15 +375,19 @@ const NAV_TITLES: ReadonlyArray<[string, string]> = [
   ["データ取得状況", "データ取得状況"],
   ["レポート出力", "レポート出力"],
   ["監査ログ", "監査ログ"],
-  ["設定", "設定"],
+  ["AI設定・管理", "AI設定・管理"],
+  // "設定" is a substring of "AI設定・管理" — use exact match to avoid false hit
+  ["設定", "設定", true],
 ];
 
 describe("AppShell — exhaustive sidebar navigation", () => {
-  for (const [navLabel, expectedTitle] of NAV_TITLES) {
+  for (const [navLabel, expectedTitle, exact] of NAV_TITLES) {
     it(`clicking ${navLabel} updates the header title to ${expectedTitle}`, () => {
       const { container } = render(<AppShell />);
       const item = Array.from(container.querySelectorAll(".sidebar-item")).find(
-        (el) => el.textContent?.includes(navLabel),
+        (el) => exact
+          ? el.textContent?.trim() === navLabel
+          : el.textContent?.includes(navLabel),
       );
       expect(item).not.toBeUndefined();
       fireEvent.click(item!);

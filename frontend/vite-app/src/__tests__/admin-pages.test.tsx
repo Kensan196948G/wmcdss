@@ -7,6 +7,7 @@ import {
   ReportsPage,
   AuditPage,
   SettingsPage,
+  AiSettingsPage,
 } from "../admin-pages";
 import { SITES, ETL_JOBS, AUDIT_LOG } from "../data";
 
@@ -493,12 +494,13 @@ describe("SettingsPage — checkbox handlers", () => {
 // ---------------------------------------------------------------------------
 
 describe("admin-pages.tsx — window side effects", () => {
-  it("attaches all 5 admin pages to window", () => {
+  it("attaches all 6 admin pages to window", () => {
     const w = window as unknown as Record<string, unknown>;
     expect(w.ThresholdsPage).toBe(ThresholdsPage);
     expect(w.EtlPage).toBe(EtlPage);
     expect(w.ReportsPage).toBe(ReportsPage);
     expect(w.AuditPage).toBe(AuditPage);
     expect(w.SettingsPage).toBe(SettingsPage);
+    expect(w.AiSettingsPage).toBe(AiSettingsPage);
   });
 });

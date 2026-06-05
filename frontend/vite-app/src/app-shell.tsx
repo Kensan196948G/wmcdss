@@ -16,6 +16,7 @@ import {
   ReportsPage,
   AuditPage,
   SettingsPage,
+  AiSettingsPage,
 } from './admin-pages';
 import {
   SiteListPage,
@@ -45,7 +46,8 @@ export type PageId =
   | 'etl'
   | 'reports'
   | 'audit'
-  | 'settings';
+  | 'settings'
+  | 'ai-settings';
 
 export type ShellRole = 'field' | 'hq';
 export type Density = 'normal' | 'compact';
@@ -105,6 +107,7 @@ export const NAV_ITEMS: NavGroup[] = [
       { id: 'etl', label: 'データ取得状況', icon: 'M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z' },
       { id: 'reports', label: 'レポート出力', icon: 'M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-2 10H7v-2h10v2zm0-4H7V7h10v2z' },
       { id: 'audit', label: '監査ログ', icon: 'M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.89 2 1.99 2H18c1.1 0 2-.9 2-2V8l-6-6zm4 18H6V4h7v5h5v11zm-2-4H8v-2h8v2zm0-3H8v-2h8v2z' },
+      { id: 'ai-settings', label: 'AI設定・管理', icon: 'M12 2a2 2 0 012 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 017 7H3a7 7 0 017-7h1V5.73A2 2 0 0110 4a2 2 0 012-2zM7 14v2a5 5 0 0010 0v-2H7zm-2 2a7 7 0 0014 0' },
       { id: 'settings', label: '設定', icon: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z' },
     ],
   },
@@ -126,6 +129,7 @@ export const PAGE_TITLES: Record<PageId, string> = {
   reports: 'レポート出力',
   audit: '監査ログ',
   settings: '設定',
+  'ai-settings': 'AI設定・管理',
 };
 
 interface SvgIconProps {
@@ -255,6 +259,8 @@ export function AppShell() {
         return <AuditPage {...pageProps} />;
       case 'settings':
         return <SettingsPage {...pageProps} />;
+      case 'ai-settings':
+        return <AiSettingsPage />;
       default: {
         const _exhaustive: never = page;
         void _exhaustive;

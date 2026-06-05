@@ -1,16 +1,23 @@
 """AI-assisted construction judgment endpoint.
 
 POST /api/v1/ai/analyze
+GET  /api/v1/ai/settings
+POST /api/v1/ai/settings
+POST /api/v1/ai/test
 
 Analyzes weather / marine conditions against thresholds and returns a natural-
 language recommendation.  When the environment variable ``WMCDSS_CLAUDE_API_KEY``
-is set the analysis is delegated to Anthropic Claude (claude-haiku-4-5-20251001).
-Otherwise a deterministic rule-based fallback generates the result in Japanese so
-the feature works even without an API key.
+is set (or an API key is saved via POST /api/v1/ai/settings) the analysis is
+delegated to Anthropic Claude.  Otherwise a deterministic rule-based fallback
+generates the result in Japanese so the feature works even without an API key.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
+import time
+from pathlib import Path
 from typing import Any, Literal
 
 import httpx
@@ -24,6 +31,90 @@ router = APIRouter(tags=["ai"])
 _DISCLAIMER = (
     "(*) AI による分析は参考情報です。最終判定は必ず担当者が行ってください。"
 )
+
+# ---------------------------------------------------------------------------
+# Supported models
+# ---------------------------------------------------------------------------
+
+SUPPORTED_MODELS: list[dict[str, str]] = [
+    {"id": "claude-opus-4-8", "label": "Claude Opus 4.8（最高精度）"},
+    {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6（推奨・バランス型）"},
+    {"id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5（高速・軽量）"},
+]
+
+# ---------------------------------------------------------------------------
+# Settings persistence
+# ---------------------------------------------------------------------------
+
+_SETTINGS_FILE = Path("/app/.wmcdss_ai_settings.json")
+
+# in-memory cache: populated on first access / after save
+_ai_settings: dict[str, str] = {}
+
+
+def _load_settings_file() -> None:
+    """Load AI settings from the persistent JSON file into _ai_settings."""
+    global _ai_settings
+    try:
+        if _SETTINGS_FILE.exists():
+            data = json.loads(_SETTINGS_FILE.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                _ai_settings = {k: str(v) for k, v in data.items() if isinstance(v, str)}
+    except Exception:  # noqa: BLE001
+        log.warning("Failed to load AI settings from %s; using defaults", _SETTINGS_FILE)
+
+
+def _save_settings_file() -> None:
+    """Persist _ai_settings to the JSON file.  Fails silently if not writable."""
+    try:
+        _SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _SETTINGS_FILE.write_text(
+            json.dumps(_ai_settings, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("Failed to save AI settings to %s; operating in-memory only", _SETTINGS_FILE)
+
+
+# Load on module import
+_load_settings_file()
+
+
+# ---------------------------------------------------------------------------
+# Key / model helpers
+# ---------------------------------------------------------------------------
+
+def _get_api_key() -> str:
+    from app.core.config import get_settings  # local import avoids circular
+
+    return _ai_settings.get("api_key") or getattr(get_settings(), "claude_api_key", "")
+
+
+def _get_model() -> str:
+    from app.core.config import get_settings  # local import avoids circular
+
+    return (
+        _ai_settings.get("model")
+        or getattr(get_settings(), "claude_model", "")
+        or "claude-sonnet-4-6"
+    )
+
+
+def _mask_key(key: str) -> str | None:
+    """Return last-4-char preview, or None if key is empty."""
+    if not key:
+        return None
+    return f"sk-ant-...{key[-4:]}"
+
+
+def _detect_source() -> Literal["ui", "env", "none"]:
+    if _ai_settings.get("api_key"):
+        return "ui"
+    from app.core.config import get_settings  # local import avoids circular
+
+    if getattr(get_settings(), "claude_api_key", ""):
+        return "env"
+    return "none"
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +138,37 @@ class AiAnalyzeResponse(BaseModel):
     confidence: Literal["高", "中", "低"]
     analysis_type: str
     disclaimer: str
+
+
+class AiSettingsResponse(BaseModel):
+    configured: bool
+    key_preview: str | None
+    model: str
+    source: Literal["ui", "env", "none"]
+    supported_models: list[dict[str, str]]
+
+
+class AiSettingsSaveRequest(BaseModel):
+    api_key: str = ""
+    model: str = "claude-sonnet-4-6"
+
+
+class AiSettingsSaveResponse(BaseModel):
+    saved: bool
+    model: str
+    key_preview: str | None
+
+
+class AiTestRequest(BaseModel):
+    api_key: str
+    model: str = "claude-haiku-4-5-20251001"
+
+
+class AiTestResponse(BaseModel):
+    ok: bool
+    model: str | None = None
+    latency_ms: int | None = None
+    message: str
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +368,7 @@ def _analyze_marine(
 # Claude API call (optional)
 # ---------------------------------------------------------------------------
 
-async def _call_claude(prompt: str, api_key: str) -> str:
+async def _call_claude(prompt: str, api_key: str, model: str = "claude-sonnet-4-6") -> str:
     """Call Anthropic Claude API and return the response text.
 
     Returns empty string on any error so the caller can fall back gracefully.
@@ -261,7 +383,7 @@ async def _call_claude(prompt: str, api_key: str) -> str:
                     "content-type": "application/json",
                 },
                 json={
-                    "model": "claude-haiku-4-5-20251001",
+                    "model": model,
                     "max_tokens": 500,
                     "messages": [{"role": "user", "content": prompt}],
                 },
@@ -274,20 +396,103 @@ async def _call_claude(prompt: str, api_key: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Route
+# Routes
 # ---------------------------------------------------------------------------
+
+@router.get("/ai/settings", response_model=AiSettingsResponse)
+async def get_ai_settings() -> AiSettingsResponse:
+    """Return current AI settings (API key is masked to last 4 chars)."""
+    api_key = _get_api_key()
+    return AiSettingsResponse(
+        configured=bool(api_key),
+        key_preview=_mask_key(api_key),
+        model=_get_model(),
+        source=_detect_source(),
+        supported_models=SUPPORTED_MODELS,
+    )
+
+
+@router.post("/ai/settings", response_model=AiSettingsSaveResponse)
+async def save_ai_settings(body: AiSettingsSaveRequest) -> AiSettingsSaveResponse:
+    """Save API key and model.  Pass empty string for api_key to delete the stored key."""
+    global _ai_settings
+
+    if body.api_key:
+        _ai_settings["api_key"] = body.api_key
+    else:
+        _ai_settings.pop("api_key", None)
+
+    _ai_settings["model"] = body.model
+    _save_settings_file()
+
+    effective_key = _get_api_key()
+    return AiSettingsSaveResponse(
+        saved=True,
+        model=body.model,
+        key_preview=_mask_key(effective_key),
+    )
+
+
+@router.post("/ai/test", response_model=AiTestResponse)
+async def test_ai_connection(body: AiTestRequest) -> AiTestResponse:
+    """Send a minimal test request to the Anthropic API to verify the key."""
+    start = time.monotonic()
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": body.api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json={
+                    "model": body.model,
+                    "max_tokens": 1,
+                    "messages": [{"role": "user", "content": "hi"}],
+                },
+            )
+    except httpx.TimeoutException:
+        return AiTestResponse(ok=False, message="タイムアウト: Anthropic API への接続がタイムアウトしました")
+    except Exception as exc:  # noqa: BLE001
+        return AiTestResponse(ok=False, message=f"接続エラー: {exc}")
+
+    latency_ms = int((time.monotonic() - start) * 1000)
+
+    if resp.status_code == 200:
+        return AiTestResponse(
+            ok=True,
+            model=body.model,
+            latency_ms=latency_ms,
+            message="接続成功: Claude API に正常に接続できました",
+        )
+
+    # Map common error codes to friendly messages
+    status = resp.status_code
+    if status == 401:
+        msg = "認証エラー: APIキーが無効です (401)"
+    elif status == 403:
+        msg = "権限エラー: このAPIキーには必要な権限がありません (403)"
+    elif status == 429:
+        msg = "レート制限: リクエストが多すぎます (429)"
+    elif status >= 500:
+        msg = f"サーバーエラー: Anthropic API でエラーが発生しました ({status})"
+    else:
+        msg = f"エラー: Anthropic API がステータス {status} を返しました"
+
+    return AiTestResponse(ok=False, message=msg)
+
 
 @router.post("/ai/analyze", response_model=AiAnalyzeResponse)
 async def analyze(body: AiAnalyzeRequest) -> AiAnalyzeResponse:
     """AI-assisted construction judgment analysis.
 
-    When ``WMCDSS_CLAUDE_API_KEY`` is set, the analysis is delegated to Claude
-    AI.  Otherwise a deterministic rule-based analysis is used.
+    When an API key is configured (via UI settings or ``WMCDSS_CLAUDE_API_KEY``),
+    the analysis is delegated to Claude AI.  Otherwise a deterministic
+    rule-based analysis is used.
     """
-    from app.core.config import get_settings  # local import avoids circular
-
-    settings = get_settings()
-    api_key: str = getattr(settings, "claude_api_key", "")
+    api_key = _get_api_key()
+    model = _get_model()
 
     # --- Rule-based analysis (always computed as baseline / fallback) ---
     if body.work_type == "concrete":
@@ -316,7 +521,7 @@ async def analyze(body: AiAnalyzeRequest) -> AiAnalyzeResponse:
                 f"50文字以内で追加の専門的アドバイスがあれば加えてください。"
             )
 
-        ai_text = await _call_claude(prompt, api_key)
+        ai_text = await _call_claude(prompt, api_key, model)
         if ai_text:
             result["summary"] = ai_text.strip()
             result["analysis_type"] = "claude_ai"
