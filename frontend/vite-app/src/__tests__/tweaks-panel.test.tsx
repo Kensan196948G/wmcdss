@@ -825,6 +825,215 @@ describe("TweakNumber — pointer scrub", () => {
 });
 
 // ---------------------------------------------------------------------------
+// TweaksPanel drag — onDragStart + move + up callbacks (line 278 area)
+//
+// Fires mousedown on .twk-hd → onDragStart runs (line 258-278).
+// Then dispatches mousemove → move callback (lines 265-271).
+// Then dispatches mouseup  → up callback (lines 272-274), cleans up listeners.
+// ---------------------------------------------------------------------------
+
+describe("TweaksPanel — drag callbacks (lines 265-278)", () => {
+  it("mousedown on drag header triggers onDragStart (lines 258-278)", async () => {
+    const { container } = render(<TweaksPanel title="drag test" />);
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: { type: "__activate_edit_mode" } }),
+      );
+    });
+    const header = container.querySelector(".twk-hd") as HTMLElement;
+    expect(header).not.toBeNull();
+    // Fire mousedown → onDragStart executes, registers move/up on window
+    fireEvent.mouseDown(header, { clientX: 200, clientY: 200 });
+    // Fire mousemove → 'move' callback (lines 265-271) is triggered
+    window.dispatchEvent(new MouseEvent("mousemove", { clientX: 220, clientY: 205, bubbles: true }));
+    // Fire mouseup → 'up' callback (lines 272-274) is triggered, clears listeners
+    window.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    // Panel still renders (drag does not close it)
+    expect(container.querySelector(".twk-panel")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TweakRadio — select fallback resolve function (lines 433-441)
+//
+// >3 options → fitsAsSegments = false → renders <select> + resolve closure.
+// Firing change on the select invokes resolve(s) which maps string → typed value.
+//   resolve('b') with options [{value:'b',label:'B'},...] → lines 438-440
+//   resolve('xyz') (unknown value)                        → line 437
+// ---------------------------------------------------------------------------
+
+describe("TweakRadio — select fallback resolve (lines 433-441)", () => {
+  it("fireEvent.change on the select fallback calls resolve with a valid value (lines 438-440)", () => {
+    const onChange = vi.fn();
+    const opts = [
+      { value: "a", label: "A" },
+      { value: "b", label: "B" },
+      { value: "c", label: "C" },
+      { value: "d", label: "D" },
+    ];
+    const { container } = render(
+      <TweakRadio<string>
+        label="mode"
+        value="a"
+        options={opts}
+        onChange={onChange}
+      />,
+    );
+    const select = container.querySelector("select.twk-field") as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    // resolve('b') → finds {value:'b',label:'B'} → returns 'b' (lines 438-440)
+    fireEvent.change(select, { target: { value: "b" } });
+    expect(onChange).toHaveBeenCalledWith("b");
+  });
+
+  it("fireEvent.change with unknown value exercises resolve line 437 (m===undefined)", () => {
+    // When jsdom's select fires change with a value not in the <option> list,
+    // e.target.value becomes '' (empty string). resolve('') finds no match →
+    // m is undefined → line 437: return '' as unknown as V → onChange called with ''
+    const onChange = vi.fn();
+    const opts = [
+      { value: "a", label: "A" },
+      { value: "b", label: "B" },
+      { value: "c", label: "C" },
+      { value: "d", label: "D" },
+    ];
+    const { container } = render(
+      <TweakRadio<string>
+        label="mode"
+        value="a"
+        options={opts}
+        onChange={onChange}
+      />,
+    );
+    const select = container.querySelector("select.twk-field") as HTMLSelectElement;
+    // Fire change with an invalid option → jsdom sets value to '' (empty)
+    // resolve('') → m is undefined → line 437 branch taken → onChange called
+    fireEvent.change(select, { target: { value: "xyz" } });
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TweakRadio — primitive options in segment path (line 454)
+//
+// When options is an array of primitives (e.g. ['a','b']), labelLen(o)=1,
+// maxLen=1 ≤ segFitMap[2]=16 → fitsAsSegments=true → renders segments.
+// opts.map() at line 451 runs with primitive 'a' (not an object with 'value')
+// → takes else branch: { value: o as V, label: String(o) } → line 454 covered.
+// ---------------------------------------------------------------------------
+
+describe("TweakRadio — primitive options in segments path (line 454)", () => {
+  it("renders segment buttons for primitive string options", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakRadio<string>
+        label="mode"
+        value="a"
+        options={["a", "b"] as unknown as Array<{ value: string; label: string }>}
+        onChange={onChange}
+      />,
+    );
+    // With primitive options, fitsAsSegments=true → renders radio segment buttons (not select)
+    const track = container.querySelector('[role="radiogroup"]');
+    expect(track).not.toBeNull();
+    // 'a' and 'b' labels should appear (String(o) is used for label)
+    expect(container.textContent).toContain("a");
+    expect(container.textContent).toContain("b");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TweakRadio — 4 primitive options → select fallback + resolve else (line 440)
+//
+// 4 primitive options: segFitMap[4] is undefined → 0 → fitsAsSegments=false
+// → uses <select>. Firing change on the select:
+//   resolve('a') → m='a' (the string 'a') → typeof 'a' !== 'object' → line 440: return m
+// ---------------------------------------------------------------------------
+
+describe("TweakRadio — 4 primitive options select fallback resolve else (line 440)", () => {
+  it("select fallback with primitive options resolves via the else branch (line 440)", () => {
+    const onChange = vi.fn();
+    const { container } = render(
+      <TweakRadio<string>
+        label="mode"
+        value="a"
+        options={["a", "b", "c", "d"] as unknown as Array<{ value: string; label: string }>}
+        onChange={onChange}
+      />,
+    );
+    const select = container.querySelector("select.twk-field") as HTMLSelectElement;
+    expect(select).not.toBeNull();
+    // resolve('b') → m='b' (primitive) → typeof 'b' !== 'object' → line 440: return 'b'
+    fireEvent.change(select, { target: { value: "b" } });
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// useTweaks — object-form setTweak call (line 182)
+//
+// setTweak(key, val) is the typical path; setTweak({key: val}) is the bulk path.
+// Calling the bulk form exercises line 182: ? (keyOrEdits as Partial<T>)
+// ---------------------------------------------------------------------------
+
+describe("useTweaks — object-form setTweak (line 182)", () => {
+  it("setTweak({key: value}) updates multiple keys at once via object form", () => {
+    function BulkProbe() {
+      const [tweaks, setTweak] = useTweaks({ count: 1, label: "init" });
+      return (
+        <div>
+          <span data-testid="count">{tweaks.count}</span>
+          <span data-testid="label">{tweaks.label}</span>
+          <button
+            data-testid="bulk"
+            onClick={() => (setTweak as (edits: Record<string, unknown>) => void)({ count: 99, label: "bulk" })}
+          >
+            bulk
+          </button>
+        </div>
+      );
+    }
+    const { container } = render(<BulkProbe />);
+    fireEvent.click(container.querySelector('[data-testid="bulk"]') as HTMLElement);
+    expect(container.querySelector('[data-testid="count"]')?.textContent).toBe("99");
+    expect(container.querySelector('[data-testid="label"]')?.textContent).toBe("bulk");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TweaksPanel — ResizeObserver path in useEffect (lines 234-236)
+//
+// jsdom has no ResizeObserver by default, so normally lines 231-232 run.
+// Stubbing window.ResizeObserver makes the else path (lines 234-236) run:
+//   const ro = new ResizeObserver(clampToViewport)
+//   ro.observe(document.documentElement)
+//   return () => ro.disconnect()
+// ---------------------------------------------------------------------------
+
+describe("TweaksPanel — ResizeObserver useEffect path (lines 234-236)", () => {
+  it("uses ResizeObserver when available to watch viewport changes", async () => {
+    const observations: Element[] = [];
+    let disconnected = false;
+    class MockRO {
+      observe(el: Element) { observations.push(el); }
+      disconnect() { disconnected = true; }
+    }
+    vi.stubGlobal("ResizeObserver", MockRO);
+    const { container, unmount } = render(<TweaksPanel title="ro test" />);
+    await act(async () => {
+      window.dispatchEvent(
+        new MessageEvent("message", { data: { type: "__activate_edit_mode" } }),
+      );
+    });
+    // ResizeObserver.observe should have been called when the panel opens
+    expect(observations.length).toBeGreaterThan(0);
+    unmount();
+    expect(disconnected).toBe(true);
+    vi.unstubAllGlobals();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // window side-effects (dual-surface contract)
 // ---------------------------------------------------------------------------
 

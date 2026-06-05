@@ -5,8 +5,8 @@
 > 気象庁 (JMA) の AMeDAS・波浪データを自動取得し、現場ごとの閾値判定に基づいて
 > 「⛏️ 着手可」「⚠️ 警戒」「⛔ 中止」を提示するダッシュボード兼 API。
 
-[![tests](https://img.shields.io/badge/tests-633%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
-[![frontend coverage](https://img.shields.io/badge/frontend%20coverage-98.40%25-brightgreen)](#-frontend-coverage-matrix)
+[![tests](https://img.shields.io/badge/tests-640%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![frontend coverage](https://img.shields.io/badge/frontend%20coverage-99.27%25-brightgreen)](#-frontend-coverage-matrix)
 [![backend coverage](https://img.shields.io/badge/backend%20coverage-99%25-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vitest%20%2B%20vite%20%2B%20docker-2088FF)](.github/workflows/ci.yml)
 [![python](https://img.shields.io/badge/python-3.11%2B-blue)]()
@@ -234,13 +234,13 @@ docker compose exec backend pytest -q tests/
 | 🟢 `analysis.tsx`       |       100% |     92.00% |     85.71% |      27 |            61 |
 | 🟢 `app-shell.tsx`      |     97.37% |     88.88% |     80.00% |      46 |      62+68+74 |
 | 🟢 `site-pages.tsx`     |       100% |       100% |       100% |      46 |         63+79 |
-| 🟢 `tweaks-panel.tsx`   |     91.87% |     88.67% |     86.48% |      51 |         64+67 |
+| 🟢 `tweaks-panel.tsx`   |       100% |     93.28% |     94.87% |      58 |      64+67+80 |
 | 🟢 `admin-pages.tsx`    |     99.80% |     96.00% |       100% |      41 |         65+75 |
 | 🟢 `main.tsx`           |       100% |     90.90% |       100% |       7 |            66 |
-| **All files**           | **98.40%** | **92.39%** | **93.79%** | **436** |             — |
+| **All files**           | **99.27%** | **93.02%** | **95.91%** | **443** |             — |
 
 > セッション 2026-05-28 で Loop 59 → 75 を実行。frontend test **121 → 401** (+280, +231%)、coverage **32.26% → 97.68% Statements** (+65.42pt) / Branches → **87.10%** / Functions → **89.65%**。詳細: [docs/SESSION-2026-05-28.md](docs/SESSION-2026-05-28.md)
-> セッション 2026-06-05 で Loop 77 → 79 を実行。frontend test **401 → 436** (+35)、coverage **97.68% → 98.40% Statements** (+0.72pt) / Branches **87.10% → 92.39%** (+5.29pt) / Functions **89.65% → 93.79%** (+4.14pt)。decisions.tsx/dashboard.tsx/site-pages.tsx すべて Functions **100%** 達成。site-pages.tsx **Statements/Branches/Functions すべて 100%** 達成（初の完全カバレッジモジュール）。
+> セッション 2026-06-05 で Loop 77 → 80 を実行。frontend test **401 → 443** (+42)、coverage **97.68% → 99.27% Statements** (+1.59pt) / Branches **87.10% → 93.02%** (+5.92pt) / Functions **89.65% → 95.91%** (+6.26pt)。decisions.tsx/dashboard.tsx/site-pages.tsx/tweaks-panel.tsx Stmts **100%** 達成。site-pages.tsx **Stmts/Branches/Funcs すべて 100%** 達成（初の完全カバレッジモジュール）。
 
 ### 🤖 継続的インテグレーション
 
@@ -250,7 +250,7 @@ docker compose exec backend pytest -q tests/
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------------: | ----------------- |
 | `backend-unit`                                            | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (197 件)                                                                                                       |          —          | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`)                   | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件)                                                                           |       unit 後       | ❌ マージブロック |
-| `frontend-unit` (Loop 47 追加 / Loop 60-79 拡張)          | `npm ci` ／ `vitest run` (**436 件 / 17 files / coverage 98.40% Stmts / 92.39% Branches / 93.79% Funcs**)                                                                 | backend-unit と並走 | ❌ マージブロック |
+| `frontend-unit` (Loop 47 追加 / Loop 60-80 拡張)          | `npm ci` ／ `vitest run` (**443 件 / 17 files / coverage 99.27% Stmts / 93.02% Branches / 95.91% Funcs**)                                                                 | backend-unit と並走 | ❌ マージブロック |
 | `frontend-build` (`needs: frontend-unit`)                 | `npm ci` ／ `npm run build` ／ bundle size 報告                                                                                                                            |       unit 後       | ❌ マージブロック |
 | `frontend-e2e` (`needs: frontend-build`) **Loop 49 追加** | `npm ci` ／ `playwright install --with-deps firefox` ／ `playwright test` (5 件 — `vite preview` 内蔵、backend 不要)                                                       |      build 後       | ❌ マージブロック |
 | `frontend-docker` (Loop 38 追加)                          | `docker buildx build` で `frontend/vite-app/Dockerfile` を multi-stage build（host の `npm run build` では検出不能な Docker context-escape ／ nginx eager DNS を機械検出） |     unit と並走     | ❌ マージブロック |
