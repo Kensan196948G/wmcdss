@@ -117,7 +117,6 @@ netsh advfirewall firewall add rule name="WMCDSS-API" protocol=TCP dir=in localp
 |------|-----|
 | **ログイン** | `cert/desknetsneologin-info.txt` 参照 |
 | **ユーザー数** | 約 533名 |
-| **データパス** | `CMDB/DeskNetSNeo-Files/desknet_users.csv` |
 | **更新頻度** | 毎日 08:30 自動更新 |
 
 ---
