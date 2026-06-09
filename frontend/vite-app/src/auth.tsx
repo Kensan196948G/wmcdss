@@ -308,7 +308,7 @@ export const LoginPage: FC<LoginPageProps> = ({ onLogin }) => {
         {tab === 'm365' && (
           <form onSubmit={handleM365Login}>
             <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, padding: '8px 10px', fontSize: 12, color: '#1d4ed8', marginBottom: 14 }}>
-              みらい建設工業 (@mirai-const.co.jp) の M365 アカウントでログインします
+              @mirai-const.co.jp の M365 アカウントでログインします
             </div>
             <div style={{ marginBottom: 14 }}>
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary, #4a5568)', marginBottom: 5 }}>
@@ -346,7 +346,7 @@ export const LoginPage: FC<LoginPageProps> = ({ onLogin }) => {
 
         {/* フッター */}
         <div style={{ marginTop: 20, textAlign: 'center', fontSize: 11, color: 'var(--text-muted, #9ca3af)' }}>
-          みらい建設工業 © 2026 WMCDSS
+          © 2026 WMCDSS
         </div>
       </div>
     </div>

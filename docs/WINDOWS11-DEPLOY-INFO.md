@@ -17,7 +17,6 @@
 8. [Docker 自動起動設定](#8-docker-自動起動設定)
 9. [展開前チェックリスト](#9-展開前チェックリスト)
 10. [展開手順](#10-展開手順)
-11. [CMDB 連携情報](#11-cmdb-連携情報)
 
 ---
 
@@ -92,7 +91,7 @@ netsh advfirewall firewall add rule name="WMCDSS-API" protocol=TCP dir=in localp
 | **認証エンドポイント** | `https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token` | ROPC フロー |
 | **Graph API** | `https://graph.microsoft.com/v1.0/me` | ユーザー情報取得 |
 | **スコープ** | `https://graph.microsoft.com/User.Read` | プロフィール読取 |
-| **対象ユーザードメイン** | `@mirai-const.co.jp` | みらい建設工業 全社員 |
+| **対象ユーザードメイン** | `@mirai-const.co.jp` | 対象ドメイン 全社員 |
 
 ### Active Directory (AD)
 
@@ -319,43 +318,6 @@ docker compose restart
 # フルリビルド
 docker compose down && docker compose --env-file .env.windows up -d --build
 ```
-
----
-
-## 11. CMDB 連携情報
-
-### ファイルパス
-
-| ファイル | 内容 | 更新頻度 |
-|---------|------|---------|
-| `CMDB/CMDB.csv` | 機器管理台帳（IP・OS・状態） | 毎日 12:00 |
-| `CMDB/cmdb_alive.csv` | 死活監視結果 | 毎日更新 |
-| `CMDB/cmdb_reachable.csv` | 到達可能ホスト一覧（WinRM含む） | 毎日更新 |
-| `CMDB/DeskNetSNeo-Files/desknet_users.csv` | 社員情報（533名） | 毎日 08:30 |
-| `CMDB/DeskNetSNeo-Files/branch_master.csv` | 拠点マスタ | 組織改編時 |
-| `CMDB/■情報機器管理台帳（正）.xlsx` | 機器管理台帳マスター | 毎日 12:00 |
-
-### 組織（拠点）一覧（branch_master.csv より）
-
-| 拠点 |
-|------|
-| 東京支店 |
-| 大阪支店 |
-| 九州支店 |
-| 中部支店 |
-| 東北支店 |
-| 北海道支店 |
-| 管理本部 |
-| 技術本部 |
-| 営業本部 |
-| ソリューション営業本部 |
-| 安全品質環境本部 |
-| 施工本部 |
-| 青木マリーン |
-| みらい建設工業 |
-| 船舶事業部 |
-| 経営企画室 |
-| エムズ |
 
 ---
 
