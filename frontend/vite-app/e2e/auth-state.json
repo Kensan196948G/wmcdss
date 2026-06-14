@@ -1,0 +1,18 @@
+{
+  "cookies": [],
+  "origins": [
+    {
+      "origin": "http://localhost:4173",
+      "localStorage": [
+        {
+          "name": "wmcdss_access_token",
+          "value": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJlMmUtdXNlciIsImV4cCI6NDA3MDkwODgwMCwiYXV0aF90eXBlIjoibG9jYWwifQ.e2e_signature_not_verified"
+        },
+        {
+          "name": "wmcdss_user",
+          "value": "{\"username\":\"e2e-user\",\"displayName\":\"E2E User\",\"authType\":\"local\"}"
+        }
+      ]
+    }
+  ]
+}

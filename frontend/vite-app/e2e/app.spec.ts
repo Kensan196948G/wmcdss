@@ -8,6 +8,12 @@
  */
 import { test, expect } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  // Abort all backend API calls — initFromBackend() catches the error and renders
+  // the app with static mock data immediately rather than waiting for a live server.
+  await page.route('**/api/v1/**', route => route.abort());
+});
+
 test('sidebar renders with app title', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.sidebar-logo-text')).toContainText('気象海象判断支援');
