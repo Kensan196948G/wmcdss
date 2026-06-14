@@ -6,6 +6,7 @@ export default defineConfig({
   use: {
     baseURL: 'http://localhost:4173',
     headless: true,
+    storageState: 'e2e/auth-state.json',
   },
   projects: [
     // Firefox is used as the primary E2E browser.

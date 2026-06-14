@@ -5,13 +5,14 @@
   POST /api/v1/auth/login/m365   — Microsoft 365 ROPC 非対話式認証
   GET  /api/v1/auth/me           — 現在の認証ユーザー情報
 """
+
 from __future__ import annotations
 
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, field_validator
 
 from app.core.auth import (
     authenticate_local,
@@ -29,6 +30,7 @@ _bearer = HTTPBearer(auto_error=False)
 # ---------------------------------------------------------------------------
 # スキーマ
 # ---------------------------------------------------------------------------
+
 
 class LocalLoginRequest(BaseModel):
     username: str
@@ -74,14 +76,19 @@ class UserInfo(BaseModel):
 # 共通: JWT 検証依存関係
 # ---------------------------------------------------------------------------
 
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> UserInfo:
     if credentials is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="認証トークンが必要です")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="認証トークンが必要です"
+        )
     payload = decode_access_token(credentials.credentials)
     if payload is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="無効または期限切れのトークンです")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="無効または期限切れのトークンです"
+        )
     return UserInfo(
         username=payload.get("sub", ""),
         display_name=payload.get("display_name", payload.get("sub", "")),
@@ -92,6 +99,7 @@ def get_current_user(
 # ---------------------------------------------------------------------------
 # エンドポイント
 # ---------------------------------------------------------------------------
+
 
 @router.post("/login", response_model=TokenResponse, summary="一般ログイン（ローカル認証）")
 async def login_local(body: LocalLoginRequest) -> TokenResponse:
@@ -117,7 +125,9 @@ async def login_local(body: LocalLoginRequest) -> TokenResponse:
     )
 
 
-@router.post("/login/m365", response_model=TokenResponse, summary="Microsoft 365 ログイン（非対話式 ROPC）")
+@router.post(
+    "/login/m365", response_model=TokenResponse, summary="Microsoft 365 ログイン（非対話式 ROPC）"
+)
 async def login_m365(body: M365LoginRequest) -> TokenResponse:
     """M365 メールアドレス + パスワードで非対話式認証し JWT を発行する。
 
