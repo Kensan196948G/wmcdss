@@ -1,0 +1,50 @@
+[Unit]
+Description=WMCDSS - Weather Marine Construction Decision Support System (Web UI + API)
+Documentation=file://%h/Projects/Weather-Marine-Construction-Decision-Support-System/README.md
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Start: bring up all containers (db, backend, frontend)
+ExecStart=/usr/bin/docker compose \
+    -f %h/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.yml \
+    up -d --remove-orphans
+
+# Stop: graceful shutdown
+ExecStop=/usr/bin/docker compose \
+    -f %h/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.yml \
+    down --timeout 30
+
+# Reload: recreate changed containers only
+ExecReload=/usr/bin/docker compose \
+    -f %h/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.yml \
+    up -d --remove-orphans
+
+# Give containers time to become healthy before declaring success
+ExecStartPost=/bin/bash -c '\
+  echo "Waiting for wmcdss-frontend to be healthy..."; \
+  for i in $(seq 1 30); do \
+    status=$(/usr/bin/docker inspect --format="{{.State.Status}}" wmcdss-frontend 2>/dev/null); \
+    if [ "$status" = "running" ]; then \
+      echo "wmcdss-frontend is running"; \
+      exit 0; \
+    fi; \
+    sleep 5; \
+  done; \
+  echo "WARNING: wmcdss-frontend did not become running in time"; \
+  exit 0'
+
+WorkingDirectory=%h/Projects/Weather-Marine-Construction-Decision-Support-System
+TimeoutStartSec=180
+TimeoutStopSec=60
+
+# Restart policy: if Docker Compose fails on start, retry after 30s
+Restart=on-failure
+RestartSec=30s
+
+[Install]
+WantedBy=default.target
