@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
+// Dynamic imports under --coverage (V8 instrumentation) are significantly
+// slower than normal runs. 30s timeout prevents false positives locally.
+const DYNAMIC_IMPORT_TIMEOUT = 30_000;
+
 // main.tsx mounts <AppShell /> into #root the moment it is imported, so each
 // test that exercises a different branch must (1) reset the module graph,
 // (2) re-mock dependencies, and (3) only THEN dynamic-import the module.
@@ -60,7 +64,13 @@ beforeEach(() => {
   vi.doMock("../auth", () => ({
     AuthStore: {
       isAuthenticated: vi.fn().mockReturnValue(true),
-      getUser: vi.fn().mockReturnValue({ username: "test", displayName: "Test User", authType: "local" }),
+      getUser: vi
+        .fn()
+        .mockReturnValue({
+          username: "test",
+          displayName: "Test User",
+          authType: "local",
+        }),
       clear: vi.fn(),
       save: vi.fn(),
       getToken: vi.fn().mockReturnValue("mock-token"),
@@ -81,71 +91,99 @@ afterEach(() => {
 });
 
 describe("main.tsx — bootstrap", () => {
-  it("mounts AppShell into #root after initFromBackend resolves", async () => {
-    await importMainAndFlush();
-    const root = document.getElementById("root");
-    expect(root?.innerHTML).toContain("app-shell-stub");
-  });
+  it(
+    "mounts AppShell into #root after initFromBackend resolves",
+    async () => {
+      await importMainAndFlush();
+      const root = document.getElementById("root");
+      expect(root?.innerHTML).toContain("app-shell-stub");
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
 
-  it("still mounts AppShell when initFromBackend rejects (caught)", async () => {
-    vi.resetModules();
-    vi.doMock("../api", () => ({
-      WMCDSS_API: {
-        initFromBackend: vi.fn().mockRejectedValue(new Error("boom")),
-      },
-    }));
-    vi.doMock("../app-shell", () => ({
-      AppShell: () => <div data-testid="appshell">app-shell-stub</div>,
-    }));
-    vi.doMock("../tweaks-panel", () => ({}));
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await importMainAndFlush();
-    const root = document.getElementById("root");
-    expect(root?.innerHTML).toContain("app-shell-stub");
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
-  });
+  it(
+    "still mounts AppShell when initFromBackend rejects (caught)",
+    async () => {
+      vi.resetModules();
+      vi.doMock("../api", () => ({
+        WMCDSS_API: {
+          initFromBackend: vi.fn().mockRejectedValue(new Error("boom")),
+        },
+      }));
+      vi.doMock("../app-shell", () => ({
+        AppShell: () => <div data-testid="appshell">app-shell-stub</div>,
+      }));
+      vi.doMock("../tweaks-panel", () => ({}));
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      await importMainAndFlush();
+      const root = document.getElementById("root");
+      expect(root?.innerHTML).toContain("app-shell-stub");
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
 });
 
 describe("main.tsx — BackendStatusStrip branches", () => {
-  it("renders nothing for the strip when BACKEND_STATUS is undefined", async () => {
-    await importMainAndFlush();
-    expect(document.body.textContent).not.toContain("Backend 接続中");
-    expect(document.body.textContent).not.toContain("バックエンド未接続");
-  });
+  it(
+    "renders nothing for the strip when BACKEND_STATUS is undefined",
+    async () => {
+      await importMainAndFlush();
+      expect(document.body.textContent).not.toContain("Backend 接続中");
+      expect(document.body.textContent).not.toContain("バックエンド未接続");
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
 
-  it("renders the success strip when BACKEND_STATUS.ok=true", async () => {
-    setBackendStatus({
-      ok: true,
-      sites: 9,
-      base: "http://localhost:8003/api/v1",
-    });
-    await importMainAndFlush();
-    expect(document.body.textContent).toContain("Backend 接続中");
-    expect(document.body.textContent).toContain("9 現場");
-    expect(document.body.textContent).toContain("localhost:8003");
-    const role = document.querySelector('[role="status"]');
-    expect(role).not.toBeNull();
-  });
+  it(
+    "renders the success strip when BACKEND_STATUS.ok=true",
+    async () => {
+      setBackendStatus({
+        ok: true,
+        sites: 9,
+        base: "http://localhost:8003/api/v1",
+      });
+      await importMainAndFlush();
+      expect(document.body.textContent).toContain("Backend 接続中");
+      expect(document.body.textContent).toContain("9 現場");
+      expect(document.body.textContent).toContain("localhost:8003");
+      const role = document.querySelector('[role="status"]');
+      expect(role).not.toBeNull();
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
 
-  it("falls back to 0 sites and omits the base hint when those fields are missing", async () => {
-    setBackendStatus({ ok: true });
-    await importMainAndFlush();
-    expect(document.body.textContent).toContain("0 現場");
-  });
+  it(
+    "falls back to 0 sites and omits the base hint when those fields are missing",
+    async () => {
+      setBackendStatus({ ok: true });
+      await importMainAndFlush();
+      expect(document.body.textContent).toContain("0 現場");
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
 
-  it("renders the error strip with default reason 'pending' when BACKEND_STATUS.ok=false", async () => {
-    setBackendStatus({ ok: false });
-    await importMainAndFlush();
-    expect(document.body.textContent).toContain("バックエンド未接続");
-    expect(document.body.textContent).toContain("pending");
-    const alert = document.querySelector('[role="alert"]');
-    expect(alert).not.toBeNull();
-  });
+  it(
+    "renders the error strip with default reason 'pending' when BACKEND_STATUS.ok=false",
+    async () => {
+      setBackendStatus({ ok: false });
+      await importMainAndFlush();
+      expect(document.body.textContent).toContain("バックエンド未接続");
+      expect(document.body.textContent).toContain("pending");
+      const alert = document.querySelector('[role="alert"]');
+      expect(alert).not.toBeNull();
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
 
-  it("renders the error strip with a custom reason", async () => {
-    setBackendStatus({ ok: false, reason: "timeout" });
-    await importMainAndFlush();
-    expect(document.body.textContent).toContain("timeout");
-  });
+  it(
+    "renders the error strip with a custom reason",
+    async () => {
+      setBackendStatus({ ok: false, reason: "timeout" });
+      await importMainAndFlush();
+      expect(document.body.textContent).toContain("timeout");
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
 });

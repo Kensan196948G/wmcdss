@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState, type ChangeEvent, type FC } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FC,
+} from "react";
 import {
   AUDIT_LOG,
   ETL_JOBS,
@@ -1356,6 +1363,13 @@ export const AiSettingsPage: FC = () => {
     return token ? { Authorization: `Bearer ${token}` } : {};
   };
 
+  const isMounted = useRef(true);
+  useEffect(() => {
+    return () => {
+      isMounted.current = false;
+    };
+  }, []);
+
   const [settings, setSettings] = useState<AiSettingsState | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [showKey, setShowKey] = useState(false);
@@ -1380,7 +1394,7 @@ export const AiSettingsPage: FC = () => {
         return resp.json() as Promise<AiSettingsState>;
       })
       .then((data) => {
-        if (signal?.aborted) return;
+        if (signal?.aborted || !isMounted.current) return;
         setSettings(data);
         setModel(data.model || "claude-sonnet-4-6");
         setLoading(false);
@@ -1388,18 +1402,20 @@ export const AiSettingsPage: FC = () => {
       .catch((err: unknown) => {
         if (err instanceof DOMException && err.name === "AbortError") return;
         if (signal?.aborted) return;
-        // バックエンド未接続 — localStorage から読み込みを試みる
+        if (!isMounted.current) return;
+        // Wrap all setState calls so React dispatch errors after jsdom teardown
+        // (ReferenceError: window is not defined) are silently ignored.
         try {
           const raw = localStorage.getItem("wmcdss_ai_settings");
           if (raw) {
             const parsed = JSON.parse(raw) as Partial<AiSettingsState>;
             setModel(parsed.model ?? "claude-sonnet-4-6");
           }
+          setSettings(null);
+          setLoading(false);
         } catch {
-          // ignore
+          // ignore teardown-race errors
         }
-        setSettings(null);
-        setLoading(false);
       });
   };
 
