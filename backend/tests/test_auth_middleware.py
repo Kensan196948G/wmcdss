@@ -1,4 +1,5 @@
 """Unit tests for APIKeyMiddleware in isolation (no DB required)."""
+
 from __future__ import annotations
 import pytest
 from fastapi import FastAPI
@@ -12,7 +13,7 @@ from app.core.security import APIKeyMiddleware
 @pytest.fixture
 def make_app(monkeypatch):
     def _build(keys: list[str]) -> FastAPI:
-        fake = config_mod.Settings(api_keys=keys)
+        fake = config_mod.Settings(api_keys_raw=",".join(keys))
         monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
         monkeypatch.setattr(security_mod, "_config", config_mod)
 
@@ -20,15 +21,19 @@ def make_app(monkeypatch):
         app.add_middleware(APIKeyMiddleware)
 
         @app.get("/r")
-        async def r(): return {"ok": True}
+        async def r():
+            return {"ok": True}
 
         @app.post("/w")
-        async def w(): return {"ok": True}
+        async def w():
+            return {"ok": True}
 
         @app.get("/healthz")
-        async def hz(): return {"ok": True}
+        async def hz():
+            return {"ok": True}
 
         return app
+
     return _build
 
 
@@ -67,7 +72,7 @@ def test_exempt_paths_bypass_auth(make_app):
 def test_root_exempt_does_not_bypass_other_paths(monkeypatch):
     # Regression: if someone re-adds "/" to auth_exempt_paths, ensure the
     # prefix logic does NOT make every URL auth-free.
-    fake = config_mod.Settings(api_keys=["secret"], auth_exempt_paths=["/", "/healthz"])
+    fake = config_mod.Settings(api_keys_raw="secret", auth_exempt_paths=["/", "/healthz"])
     monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
     monkeypatch.setattr(security_mod, "_config", config_mod)
 
@@ -75,7 +80,8 @@ def test_root_exempt_does_not_bypass_other_paths(monkeypatch):
     app.add_middleware(APIKeyMiddleware)
 
     @app.post("/w")
-    async def w(): return {"ok": True}
+    async def w():
+        return {"ok": True}
 
     assert TestClient(app).post("/w").status_code == 401
 
@@ -105,8 +111,9 @@ def test_oversize_key_via_http_rejected(make_app):
 @pytest.fixture
 def make_mutations_app(monkeypatch):
     """App exposing PUT/PATCH/DELETE so we can verify auth covers all writes."""
+
     def _build(keys: list[str]) -> FastAPI:
-        fake = config_mod.Settings(api_keys=keys)
+        fake = config_mod.Settings(api_keys_raw=",".join(keys))
         monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
         monkeypatch.setattr(security_mod, "_config", config_mod)
 
@@ -114,15 +121,19 @@ def make_mutations_app(monkeypatch):
         app.add_middleware(APIKeyMiddleware)
 
         @app.put("/w")
-        async def put_w(): return {"ok": True}
+        async def put_w():
+            return {"ok": True}
 
         @app.patch("/w")
-        async def patch_w(): return {"ok": True}
+        async def patch_w():
+            return {"ok": True}
 
         @app.delete("/w")
-        async def delete_w(): return {"ok": True}
+        async def delete_w():
+            return {"ok": True}
 
         return app
+
     return _build
 
 
@@ -171,10 +182,10 @@ def test_key_matches_empty_presented_returns_false():
 # --- actor_from -------------------------------------------------------------
 
 
-def _req_with(headers: dict[str, str] | None = None,
-              method: str = "POST", path: str = "/w"):
+def _req_with(headers: dict[str, str] | None = None, method: str = "POST", path: str = "/w"):
     """Build a minimal Starlette Request for actor_from() input."""
     from starlette.requests import Request as StarletteRequest
+
     scope = {
         "type": "http",
         "method": method,
@@ -231,9 +242,10 @@ def test_key_exactly_max_len_is_processed_not_size_rejected(make_app):
     # _MAX_KEY_LEN=512: `len > 512` is the guard, so a 512-char key passes the
     # size guard and reaches hmac.compare_digest (where it correctly fails to
     # match "secret"). Confirms the boundary is inclusive, not off-by-one.
-    assert TestClient(make_app(["secret"])).post(
-        "/w", headers={"X-API-Key": "a" * 512}
-    ).status_code == 401
+    assert (
+        TestClient(make_app(["secret"])).post("/w", headers={"X-API-Key": "a" * 512}).status_code
+        == 401
+    )
 
 
 def test_key_one_over_max_len_early_rejected():
