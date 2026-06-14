@@ -13,7 +13,11 @@ services:
       - wmcdss_pgdata:/var/lib/postgresql/data
       - ./db/migrations:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wmcdss} -d ${POSTGRES_DB:-wmcdss}"]
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-wmcdss} -d ${POSTGRES_DB:-wmcdss}",
+        ]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -36,7 +40,7 @@ services:
       WMCDSS_DEBUG: ${WMCDSS_DEBUG:-false}
       WMCDSS_EXPOSE_OPENAPI: ${WMCDSS_EXPOSE_OPENAPI:-false}
       # --- CORS: コンマ区切り URL 文字列 (str フィールド cors_origins_raw にマップ) ---
-      WMCDSS_CORS_ORIGINS_RAW: "${WMCDSS_CORS_ORIGINS_RAW:-http://172.23.10.251:9080,http://localhost:9080,http://127.0.0.1:9080}"
+      WMCDSS_CORS_ORIGINS_RAW: "${WMCDSS_CORS_ORIGINS_RAW:-http://${WMCDSS_WEBUI_HOST:-172.23.10.251}:${WMCDSS_WEBUI_PORT:-9080},http://localhost:${WMCDSS_WEBUI_PORT:-9080},http://127.0.0.1:${WMCDSS_WEBUI_PORT:-9080}}"
       # --- API キー: コンマ区切り文字列 (str フィールド api_keys_raw にマップ) ---
       WMCDSS_API_KEYS_RAW: "${WMCDSS_API_KEYS_RAW:-}"
       WMCDSS_RATE_LIMIT_PER_MINUTE: ${WMCDSS_RATE_LIMIT_PER_MINUTE:-60}
@@ -81,9 +85,9 @@ services:
       backend:
         condition: service_healthy
     ports:
-      # ポート 9080 を使用 (8080 は既存サービスと競合するため)
-      # WebUI アクセス URL: http://172.23.10.251:9080
-      - "0.0.0.0:9080:80"
+      # WMCDSS_WEBUI_PORT: setup-webui.sh が自動検出したポートを .env で設定
+      # WebUI アクセス URL: http://<WMCDSS_WEBUI_HOST>:<WMCDSS_WEBUI_PORT>
+      - "0.0.0.0:${WMCDSS_WEBUI_PORT:-9080}:80"
     restart: always
 
 volumes:
