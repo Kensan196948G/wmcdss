@@ -12,7 +12,7 @@ from app.core.security import APIKeyMiddleware
 @pytest.fixture
 def make_app(monkeypatch):
     def _build(keys: list[str]) -> FastAPI:
-        fake = config_mod.Settings(api_keys=keys)
+        fake = config_mod.Settings(api_keys_raw=",".join(keys))
         monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
         monkeypatch.setattr(security_mod, "_config", config_mod)
 
@@ -67,7 +67,7 @@ def test_exempt_paths_bypass_auth(make_app):
 def test_root_exempt_does_not_bypass_other_paths(monkeypatch):
     # Regression: if someone re-adds "/" to auth_exempt_paths, ensure the
     # prefix logic does NOT make every URL auth-free.
-    fake = config_mod.Settings(api_keys=["secret"], auth_exempt_paths=["/", "/healthz"])
+    fake = config_mod.Settings(api_keys_raw="secret", auth_exempt_paths=["/", "/healthz"])
     monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
     monkeypatch.setattr(security_mod, "_config", config_mod)
 
@@ -106,7 +106,7 @@ def test_oversize_key_via_http_rejected(make_app):
 def make_mutations_app(monkeypatch):
     """App exposing PUT/PATCH/DELETE so we can verify auth covers all writes."""
     def _build(keys: list[str]) -> FastAPI:
-        fake = config_mod.Settings(api_keys=keys)
+        fake = config_mod.Settings(api_keys_raw=",".join(keys))
         monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
         monkeypatch.setattr(security_mod, "_config", config_mod)
 
