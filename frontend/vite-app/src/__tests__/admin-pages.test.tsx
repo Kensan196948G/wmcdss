@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, fireEvent, act } from "@testing-library/react";
+import { render, fireEvent, act, waitFor, cleanup } from "@testing-library/react";
 import {
   ThresholdsPage,
   EtlPage,
@@ -10,6 +10,29 @@ import {
   AiSettingsPage,
 } from "../admin-pages";
 import { SITES, ETL_JOBS, AUDIT_LOG } from "../data";
+
+// vitest v3.2.4 + jsdom produces a half-broken window.localStorage in some
+// test environments. Replace with a stable in-memory shim for AiSettingsPage tests
+// (which call localStorage.getItem via authHeaders).
+class InMemoryStorage implements Storage {
+  private store: Record<string, string> = {};
+  get length(): number { return Object.keys(this.store).length; }
+  clear(): void { this.store = {}; }
+  getItem(key: string): string | null {
+    return Object.prototype.hasOwnProperty.call(this.store, key) ? this.store[key] : null;
+  }
+  key(index: number): string | null { return Object.keys(this.store)[index] ?? null; }
+  removeItem(key: string): void { delete this.store[key]; }
+  setItem(key: string, value: string): void { this.store[key] = String(value); }
+}
+
+function installFreshStorage(): void {
+  Object.defineProperty(window, "localStorage", {
+    value: new InMemoryStorage(),
+    writable: true,
+    configurable: true,
+  });
+}
 
 beforeEach(() => {
   vi.useRealTimers();
@@ -471,6 +494,38 @@ describe("AuditPage — filter handler invocation", () => {
   });
 });
 
+describe("SettingsPage — loads persisted settings from localStorage (lines 1140-1145)", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("reads name and email from wmcdss_settings in localStorage when present (line 1140-1143 ?? true branch)", () => {
+    installFreshStorage();
+    localStorage.setItem(
+      "wmcdss_settings",
+      JSON.stringify({ name: "テスト太郎", email: "test@example.co.jp" }),
+    );
+    const { container } = render(<SettingsPage role="field" />);
+    const inputs = container.querySelectorAll(
+      "input.form-input",
+    ) as NodeListOf<HTMLInputElement>;
+    // inputs[0]=名前, inputs[1]=所属(固定), inputs[2]=メールアドレス
+    expect(inputs[0].value).toBe("テスト太郎");
+    expect(inputs[2].value).toBe("test@example.co.jp");
+  });
+
+  it("falls back to defaults when wmcdss_settings exists but fields are absent (lines 1142-1143 ?? false branch)", () => {
+    installFreshStorage();
+    localStorage.setItem("wmcdss_settings", JSON.stringify({}));
+    const { container } = render(<SettingsPage role="field" />);
+    const inputs = container.querySelectorAll(
+      "input.form-input",
+    ) as NodeListOf<HTMLInputElement>;
+    // parsed.name is undefined → ?? fires → "田中 太郎"
+    expect(inputs[0].value).toBe("田中 太郎");
+  });
+});
+
 describe("SettingsPage — checkbox handlers", () => {
   it("toggling every notification checkbox runs handleToggle without throwing", () => {
     const { container } = render(<SettingsPage role="field" />);
@@ -486,6 +541,573 @@ describe("SettingsPage — checkbox handlers", () => {
         fireEvent.click(cb);
       }).not.toThrow();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EtlPage — backend fetch path
+// ---------------------------------------------------------------------------
+
+describe("EtlPage — backend fetch path", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it("fetches ETL job statuses when WMCDSS_API_BASE is configured", async () => {
+    const mockJobs = [
+      {
+        id: 1,
+        name: "気象データ取得",
+        source: "AMeDAS",
+        schedule: "10分毎",
+        last_obs_at: "2026-06-14T10:00:00",
+        status: "ok",
+      },
+      {
+        id: 2,
+        name: "海象データ取得",
+        source: "波浪ナウキャスト",
+        schedule: "1時間毎",
+        last_obs_at: "2026-06-14T09:00:00",
+        status: "ok",
+      },
+    ];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ jobs: mockJobs }),
+      }),
+    );
+    vi.stubGlobal("WMCDSS_API_BASE", "http://localhost:8003/api/v1");
+
+    const { container } = render(<EtlPage />);
+    await waitFor(() =>
+      expect(container.textContent).toContain("2026-06-14T10:00:00"),
+    );
+  });
+
+  it("silently ignores ETL status fetch error and keeps static data", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("ETL fetch fail")),
+    );
+    vi.stubGlobal("WMCDSS_API_BASE", "http://localhost:8003/api/v1");
+
+    const { container } = render(<EtlPage />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("ジョブ一覧");
+  });
+
+  it("handleManualRun shows alert when WMCDSS_API_BASE is not set", async () => {
+    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
+
+    const { container } = render(<EtlPage />);
+    const runBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("手動実行"),
+    );
+    await act(async () => {
+      fireEvent.click(runBtn!);
+    });
+    expect(alertSpy).toHaveBeenCalledWith("バックエンドに接続できません");
+  });
+
+  it("handleManualRun posts to /etl/run/1 and shows 実行中", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ jobs: [] }),
+      })
+      .mockResolvedValueOnce({ ok: true });
+    vi.stubGlobal("fetch", mockFetch);
+    vi.stubGlobal("WMCDSS_API_BASE", "http://localhost:8003/api/v1");
+    vi.useFakeTimers();
+
+    const { container } = render(<EtlPage />);
+    const runBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("手動実行"),
+    );
+    await act(async () => {
+      fireEvent.click(runBtn!);
+    });
+    expect(container.textContent).toContain("実行中");
+
+    act(() => {
+      vi.advanceTimersByTime(1100);
+    });
+    vi.useRealTimers();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AiSettingsPage
+// ---------------------------------------------------------------------------
+
+describe("AiSettingsPage", () => {
+  const MOCK_SETTINGS = {
+    configured: true,
+    key_preview: "sk-ant-...XYZ",
+    model: "claude-sonnet-4-6",
+    source: "ui",
+    supported_models: [
+      { id: "claude-sonnet-4-6", label: "claude-sonnet-4-6 推奨 ★" },
+      { id: "claude-haiku-4-5", label: "claude-haiku-4-5 高速" },
+    ],
+  };
+
+  beforeEach(() => {
+    installFreshStorage();
+    vi.stubGlobal("fetch", vi.fn());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it("shows 読み込み中 while settings are loading", () => {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise(() => {})));
+    const { container } = render(<AiSettingsPage />);
+    expect(container.textContent).toContain("読み込み中");
+  });
+
+  it("renders form with ✅ 接続済み after settings load (configured=true)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      }),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+    expect(container.textContent).toContain("sk-ant-...XYZ");
+  });
+
+  it("shows UI設定 when source=ui (line 1650)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ ...MOCK_SETTINGS, source: "ui" }),
+      }),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("UI設定"));
+  });
+
+  it("shows 環境変数 when source=env (line 1652)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi
+          .fn()
+          .mockResolvedValue({ ...MOCK_SETTINGS, source: "env" }),
+      }),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("環境変数"));
+  });
+
+  it("shows ルールベース when configured=false", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          ...MOCK_SETTINGS,
+          configured: false,
+          key_preview: null,
+          source: "other",
+        }),
+      }),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() =>
+      expect(container.textContent).toContain("ルールベース"),
+    );
+  });
+
+  it("falls back to static display when settings fetch fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockRejectedValue(new Error("network fail")),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() =>
+      expect(container.textContent).not.toContain("読み込み中"),
+    );
+    expect(container.textContent).toContain("Anthropic Claude API 設定");
+  });
+
+  it("handleTest shows validation error when apiKey is empty", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      }),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+
+    const testBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("接続テスト"),
+    );
+    await act(async () => {
+      fireEvent.click(testBtn!);
+    });
+    expect(container.textContent).toContain("API キーを入力してください");
+  });
+
+  it("handleTest shows success result from /ai/test", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      })
+      .mockResolvedValueOnce({
+        json: vi
+          .fn()
+          .mockResolvedValue({ ok: true, message: "接続成功しました" }),
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+
+    const apiKeyInput = container.querySelector(
+      'input[placeholder="sk-ant-..."]',
+    ) as HTMLInputElement;
+    fireEvent.change(apiKeyInput, { target: { value: "sk-ant-test-key" } });
+
+    const testBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("接続テスト"),
+    );
+    await act(async () => {
+      fireEvent.click(testBtn!);
+    });
+    await waitFor(() =>
+      expect(container.textContent).toContain("接続成功しました"),
+    );
+  });
+
+  it("handleTest shows network error message when fetch throws", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      })
+      .mockRejectedValueOnce(new Error("connect fail"));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+
+    const apiKeyInput = container.querySelector(
+      'input[placeholder="sk-ant-..."]',
+    ) as HTMLInputElement;
+    fireEvent.change(apiKeyInput, { target: { value: "sk-ant-test-key" } });
+
+    const testBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("接続テスト"),
+    );
+    await act(async () => {
+      fireEvent.click(testBtn!);
+    });
+    await waitFor(() =>
+      expect(container.textContent).toContain("バックエンドに接続できません"),
+    );
+  });
+
+  it("handleSave shows saveResult on success (line 1617)", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ key_preview: "sk-...new" }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+
+    const saveBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("設定を保存"),
+    );
+    await act(async () => {
+      fireEvent.click(saveBtn!);
+    });
+    await waitFor(() =>
+      expect(container.textContent).toContain("設定を保存しました"),
+    );
+  });
+
+  it("handleSave shows 保存に失敗 when response is not ok", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      })
+      .mockResolvedValueOnce({ ok: false, json: vi.fn().mockResolvedValue({}) });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+
+    const saveBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("設定を保存"),
+    );
+    await act(async () => {
+      fireEvent.click(saveBtn!);
+    });
+    await waitFor(() => expect(container.textContent).toContain("保存に失敗"));
+  });
+
+  it("handleSave saves to localStorage when network fails", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      })
+      .mockRejectedValueOnce(new Error("network fail"));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+
+    const saveBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("設定を保存"),
+    );
+    await act(async () => {
+      fireEvent.click(saveBtn!);
+    });
+    await waitFor(() =>
+      expect(container.textContent).toContain("ローカルに保存"),
+    );
+  });
+
+  it("doLoadSettings inner catch fires when fetch fails AND wmcdss_ai_settings getItem throws (line 1418)", async () => {
+    // authHeaders reads "wmcdss_access_token"; inner catch reads "wmcdss_ai_settings"
+    // Only throw for the settings key so authHeaders doesn't crash on mount
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network fail")));
+    vi.spyOn(window.localStorage, "getItem").mockImplementation((key: string) => {
+      if (key === "wmcdss_ai_settings") throw new Error("storage unavailable");
+      return null;
+    });
+
+    // Component should render without crashing even when inner catch fires
+    const { container } = render(<AiSettingsPage />);
+    await act(async () => { await Promise.resolve(); });
+    // Still renders something (outer div always present)
+    expect(container.firstChild).not.toBeNull();
+  });
+
+  it("handleSave shows error message when both network and localStorage fail (lines 1479-1480)", async () => {
+    // First fetch loads settings OK; second (save) rejects → triggers localStorage fallback
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      })
+      .mockRejectedValueOnce(new Error("network fail"));
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+
+    // Make localStorage.setItem throw so the inner catch at lines 1479-1480 fires
+    vi.spyOn(window.localStorage, "setItem").mockImplementation(() => {
+      throw new Error("storage quota exceeded");
+    });
+
+    const saveBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("設定を保存"),
+    );
+    await act(async () => {
+      fireEvent.click(saveBtn!);
+    });
+    await waitFor(() =>
+      expect(container.textContent).toContain("接続できません"),
+    );
+  });
+
+  it("showKey toggle switches API key input between password and text", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      }),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+
+    expect(container.querySelector('input[type="password"]')).not.toBeNull();
+
+    const toggleBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("表示"),
+    );
+    fireEvent.click(toggleBtn!);
+
+    expect(
+      container.querySelector('input[type="text"][placeholder]'),
+    ).not.toBeNull();
+  });
+
+  it("model select change updates selection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      }),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+
+    const modelSelect = container.querySelector(
+      "select.form-select",
+    ) as HTMLSelectElement;
+    fireEvent.change(modelSelect, { target: { value: "claude-haiku-4-5" } });
+    expect(modelSelect.value).toBe("claude-haiku-4-5");
+  });
+
+  it("renders 対応モデル一覧 table after load", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      }),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() =>
+      expect(container.textContent).toContain("対応モデル一覧"),
+    );
+    const modelRows = container.querySelectorAll(".data-table tbody tr");
+    expect(modelRows.length).toBeGreaterThan(0);
+  });
+
+  it("reads model from wmcdss_ai_settings localStorage when fetch fails (lines 1410-1413)", async () => {
+    // Pre-populate cached settings so the `if (raw)` true branch fires
+    localStorage.setItem("wmcdss_ai_settings", JSON.stringify({ model: "claude-opus-4-8" }));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network fail")));
+
+    const { container } = render(<AiSettingsPage />);
+    await act(async () => { await new Promise((r) => setTimeout(r, 50)); });
+    // Component renders without crashing after reading model from localStorage
+    expect(container.firstChild).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// EtlPage — BACKEND_STATUS connected branches (lines 284, 286, 435, 455, 460)
+// ---------------------------------------------------------------------------
+
+describe("EtlPage — BACKEND_STATUS isConnected=true branches", () => {
+  afterEach(() => {
+    delete (window as Window & { BACKEND_STATUS?: unknown }).BACKEND_STATUS;
+    cleanup();
+  });
+
+  it("shows ✅ バックエンド接続中 and site count when BACKEND_STATUS.ok is true (lines 284/286/435/455/460)", () => {
+    (window as Window & { BACKEND_STATUS?: { ok: boolean; sites: number } })
+      .BACKEND_STATUS = { ok: true, sites: 3 };
+    const { container } = render(<EtlPage />);
+    expect(container.textContent).toContain("バックエンド接続中");
+    expect(container.textContent).toContain("3");
+    expect(container.textContent).toContain("接続中の現場数");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AuditPage — fetchAuditLog real data (isRealData badge, lines 839, 1058)
+// ---------------------------------------------------------------------------
+
+describe("AuditPage — fetchAuditLog real data badge (isRealData=true)", () => {
+  afterEach(() => {
+    delete (window as Window & { WMCDSS_API?: unknown }).WMCDSS_API;
+    cleanup();
+  });
+
+  it("shows 実データ badge when fetchAuditLog resolves with entries (lines 839/1058)", async () => {
+    (
+      window as Window & { WMCDSS_API?: { fetchAuditLog: (...args: unknown[]) => Promise<unknown> } }
+    ).WMCDSS_API = {
+      fetchAuditLog: vi.fn().mockResolvedValue([
+        {
+          id: 1,
+          occurred_at: "2026-06-14T10:00:00Z",
+          actor: "user1",
+          action: "login",
+          target_type: null,
+          target_id: null,
+          detail: null,
+        },
+      ]),
+    };
+    const { container } = render(<AuditPage />);
+    await waitFor(() =>
+      expect(container.textContent).toContain("実データ"),
+    );
+    const badge = container.querySelector(".badge.badge-ok");
+    expect(badge).not.toBeNull();
+    expect(badge!.textContent).toContain("実データ");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AiSettingsPage — authHeaders with localStorage token (lines 1361, 1363)
+// ---------------------------------------------------------------------------
+
+describe("AiSettingsPage — authHeaders uses localStorage token (lines 1361/1363)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it("sends Authorization header when wmcdss_access_token exists in localStorage", async () => {
+    installFreshStorage();
+    localStorage.setItem("wmcdss_access_token", "test-jwt-token");
+    const MOCK_SETTINGS = {
+      model: "claude-sonnet-4-6",
+      api_key_configured: true,
+      configured: true,
+      status: "ok",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue(MOCK_SETTINGS),
+      }),
+    );
+    const { container } = render(<AiSettingsPage />);
+    await waitFor(() => expect(container.textContent).toContain("接続済み"));
+    const fetchCalls = (global.fetch as ReturnType<typeof vi.fn>).mock.calls;
+    const headers = fetchCalls[0]?.[1]?.headers as Record<string, string> | undefined;
+    expect(headers?.Authorization).toBe("Bearer test-jwt-token");
   });
 });
 

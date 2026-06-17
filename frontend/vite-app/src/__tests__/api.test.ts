@@ -497,4 +497,21 @@ describe('initFromBackend', () => {
     expect(Array.isArray(fakeWindow.MOCK_SITES)).toBe(true);
     expect((fakeWindow.MOCK_SITES as unknown[])[0]).toEqual({ id: 'mock-01' });
   });
+
+  it('treats non-array SITES as empty (line 198 false branch)', async () => {
+    // window.SITES is not an array → Array.isArray returns false → mockSites = []
+    (fakeWindow as unknown as Record<string, unknown>).SITES = 'not-an-array';
+    mockFetch.mockResolvedValue(okResponse([]));
+    await initFromBackend();
+    expect(Array.isArray(fakeWindow.MOCK_SITES)).toBe(true);
+    expect((fakeWindow.MOCK_SITES as unknown[]).length).toBe(0);
+  });
+
+  it('handles non-Error thrown values in catch block (line 216 String(err) branch)', async () => {
+    // Throwing a plain string triggers the String(err) branch, not err.message
+    mockFetch.mockRejectedValue('plain string error');
+    const result = await initFromBackend();
+    expect(result).toBe(false);
+    expect((fakeWindow.BACKEND_STATUS as { reason: string }).reason).toBe('unreachable');
+  });
 });

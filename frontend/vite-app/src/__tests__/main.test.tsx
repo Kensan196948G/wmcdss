@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { waitFor } from "@testing-library/react";
 
 // Dynamic imports under --coverage (V8 instrumentation) are significantly
 // slower than normal runs. 30s timeout prevents false positives locally.
@@ -96,7 +97,9 @@ describe("main.tsx — bootstrap", () => {
     async () => {
       await importMainAndFlush();
       const root = document.getElementById("root");
-      expect(root?.innerHTML).toContain("app-shell-stub");
+      await waitFor(() => expect(root?.innerHTML).toContain("app-shell-stub"), {
+        timeout: DYNAMIC_IMPORT_TIMEOUT,
+      });
     },
     DYNAMIC_IMPORT_TIMEOUT,
   );
@@ -117,9 +120,53 @@ describe("main.tsx — bootstrap", () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       await importMainAndFlush();
       const root = document.getElementById("root");
-      expect(root?.innerHTML).toContain("app-shell-stub");
+      await waitFor(() => expect(root?.innerHTML).toContain("app-shell-stub"), {
+        timeout: DYNAMIC_IMPORT_TIMEOUT,
+      });
       expect(warn).toHaveBeenCalled();
       warn.mockRestore();
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// main.tsx — Auth gate: LoginPage rendered when user is not authenticated
+// Lines 77 (return null), 80-88 (LoginPage block) in main.tsx
+// ---------------------------------------------------------------------------
+
+describe("main.tsx — Auth gate (unauthenticated path)", () => {
+  it(
+    "renders LoginPage when AuthStore.isAuthenticated returns false",
+    async () => {
+      // Override the beforeEach mock to return false for this test only
+      vi.resetModules();
+      vi.doMock("../api", () => ({
+        WMCDSS_API: {
+          initFromBackend: vi.fn().mockResolvedValue(true),
+        },
+      }));
+      vi.doMock("../app-shell", () => ({
+        AppShell: () => <div data-testid="appshell">app-shell-stub</div>,
+      }));
+      vi.doMock("../tweaks-panel", () => ({}));
+      vi.doMock("../auth", () => ({
+        AuthStore: {
+          isAuthenticated: vi.fn().mockReturnValue(false),
+          getUser: vi.fn().mockReturnValue(null),
+          clear: vi.fn(),
+          save: vi.fn(),
+          getToken: vi.fn().mockReturnValue(null),
+        },
+        LoginPage: () => <div data-testid="login-page">login-page-stub</div>,
+      }));
+
+      await importMainAndFlush();
+      await waitFor(
+        () => expect(document.body.textContent).toContain("login-page-stub"),
+        { timeout: DYNAMIC_IMPORT_TIMEOUT },
+      );
+      expect(document.body.textContent).not.toContain("app-shell-stub");
     },
     DYNAMIC_IMPORT_TIMEOUT,
   );

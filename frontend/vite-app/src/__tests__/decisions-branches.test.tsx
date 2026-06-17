@@ -17,7 +17,7 @@
 // 21 baseline decisions.test.tsx assertions.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render } from "@testing-library/react";
+import { render, fireEvent, waitFor, act } from "@testing-library/react";
 
 // Marine sites with controlled thresholds. The marine_danger site has a very
 // strict threshold so any non-zero wave/wind triggers danger; marine_warn sits
@@ -267,6 +267,117 @@ describe("MarineWorkPage — waveLimit null fallback", () => {
         "この現場には波高基準が設定されていません",
       );
       vi.doUnmock("../data");
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AI分析 button — aiResult panel branches (lines 600, 641-645)
+//
+// handleAiAnalyze calls fetch → setAiResult. The JSX then shows:
+//   line 600: aiLoading ? '🤖 分析中...' : '🤖 AI分析'
+//   line 641: background = status==='go' ? ok-bg : status==='caution' ? warn-bg : danger-bg
+//   line 643: color     = status==='go' ? ok   : status==='caution' ? warn   : danger
+//   line 645: icon+text = status==='go' ? '✅' : status==='caution' ? '⚡'   : '⛔'
+//
+// We stub window.fetch so resp.ok=true + resp.json() returns our scripted aiResult.
+// ---------------------------------------------------------------------------
+
+describe('MarineWorkPage — AI result panel caution branch (lines 641-645)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('shows ⚡ caution summary after fetch returns status=caution', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: 'caution',
+        summary: '注意が必要な状況',
+        issues: [],
+        warnings: ['波高が閾値に近い'],
+        recommendations: ['作業速度を落としてください'],
+        confidence: '高',
+        disclaimer: 'AI判定は参考情報です',
+        analysis_type: 'rule_based',
+      }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { container } = render(<MarineWorkPage selectedSite="marine_safe" />);
+    const aiButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('AI分析'),
+    );
+    expect(aiButton).toBeDefined();
+
+    await act(async () => {
+      fireEvent.click(aiButton!);
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('注意が必要な状況');
+    });
+
+    // ⚡ caution icon should appear in the result panel
+    expect(container.textContent).toContain('⚡');
+  });
+
+  it('shows ⛔ danger summary after fetch returns status=stop', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        status: 'stop',
+        summary: '作業中止を推奨',
+        issues: ['波高超過'],
+        warnings: [],
+        recommendations: ['直ちに作業を停止してください'],
+        confidence: '高',
+        disclaimer: 'AI判定は参考情報です',
+        analysis_type: 'rule_based',
+      }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { container } = render(<MarineWorkPage selectedSite="marine_safe" />);
+    const aiButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('AI分析'),
+    );
+    expect(aiButton).toBeDefined();
+
+    await act(async () => {
+      fireEvent.click(aiButton!);
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).toContain('作業中止を推奨');
+    });
+
+    // ⛔ stop icon should appear
+    expect(container.textContent).toContain('⛔');
+  });
+
+  it('shows 分析中 while fetch is pending (line 600 true branch)', async () => {
+    let resolveFetch!: (value: unknown) => void;
+    const pendingFetch = new Promise((resolve) => { resolveFetch = resolve; });
+    const mockFetch = vi.fn().mockReturnValue(pendingFetch);
+    vi.stubGlobal('fetch', mockFetch);
+
+    const { container } = render(<MarineWorkPage selectedSite="marine_safe" />);
+    const aiButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent?.includes('AI分析'),
+    );
+    expect(aiButton).toBeDefined();
+
+    // Click — fetch hangs, so aiLoading=true immediately
+    fireEvent.click(aiButton!);
+    await waitFor(() => {
+      expect(container.textContent).toContain('分析中');
+    });
+
+    // Resolve the fetch to clean up
+    await act(async () => {
+      resolveFetch({ ok: false });
     });
   });
 });

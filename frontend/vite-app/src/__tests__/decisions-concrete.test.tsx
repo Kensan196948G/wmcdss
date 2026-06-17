@@ -12,7 +12,7 @@
 // Isolated vi.mock avoids leaking into decisions.test.tsx / decisions-branches.test.tsx.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, fireEvent } from '@testing-library/react';
+import { render, fireEvent, act, waitFor, cleanup } from '@testing-library/react';
 
 // --------------------------------------------------------------------------
 // Fixture sites
@@ -294,5 +294,92 @@ describe('MarineWorkPage — no-marine-sites fallback (lines 352-357)', () => {
       expect(container.textContent).toContain('海上工事現場がありません');
       vi.doUnmock('../data');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ConcretePage — AI分析ボタン (lines 152-177, 299-357)
+// ---------------------------------------------------------------------------
+
+describe('ConcretePage — AI分析ボタン', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it('shows AI analysis result on success', async () => {
+    const mockResult = {
+      status: 'go',
+      summary: 'コンクリート打設条件は適正です',
+      issues: [],
+      warnings: ['降雨予報あり'],
+      recommendations: ['打設前に最終確認'],
+      confidence: '中',
+      disclaimer: '参考情報',
+      analysis_type: 'claude_ai',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue(mockResult),
+    }));
+
+    const { container } = render(<ConcretePage selectedSite="land_danger" />);
+    const aiBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('AI分析'),
+    );
+    expect(aiBtn).toBeTruthy();
+
+    await act(async () => { fireEvent.click(aiBtn!); });
+    await waitFor(() => expect(container.textContent).toContain('AI分析結果'));
+    expect(container.textContent).toContain('コンクリート打設条件は適正です');
+    expect(container.textContent).toContain('降雨予報あり');
+    expect(container.textContent).toContain('打設前に最終確認');
+    expect(container.textContent).toContain('Claude AI');
+  });
+
+  it('shows caution AI result with issues', async () => {
+    const mockResult = {
+      status: 'caution',
+      summary: '一部条件に注意が必要',
+      issues: ['風速接近'],
+      warnings: [],
+      recommendations: [],
+      confidence: '低',
+      disclaimer: '参考情報',
+      analysis_type: 'rule_based',
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue(mockResult),
+    }));
+
+    const { container } = render(<ConcretePage selectedSite="land_danger" />);
+    const aiBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('AI分析'),
+    );
+
+    await act(async () => { fireEvent.click(aiBtn!); });
+    await waitFor(() => expect(container.textContent).toContain('AI分析結果'));
+    expect(container.textContent).toContain('風速接近');
+  });
+
+  it('silently ignores network error', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('network')));
+
+    const { container } = render(<ConcretePage selectedSite="land_danger" />);
+    const aiBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('AI分析'),
+    );
+
+    await act(async () => { fireEvent.click(aiBtn!); });
+    await waitFor(() =>
+      expect(
+        Array.from(container.querySelectorAll('button')).find((b) =>
+          b.textContent?.includes('AI分析'),
+        ),
+      ).toBeTruthy(),
+    );
+    expect(container.textContent).not.toContain('AI分析結果');
   });
 });

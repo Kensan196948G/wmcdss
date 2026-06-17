@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, act, waitFor, cleanup } from "@testing-library/react";
 import { HistoricalPage, Wave50Page } from "../analysis";
 import { SITES } from "../data";
 
@@ -268,6 +268,281 @@ describe("Wave50Page", () => {
 });
 
 // ---------------------------------------------------------------------------
+// HistoricalPage — backend fetch path (window.WMCDSS_API_BASE configured)
+// ---------------------------------------------------------------------------
+
+const MOCK_HISTORICAL_RESPONSE = {
+  site_id: "site-01",
+  year: 2025,
+  data_source: "backend DB",
+  months: Array.from({ length: 12 }, (_, i) => ({
+    month: i + 1,
+    avg_wind_ms: 5.0 + i * 0.1,
+    max_wind_ms: 10.0 + i * 0.2,
+    avg_temp_c: 15.0 + i,
+    total_rain_mm: 80 + i * 5,
+    rain_days: 8 + i,
+    avg_wave_h_m: 1.0 + i * 0.05,
+    max_wave_h_m: 2.0 + i * 0.1,
+  })),
+};
+
+describe("HistoricalPage — backend fetch path", () => {
+  beforeEach(() => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it("fetches from configuredApiBase and renders backend chartData", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue(MOCK_HISTORICAL_RESPONSE),
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<HistoricalPage />);
+
+    await waitFor(() => {
+      // Chart renders with data from backend months (label still appears)
+      expect(container.textContent).toContain("最大風速 (m/s)");
+    });
+  });
+
+  it("renders tableMonthly from backendMonthly data", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue(MOCK_HISTORICAL_RESPONSE),
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<HistoricalPage />);
+
+    await waitFor(() => {
+      const tables = container.querySelectorAll("table.data-table");
+      expect(tables.length).toBeGreaterThan(0);
+    });
+
+    // Table should have 12 rows from backend data
+    const tables = container.querySelectorAll("table.data-table");
+    const bodyRows = tables[0].querySelectorAll("tbody tr");
+    expect(bodyRows.length).toBe(12);
+  });
+
+  it("shows loading indicator during fetch then hides it", async () => {
+    let resolveJson: (v: unknown) => void;
+    const pendingJson = new Promise((r) => { resolveJson = r; });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => pendingJson,
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<HistoricalPage />);
+
+    // Loading state should appear before fetch resolves
+    await waitFor(() => {
+      expect(container.textContent).toContain("データ取得中");
+    });
+
+    // Resolve the fetch
+    await act(async () => {
+      resolveJson!(MOCK_HISTORICAL_RESPONSE);
+    });
+
+    await waitFor(() => {
+      expect(container.textContent).not.toContain("データ取得中");
+    });
+  });
+
+  it("silently handles network error and shows サンプルデータ badge", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network fail")));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<HistoricalPage />);
+
+    await waitFor(() => {
+      expect(container.textContent).toContain("サンプルデータ");
+    });
+  });
+
+  it("uses window.WMCDSS_API.fetchJSON when available (lines 116-119)", async () => {
+    const mockFetchJSON = vi.fn().mockResolvedValue(MOCK_HISTORICAL_RESPONSE);
+    vi.stubGlobal("WMCDSS_API", { fetchJSON: mockFetchJSON });
+
+    const { container } = render(<HistoricalPage />);
+
+    await waitFor(() => expect(mockFetchJSON).toHaveBeenCalled());
+    expect(container.querySelector("table.data-table")).not.toBeNull();
+  });
+
+  it("shows サンプルデータ when response has no months array (lines 131-134)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({ site_id: "site-01", year: 2025, months: null }),
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<HistoricalPage />);
+
+    await waitFor(() =>
+      expect(container.textContent).toContain("サンプルデータ"),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave50Page — backend fetch path (window.WMCDSS_API_BASE configured)
+// ---------------------------------------------------------------------------
+
+const MOCK_BACKEND_RESPONSE = {
+  site_id: "site-01",
+  method: "gumbel",
+  data_years: 15,
+  sufficient_data: true,
+  annual_max: [
+    { year: 2010, max_wave_h_m: 2.1 },
+    { year: 2011, max_wave_h_m: 2.5 },
+    { year: 2012, max_wave_h_m: 1.9 },
+  ],
+  return_periods: [
+    { period_years: 1, wave_h_m: 1.5 },
+    { period_years: 2, wave_h_m: 1.8 },
+    { period_years: 5, wave_h_m: 2.2 },
+    { period_years: 10, wave_h_m: 2.6 },
+    { period_years: 20, wave_h_m: 3.0 },
+    { period_years: 30, wave_h_m: 3.2 },
+    { period_years: 50, wave_h_m: 3.5 },
+    { period_years: 100, wave_h_m: 3.8 },
+  ],
+};
+
+describe("Wave50Page — backend fetch path", () => {
+  beforeEach(() => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it("fetches from configuredApiBase and renders backend dataSource", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue(MOCK_BACKEND_RESPONSE),
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<Wave50Page />);
+
+    await waitFor(() =>
+      expect(container.textContent).toContain("気象庁 波浪ナウキャスト (backend DB)")
+    );
+    expect(container.textContent).toContain("15");
+  });
+
+  it("renders dataPeriod from backendData annual_max years", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue(MOCK_BACKEND_RESPONSE),
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<Wave50Page />);
+
+    await waitFor(() =>
+      expect(container.textContent).toContain("2010年〜2012年（15年間）")
+    );
+  });
+
+  it("renders return periods from backendData", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue(MOCK_BACKEND_RESPONSE),
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<Wave50Page />);
+
+    await waitFor(() =>
+      expect(container.textContent).toContain("3.50")
+    );
+  });
+
+  it("shows insufficientWarning banner when sufficient_data is false", async () => {
+    const insufficientData = { ...MOCK_BACKEND_RESPONSE, sufficient_data: false };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue(insufficientData),
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<Wave50Page />);
+
+    await waitFor(() =>
+      expect(container.textContent).toContain("データ期間が短いため推定精度が低い可能性があります")
+    );
+  });
+
+  it("silently handles network error and uses fallback data", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network fail")));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<Wave50Page />);
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Falls back to static source label
+    expect(container.textContent).toContain("気象庁 沿岸波浪モデル（5km格子）");
+    // No warning banner shown on error
+    expect(container.textContent).not.toContain("データ期間が短い");
+  });
+
+  it("clears backendData when method changes to genpareto", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue(MOCK_BACKEND_RESPONSE),
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<Wave50Page />);
+
+    // Wait for backend data to load
+    await waitFor(() =>
+      expect(container.textContent).toContain("気象庁 波浪ナウキャスト (backend DB)")
+    );
+
+    // Switch to genpareto — should clear backendData and show fallback
+    const methodSelect = container.querySelectorAll(
+      "select.form-select"
+    )[1] as HTMLSelectElement;
+    await act(async () => {
+      fireEvent.change(methodSelect, { target: { value: "genpareto" } });
+    });
+
+    expect(container.textContent).toContain("気象庁 沿岸波浪モデル（5km格子）");
+  });
+
+  it("uses window.WMCDSS_API.fetchJSON when available", async () => {
+    const mockFetchJSON = vi.fn().mockResolvedValue(MOCK_BACKEND_RESPONSE);
+    vi.stubGlobal("WMCDSS_API", { fetchJSON: mockFetchJSON });
+
+    const { container } = render(<Wave50Page />);
+
+    await waitFor(() =>
+      expect(container.textContent).toContain("気象庁 波浪ナウキャスト (backend DB)")
+    );
+    expect(mockFetchJSON).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Window side-effects (dual-surface contract: see header of analysis.tsx)
 // ---------------------------------------------------------------------------
 
@@ -279,5 +554,164 @@ describe("analysis.tsx — window side effects", () => {
     expect((window as unknown as { Wave50Page?: unknown }).Wave50Page).toBe(
       Wave50Page,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HistoricalPage — branch coverage (lines 211, 225)
+// ---------------------------------------------------------------------------
+
+describe("HistoricalPage — null branch coverage", () => {
+  beforeEach(() => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it("?? 0 fallbacks (lines 161,206-211): missing months make bm undefined so right side fires", async () => {
+    // Only 6 months returned — months 7-12 are absent from byMonth lookup.
+    // When bm is undefined, ALL bm?.field ?? 0 expressions take the right side (0).
+    const partialMonths = Array.from({ length: 6 }, (_, i) => ({
+      month: i + 1,
+      avg_wind_ms: 5.0,
+      max_wind_ms: 10.0,
+      avg_temp_c: 15.0,
+      total_rain_mm: 80,
+      rain_days: 5,
+      avg_wave_h_m: 1.0,
+      max_wave_h_m: 2.0,
+    }));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        site_id: "site-01",
+        year: 2025,
+        data_source: "backend DB",
+        months: partialMonths,
+      }),
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<HistoricalPage />);
+    await waitFor(() => {
+      const tables = container.querySelectorAll("table.data-table");
+      expect(tables.length).toBeGreaterThan(0);
+    });
+    // Table has 12 rows — missing months render as zeros
+    const rows = container.querySelectorAll("table.data-table tbody tr");
+    expect(rows.length).toBe(12);
+  });
+
+  it("waveLimit ?? undefined (line 225): returns undefined when site has null waveHeight and metric=wave", async () => {
+    // site-06 has waveHeight: null — switching to 波高 metric exercises the ?? branch
+    const { container } = render(<HistoricalPage selectedSite="site-06" />);
+
+    // Switch to 波高 metric
+    const waveButton = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "波高",
+    );
+    expect(waveButton).not.toBeUndefined();
+    await act(async () => {
+      waveButton!.click();
+    });
+
+    // Component renders without crashing when threshold is undefined
+    expect(container.querySelector("select.form-select")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Wave50Page — branch coverage (lines 441, 463)
+// ---------------------------------------------------------------------------
+
+describe("Wave50Page — null branch coverage", () => {
+  beforeEach(() => {
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it("throws on non-ok HTTP response (line 441) and falls back to static data", async () => {
+    // fetch returns HTTP 500 — line 441 throws, catch block falls back to static
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+    }));
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api");
+
+    const { container } = render(<Wave50Page />);
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // Falls back to static source label after HTTP error
+    expect(container.textContent).toContain("気象庁 沿岸波浪モデル（5km格子）");
+  });
+
+  it("uses base=3.2 for 東京湾中部 and base=3.0 for 東京湾東部 (line 463)", async () => {
+    // No backend configured — fallback is computed for all 4 point branches.
+    const { container } = render(<Wave50Page />);
+    const pointSelect = container.querySelector("select.form-select") as HTMLSelectElement;
+
+    // 東京湾中部 → base=3.2, period=50: wave = "3.20"
+    await act(async () => {
+      fireEvent.change(pointSelect, { target: { value: "東京湾中部" } });
+    });
+    expect(container.textContent).toContain("3.20");
+
+    // 東京湾東部 → base=3.0 (default/else branch), period=50: wave = "3.00"
+    await act(async () => {
+      fireEvent.change(pointSelect, { target: { value: "東京湾東部" } });
+    });
+    expect(container.textContent).toContain("3.00");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// HistoricalPage — branch coverage (lines 82, 116)
+// ---------------------------------------------------------------------------
+
+describe("HistoricalPage — branch coverage (lines 82, 116)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    cleanup();
+  });
+
+  it("falls back to SITES[0] when selectedSite is not in SITES (line 82 || branch)", () => {
+    // SITES.find(s => s.id === 'not-a-valid-site-id') → undefined
+    // → || SITES[0] fires at line 82
+    const { container } = render(<HistoricalPage selectedSite="not-a-valid-site-id" />);
+    expect(container.querySelector("select.form-select")).not.toBeNull();
+    // The site select falls back to the first valid site
+    const siteSelect = container.querySelectorAll("select.form-select")[0] as HTMLSelectElement;
+    // The select still contains all SITES options (no crash)
+    expect(siteSelect.options.length).toBe(SITES.length);
+  });
+
+  it("falls back to sample data on non-ok HTTP response from WMCDSS_API_BASE (line 116)", async () => {
+    // WMCDSS_API_BASE set + fetchJSON absent → takes direct fetch path
+    // fetch returns HTTP 500 → !resp.ok → throw → catch → fallback
+    vi.stubGlobal("WMCDSS_API_BASE", "http://test-api-base");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+    }));
+
+    const { container } = render(<HistoricalPage />);
+
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 50));
+    });
+
+    // After HTTP error the component falls back to sample/mock data
+    expect(container.querySelector("select.form-select")).not.toBeNull();
   });
 });

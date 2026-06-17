@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { render, fireEvent } from "@testing-library/react";
+import { render, fireEvent, act } from "@testing-library/react";
 import { SiteListPage, SiteRegisterPage, SiteDetailPage } from "../site-pages";
 import { SITES } from "../data";
 
@@ -337,5 +337,48 @@ describe("site-pages.tsx — window side effects", () => {
     expect(w.SiteListPage).toBe(SiteListPage);
     expect(w.SiteRegisterPage).toBe(SiteRegisterPage);
     expect(w.SiteDetailPage).toBe(SiteDetailPage);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SiteRegisterPage — WMCDSS_API.fetchJSON integration (lines 249-262, 265)
+//
+// handleSave checks `window.WMCDSS_API?.fetchJSON` and calls it when available.
+// Two branches:
+//   lines 249-262: fetchJSON resolves successfully (happy path)
+//   line 265:      fetchJSON rejects → catch swallows the error, setSaved(true) still fires
+// ---------------------------------------------------------------------------
+
+describe("SiteRegisterPage — WMCDSS_API.fetchJSON integration (lines 249-262, 265)", () => {
+  afterEach(() => {
+    delete (window as unknown as Record<string, unknown>).WMCDSS_API;
+  });
+
+  it("calls WMCDSS_API.fetchJSON when available (lines 249-262 true branch)", async () => {
+    const fetchJSON = vi.fn().mockResolvedValue({ ok: true });
+    (window as unknown as Record<string, unknown>).WMCDSS_API = { fetchJSON };
+    const navigate = vi.fn();
+    const { container } = render(<SiteRegisterPage navigate={navigate} />);
+    const saveBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "登録する",
+    );
+    await act(async () => {
+      fireEvent.click(saveBtn!);
+    });
+    expect(fetchJSON).toHaveBeenCalledWith("/sites", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("catches fetchJSON rejection and still shows confirmation (line 265 catch branch)", async () => {
+    const fetchJSON = vi.fn().mockRejectedValue(new Error("backend unavailable"));
+    (window as unknown as Record<string, unknown>).WMCDSS_API = { fetchJSON };
+    const navigate = vi.fn();
+    const { container } = render(<SiteRegisterPage navigate={navigate} />);
+    const saveBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent === "登録する",
+    );
+    await act(async () => {
+      fireEvent.click(saveBtn!);
+    });
+    expect(container.textContent).toContain("現場を登録しました");
   });
 });

@@ -201,3 +201,87 @@ describe('DashboardPage — navigate callbacks', () => {
     expect(navigate).toHaveBeenCalledWith('site-detail', expect.any(String));
   });
 });
+
+// ---------------------------------------------------------------------------
+// DashboardPage — selectedArea true branches (lines 263, 340)
+//
+// Clicking a non-'全国' area button sets selectedArea to that area name.
+// This triggers:
+//   line 263: visibleSites = SITES.filter(s => s.area === selectedArea)  ← true branch
+//   line 340: `/ ${selectedArea}` in the heading label                   ← true branch
+// ---------------------------------------------------------------------------
+
+describe('DashboardPage — selectedArea area filter (lines 263, 340)', () => {
+  it('clicking a non-全国 area button filters visibleSites and shows area in heading', () => {
+    const { container } = render(<DashboardPage navigate={vi.fn()} />);
+
+    // All area filter buttons: find one that is not '全国'
+    const areaButtons = Array.from(container.querySelectorAll('button')).filter(
+      (b) => b.textContent !== '全国',
+    );
+    expect(areaButtons.length).toBeGreaterThan(0);
+
+    // Click the first non-全国 area button (e.g. '北海道')
+    const targetButton = areaButtons[0];
+    const areaName = targetButton.textContent ?? '';
+    fireEvent.click(targetButton);
+
+    // Line 340: the status count label contains `/ ${areaName}`
+    expect(container.textContent).toContain(`/ ${areaName}`);
+  });
+
+  it('clicking the same area button twice toggles selectedArea back to null', () => {
+    const { container } = render(<DashboardPage navigate={vi.fn()} />);
+
+    const areaButtons = Array.from(container.querySelectorAll('button')).filter(
+      (b) => b.textContent !== '全国',
+    );
+    const targetButton = areaButtons[0];
+    const areaName = targetButton.textContent ?? '';
+
+    // First click: set selectedArea
+    fireEvent.click(targetButton);
+    expect(container.textContent).toContain(`/ ${areaName}`);
+
+    // Second click: toggle back to null — selectedArea becomes null
+    // The status label goes from "N件 / エリア名" back to "N件"
+    fireEvent.click(targetButton);
+    expect(container.textContent).not.toContain(`件 / ${areaName}`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// DashboardPage — '全国' button click (line 311 true branch)
+//
+// The area button handler:
+//   onClick={() => setSelectedArea(area === '全国' ? null : area === selectedArea ? null : area)}
+//
+// When area === '全国': the first ternary fires (true branch) → null
+// This branch is never tested in the tests above (only non-全国 buttons are clicked).
+// To exercise it: first set a non-全国 area, then click '全国' to reset.
+// ---------------------------------------------------------------------------
+
+describe('DashboardPage — 全国 button resets selectedArea (line 311 area===全国 true branch)', () => {
+  it('clicking 全国 button clears selectedArea and removes area name from heading', () => {
+    const { container } = render(<DashboardPage navigate={vi.fn()} />);
+
+    // Find a non-全国 area button and click it to set selectedArea
+    const nonZenkokuButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent !== '全国',
+    ) as HTMLElement | undefined;
+    expect(nonZenkokuButton).toBeDefined();
+    const areaName = nonZenkokuButton!.textContent ?? '';
+    fireEvent.click(nonZenkokuButton!);
+    expect(container.textContent).toContain(`/ ${areaName}`);
+
+    // Now click the '全国' button — area==='全国' → true branch → setSelectedArea(null)
+    const zenkokuButton = Array.from(container.querySelectorAll('button')).find(
+      (b) => b.textContent === '全国',
+    ) as HTMLElement | undefined;
+    expect(zenkokuButton).toBeDefined();
+    fireEvent.click(zenkokuButton!);
+
+    // selectedArea is now null → heading no longer contains "/ エリア名"
+    expect(container.textContent).not.toContain(`/ ${areaName}`);
+  });
+});

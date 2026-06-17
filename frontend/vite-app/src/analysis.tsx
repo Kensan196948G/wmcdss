@@ -11,15 +11,6 @@ import { useEffect, useMemo, useState, type FC } from 'react';
 import { BarChart, ChartColors, LineChart } from './charts';
 import { SITES, generateHistoricalMonthly } from './data';
 
-// Backend API base URL — injected at runtime via window.WMCDSS_API_BASE or
-// falls back to same-origin so the dev proxy can handle /api/v1 routes.
-function getApiBase(): string {
-  return (
-    (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE ??
-    '/api/v1'
-  );
-}
-
 // Month index 0–11 → Japanese label
 const MONTH_LABELS = [
   '1月', '2月', '3月', '4月', '5月', '6月',

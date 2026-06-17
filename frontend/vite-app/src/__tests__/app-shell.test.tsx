@@ -460,6 +460,26 @@ describe("AppShell — role/theme persistence (localStorage)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// AppShell — openTweaks button (lines 210-212 in app-shell.tsx)
+// Clicking the ⚙ button dispatches window.postMessage({type:'__activate_edit_mode'})
+// ---------------------------------------------------------------------------
+
+describe("AppShell — openTweaks button dispatches postMessage", () => {
+  it("clicking .header-tweaks-btn calls window.postMessage with __activate_edit_mode", () => {
+    const postMessageSpy = vi.spyOn(window, "postMessage");
+    const { container } = render(<AppShell />);
+    const btn = container.querySelector(".header-tweaks-btn") as HTMLButtonElement;
+    expect(btn).not.toBeNull();
+    fireEvent.click(btn);
+    expect(postMessageSpy).toHaveBeenCalledWith(
+      { type: "__activate_edit_mode" },
+      "*",
+    );
+    postMessageSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // window side-effects
 // ---------------------------------------------------------------------------
 
@@ -470,5 +490,37 @@ describe("app-shell.tsx — window side effects", () => {
     expect(w.SvgIcon).toBe(SvgIcon);
     expect(w.NAV_ITEMS).toBe(NAV_ITEMS);
     expect(w.PAGE_TITLES).toBe(PAGE_TITLES);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AppShell — usePersistedState setItem failure (lines 192-193 console.warn path)
+//
+// usePersistedState wraps localStorage.setItem in try/catch, logging a warning.
+// Replacing the storage with one whose setItem throws exercises this catch branch.
+// installFreshStorage() uses configurable:true, so Object.defineProperty works here.
+// ---------------------------------------------------------------------------
+
+describe("AppShell — usePersistedState setItem failure (lines 192-193 console.warn path)", () => {
+  it("does not crash when localStorage.setItem throws (warn-and-continue)", () => {
+    Object.defineProperty(window, "localStorage", {
+      value: {
+        getItem: (_k: string) => null,
+        setItem(_k: string, _v: string) {
+          throw new DOMException("QuotaExceededError", "QuotaExceededError");
+        },
+        removeItem: (_k: string) => undefined,
+        clear: () => undefined,
+        length: 0,
+        key: (_i: number) => null,
+      } satisfies Storage,
+      writable: true,
+      configurable: true,
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { container } = render(<AppShell />);
+    expect(container.textContent).toContain("気象海象判断支援");
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

@@ -280,3 +280,67 @@ describe('GaugeMeter', () => {
     expect(container.querySelector('svg')?.getAttribute('viewBox')).toBe('0 0 200 200');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Sparkline — all-zeros branch (lines 234, 238)
+//
+// When all values are 0:
+//   line 234: Math.max(...[0,0,0]) = 0 → (0 || 1) = 1
+//   line 238: (max - min) = (1 - 0) = 1, but if values were identical non-zero:
+//             Math.max(...[5,5]) = 5, min=5, so (5-5 || 1) = 1 covers line 238
+// Both || 1 fallbacks must be exercised to reach 100% branch coverage.
+// ---------------------------------------------------------------------------
+
+describe('Sparkline — all-zeros branch (lines 234, 238 || 1 fallbacks)', () => {
+  it('handles all-zero values without division by zero (line 234 max||1)', () => {
+    // max = Math.max(0,0,0) = 0 → 0 || 1 = 1  ← line 234 true branch
+    const { container } = render(<Sparkline values={[0, 0, 0]} />);
+    expect(container.querySelector('svg')).not.toBeNull();
+    expect(container.querySelector('polyline')).not.toBeNull();
+  });
+
+  it('handles identical non-zero values without division by zero (line 238 (max-min)||1)', () => {
+    // max=5, min=5 → max-min=0 → (0 || 1) = 1  ← line 238 true branch
+    const { container } = render(<Sparkline values={[5, 5, 5]} />);
+    expect(container.querySelector('svg')).not.toBeNull();
+    expect(container.querySelector('polyline')).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WindRose — unknown direction fallback (line 208 ?? branch)
+//
+// dirs.indexOf('X') returns -1 → angles[-1] === undefined → ?? angles[0]
+// This defensive branch is unreachable with correct TypeScript types but
+// exercised via type assertion to confirm the fallback renders a circle.
+// ---------------------------------------------------------------------------
+
+describe('WindRose — unknown direction ?? fallback (line 208)', () => {
+  it('uses angles[0] fallback for unrecognized direction', () => {
+    // 'X' is not in ['N','NE','E','SE','S','SW','W','NW']
+    // → indexOf returns -1 → angles[-1] === undefined → ?? angles[0]
+    const unknownDirData = [{ dir: 'X' as DirectionPoint['dir'], value: 5 }];
+    const { container } = render(<WindRose data={unknownDirData} />);
+    const dataDots = container.querySelectorAll(`circle[fill="${ChartColors.blue}"]`);
+    expect(dataDots.length).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// WindRose — null data guard (lines 185, 207)
+//
+// WindRose has two `(data || [])` guards:
+//   line 185: Math.max(...(data || []).map(...), 1)
+//   line 207: {(data || []).map((d, i) => { ... })}
+// Passing null triggers both || branches, resulting in SVG rendered with no
+// data circles but keeping the 4 background grid circles.
+// ---------------------------------------------------------------------------
+
+describe('WindRose — null data guard (lines 185, 207)', () => {
+  it('handles null data gracefully (data||[] branches on lines 185, 207)', () => {
+    const { container } = render(<WindRose data={null as unknown as DirectionPoint[]} />);
+    expect(container.querySelector('svg')).not.toBeNull();
+    const dataDots = container.querySelectorAll(`circle[fill="${ChartColors.blue}"]`);
+    expect(dataDots.length).toBe(0);
+  });
+});

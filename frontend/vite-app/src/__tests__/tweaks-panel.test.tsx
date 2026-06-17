@@ -119,6 +119,17 @@ describe("TweakSlider", () => {
     );
     expect(container.textContent).toContain("0.7%");
   });
+
+  it("respects an explicitly provided step (covers line 359 non-default branch)", () => {
+    // When step is omitted, V8 applies the default (step=1) — "default used" branch.
+    // Providing step=2 takes the "parameter provided" branch at line 359, closing
+    // the last uncovered branch in TweakSlider.
+    const { container } = render(
+      <TweakSlider label="size" value={10} step={2} onChange={vi.fn()} />,
+    );
+    const input = container.querySelector('input[type="range"]') as HTMLInputElement;
+    expect(input.step).toBe("2");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -730,6 +741,48 @@ describe("TweakRadio — pointer scrub", () => {
 });
 
 // ---------------------------------------------------------------------------
+// TweakRadio — pointermove after unmount (line 476 !trackRef.current true branch)
+//
+// React sets trackRef.current = null during unmount (commitDetachRef).
+// However, window.pointermove listeners attached inside onPointerDown are NOT
+// cleaned up by React — they survive the unmount.  Dispatching pointermove on
+// window after unmount therefore executes the `move` closure, which hits the
+// `if (!trackRef.current) return;` guard (line 476) and returns early.
+// ---------------------------------------------------------------------------
+
+describe("TweakRadio — pointermove after unmount exercises line 476 guard", () => {
+  it("move handler returns early when trackRef.current is null after unmount", () => {
+    const onChange = vi.fn();
+    const { container, unmount } = render(
+      <TweakRadio<string>
+        label="mode"
+        value="a"
+        options={[
+          { value: "a", label: "A" },
+          { value: "b", label: "B" },
+        ]}
+        onChange={onChange}
+      />,
+    );
+    const track = container.querySelector('[role="radiogroup"]') as HTMLElement;
+    stubRect(track);
+    // pointerdown attaches the `move` closure to window.pointermove
+    fireEvent.pointerDown(track, { clientX: 30 });
+    onChange.mockClear();
+    // Unmount: React calls commitDetachRef → trackRef.current = null
+    unmount();
+    // Dispatch pointermove — `move` fires, hits !trackRef.current at line 476 → early return
+    expect(() =>
+      window.dispatchEvent(new PointerEvent("pointermove", { clientX: 150 })),
+    ).not.toThrow();
+    // onChange must NOT fire: segAt was never reached (early return at line 476)
+    expect(onChange).not.toHaveBeenCalled();
+    // Clean up: pointerup detaches move/up from window (setDragging is a no-op after unmount in React 18)
+    window.dispatchEvent(new PointerEvent("pointerup"));
+  });
+});
+
+// ---------------------------------------------------------------------------
 // TweakNumber — pointerdown scrub path (covers line 599-616: onScrubStart)
 // ---------------------------------------------------------------------------
 
@@ -1030,6 +1083,95 @@ describe("TweaksPanel — ResizeObserver useEffect path (lines 234-236)", () => 
     unmount();
     expect(disconnected).toBe(true);
     vi.unstubAllGlobals();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TweakColor — __twkIsLight 3-char hex path (line 640 true branch)
+//
+// __twkIsLight('#abc'):
+//   h = 'abc', h.length === 3 → true → replace /./g → 'aabbcc'
+//   parseInt('aabbcc', 16) = 11189196
+//   r=170, g=187, b=204 → 170*299+187*587+204*114 = 183855 > 148000 → light=true
+//   __TwkCheck gets light=true → stroke='rgba(0,0,0,.78)' (line 657 true branch)
+// ---------------------------------------------------------------------------
+
+describe("TweakColor — __twkIsLight 3-char hex (line 640 true) + __TwkCheck light=true (line 657)", () => {
+  it("renders __TwkCheck with dark stroke when selected chip is a light 3-char hex (#abc)", () => {
+    const { container } = render(
+      <TweakColor
+        label="bg"
+        value="#abc"
+        options={["#abc", "#ff0000"]}
+        onChange={vi.fn()}
+      />,
+    );
+    // '#abc' is selected → on=true → __TwkCheck renders
+    const selectedChip = container.querySelector(
+      'button[aria-checked="true"].twk-chip',
+    ) as HTMLElement | null;
+    expect(selectedChip).not.toBeNull();
+    const svg = selectedChip?.querySelector("svg");
+    expect(svg).not.toBeNull();
+    // light=true → stroke='rgba(0,0,0,.78)'
+    const path = svg?.querySelector("path");
+    expect(path?.getAttribute("stroke")).toBe("rgba(0,0,0,.78)");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TweakColor — __twkIsLight NaN path (line 642 true branch)
+//
+// __twkIsLight('nope'):
+//   h = 'nope', h.length !== 3 → padEnd → 'nope00'
+//   parseInt('nope00', 16) = NaN → Number.isNaN(NaN) = true → return true (line 642)
+// ---------------------------------------------------------------------------
+
+describe("TweakColor — __twkIsLight NaN path (line 642 true branch)", () => {
+  it("treats non-hex string as light when chip is selected (NaN → return true)", () => {
+    const { container } = render(
+      <TweakColor
+        label="bg"
+        value="nope"
+        options={["nope", "#ff0000"]}
+        onChange={vi.fn()}
+      />,
+    );
+    const selectedChip = container.querySelector(
+      'button[aria-checked="true"].twk-chip',
+    ) as HTMLElement | null;
+    expect(selectedChip).not.toBeNull();
+    // NaN → light=true → __TwkCheck renders (svg present inside selected chip)
+    expect(selectedChip?.querySelector("svg")).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TweakColor — empty array value ?? fallback (line 687 true branch)
+//
+// value=[] → Array.isArray(value)=true → value[0]=undefined → ?? '' fires
+// → input receives value="" (no crash, no undefined)
+// ---------------------------------------------------------------------------
+
+describe("TweakColor — empty array value ?? fallback (line 687)", () => {
+  it('renders color input when value is an empty array (value[0] undefined → ?? branch fires)', () => {
+    // value=[] → Array.isArray=true → value[0]=undefined → ?? '' executes
+    // jsdom normalises '' to '#000000' for <input type="color">, so we verify
+    // the input renders (the ?? branch was exercised) rather than checking the
+    // normalised DOM value.
+    const { container } = render(
+      <TweakColor
+        label="bg"
+        value={[] as unknown as string}
+        onChange={vi.fn()}
+      />,
+    );
+    const input = container.querySelector(
+      'input[type="color"]',
+    ) as HTMLInputElement | null;
+    expect(input).not.toBeNull();
+    // Branch exercised: value[0] === undefined → ?? '' → no crash
+    expect(container.textContent).toContain("bg");
   });
 });
 
