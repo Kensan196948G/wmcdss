@@ -3,6 +3,9 @@ import { defineConfig, devices } from '@playwright/test';
 export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
+  // 1 retry handles vite-preview cold-start race on local multi-worker runs;
+  // CI always starts fresh so retries are rarely consumed there.
+  retries: 1,
   use: {
     baseURL: 'http://localhost:4173',
     headless: true,
