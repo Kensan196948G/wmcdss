@@ -29,19 +29,19 @@
 │   ブラウザ端末 ─────────── ポート 9080 ─────── 🖥️ WebUI          │
 │  （PC・スマホ）                                 （Nginx / React）│
 │                                                      │          │
-│                             ポート 8003 ─────── ⚙️ API サーバ   │
+│                              Docker 内部 ────── ⚙️ API サーバ   │
 │                                                 （FastAPI）      │
 │                                                      │          │
 │                                                 🗄️ DB           │
 │                                                 （PostgreSQL）   │
-│                                                 ポート 5434      │
+│                                                 Docker 内部      │
 │                                                      │          │
 │                        cron（10分/1時間）─── 📡 気象データ取得   │
 │                                                 （JMA API）      │
 └─────────────────────────────────────────────────────────────────┘
 
   ※ WebUI・API・DB は Docker Compose で一体管理
-  ※ DB の外部ポート（5434）はローカルホストのみ公開
+  ※ 本番では API・DB の外部ポートは公開せず、WebUI の nginx 経由で API に接続
 ```
 
 ---
@@ -81,16 +81,16 @@ git clone https://github.com/<org>/Weather-Marine-Construction-Decision-Support-
     ~/Projects/Weather-Marine-Construction-Decision-Support-System
 cd ~/Projects/Weather-Marine-Construction-Decision-Support-System
 
-# 2. 環境変数ファイルを作成（テンプレートから）
-cp .env.example .env
-# → .env を編集: SECRET_KEY（必須）を変更する
-#   SECRET_KEY は openssl rand -hex 32 で生成した値を使用
+# 2. 本番環境変数ファイルを作成（テンプレートから）
+cp .env.production.example .env.production
+# → .env.production を編集:
+#   POSTGRES_PASSWORD / WMCDSS_API_KEYS_RAW / WMCDSS_JWT_SECRET は必ず変更する
 
-# 3. 全サービスを起動
-docker compose up -d
+# 3. 本番サービスを起動
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
 
 # 4. 起動確認（全コンテナが healthy/running になるまで待つ）
-docker compose ps
+docker compose --env-file .env.production -f docker-compose.production.yml ps
 ```
 
 **起動後の確認:**
@@ -98,9 +98,9 @@ docker compose ps
 | 確認項目 | コマンド・URL |
 |---|---|
 | WebUI が開く | ブラウザで `http://<サーバIP>:9080` |
-| API が応答する | ブラウザで `http://<サーバIP>:8003/api/health` |
-| コンテナ状態 | `docker compose ps` |
-| ログ確認 | `docker compose logs -f backend` |
+| API が応答する | ブラウザで `http://<サーバIP>:9080/readyz` |
+| コンテナ状態 | `docker compose --env-file .env.production -f docker-compose.production.yml ps` |
+| ログ確認 | `docker compose --env-file .env.production -f docker-compose.production.yml logs -f backend` |
 
 > サーバの IP アドレスは `ip addr show` コマンドで確認できます。
 
@@ -155,7 +155,7 @@ systemctl --user list-timers 'wmcdss-jma-fetch*'
 ### コンテナ状態確認
 
 ```bash
-docker compose ps
+docker compose --env-file .env.production -f docker-compose.production.yml ps
 # 全コンテナが Up かつ (healthy) または running であること
 ```
 
@@ -163,13 +163,13 @@ docker compose ps
 
 ```bash
 # API サーバのログ（リアルタイム）
-docker compose logs -f backend
+docker compose --env-file .env.production -f docker-compose.production.yml logs -f backend
 
 # WebUI（Nginx）のログ
-docker compose logs -f frontend
+docker compose --env-file .env.production -f docker-compose.production.yml logs -f frontend
 
 # 全サービスのログ
-docker compose logs -f
+docker compose --env-file .env.production -f docker-compose.production.yml logs -f
 ```
 
 ### 気象データ取得の確認
@@ -186,10 +186,10 @@ journalctl --user -u wmcdss-jma-fetch-marine.service -n 50
 
 ```bash
 # AMeDAS
-docker compose exec -T backend python -m app.jobs.ingest_jma
+docker compose --env-file .env.production -f docker-compose.production.yml exec -T backend python -m app.jobs.ingest_jma
 
 # 波浪データ
-docker compose exec -T backend python -m app.jobs.ingest_jma_marine
+docker compose --env-file .env.production -f docker-compose.production.yml exec -T backend python -m app.jobs.ingest_jma_marine
 ```
 
 ---
@@ -200,12 +200,12 @@ docker compose exec -T backend python -m app.jobs.ingest_jma_marine
 
 ```bash
 # バックアップを取得
-docker compose exec db pg_dump -U wmcdss wmcdss \
+docker compose --env-file .env.production -f docker-compose.production.yml exec db pg_dump -U wmcdss_app wmcdss \
   | gzip > backup_$(date +%Y%m%d).sql.gz
 
 # 復元
 gunzip -c backup_20260614.sql.gz \
-  | docker compose exec -T db psql -U wmcdss wmcdss
+  | docker compose --env-file .env.production -f docker-compose.production.yml exec -T db psql -U wmcdss_app wmcdss
 ```
 
 **推奨**: cron で毎日自動バックアップを設定し、世代管理（30 日分）することを推奨します。
@@ -232,7 +232,7 @@ gunzip -c backup_20260614.sql.gz \
 ### システムログ（API アクセス・エラー）
 
 ```bash
-docker compose logs backend --since 1h
+docker compose --env-file .env.production -f docker-compose.production.yml logs backend --since 1h
 ```
 
 ### 監査ログ（誰が・何を操作したか）
@@ -242,7 +242,7 @@ WebUI の「設定 → 監査ログ」画面で確認できます。CSV 形式�
 ### ログのローテーション
 
 Docker のログは自動でローテーションされます。デフォルトは 10MB × 3 世代。
-`docker-compose.yml` の `logging:` セクションで変更可能です。
+`docker-compose.production.yml` の `logging:` セクションで変更可能です。
 
 ---
 
@@ -252,13 +252,13 @@ Docker のログは自動でローテーションされます。デフォルト�
 
 ```bash
 # コンテナが起動しているか確認
-docker compose ps
+docker compose --env-file .env.production -f docker-compose.production.yml ps
 
 # ポートが使用中でないか確認
-sudo ss -tlnp | grep ':9080\|:8003'
+sudo ss -tlnp | grep ':9080'
 
 # コンテナを再起動
-docker compose restart frontend
+docker compose --env-file .env.production -f docker-compose.production.yml restart frontend
 ```
 
 ### 気象データが更新されない
@@ -271,20 +271,20 @@ systemctl --user list-timers 'wmcdss-jma-fetch*'
 journalctl --user -u wmcdss-jma-fetch.service -n 20
 
 # 手動で実行してエラーを確認
-docker compose exec -T backend python -m app.jobs.ingest_jma
+docker compose --env-file .env.production -f docker-compose.production.yml exec -T backend python -m app.jobs.ingest_jma
 ```
 
 ### DB 接続エラー
 
 ```bash
 # DB コンテナの状態確認
-docker compose ps db
+docker compose --env-file .env.production -f docker-compose.production.yml ps db
 
 # DB のログ確認
-docker compose logs db --tail 50
+docker compose --env-file .env.production -f docker-compose.production.yml logs db --tail 50
 
 # DB に直接接続して確認
-docker compose exec db psql -U wmcdss wmcdss
+docker compose --env-file .env.production -f docker-compose.production.yml exec db psql -U wmcdss_app wmcdss
 ```
 
 ---
@@ -294,9 +294,9 @@ docker compose exec db psql -U wmcdss wmcdss
 | サービス | URL | 用途 |
 |---|---|---|
 | 🖥️ WebUI | `http://<サーバIP>:9080` | 通常業務での利用 |
-| ⚙️ API | `http://<サーバIP>:8003` | システム間連携・動作確認 |
-| 📋 API ドキュメント | `http://<サーバIP>:8003/docs` | API の仕様確認（IT 部門向け） |
-| 🩺 ヘルスチェック | `http://<サーバIP>:8003/api/health` | 監視ツールからの死活監視に使用 |
+| ⚙️ API | `http://<サーバIP>:9080/api/v1` | WebUI nginx 経由で利用 |
+| 📋 API ドキュメント | 本番では非公開 | `WMCDSS_EXPOSE_OPENAPI=false` |
+| 🩺 ヘルスチェック | `http://<サーバIP>:9080/readyz` | 監視ツールからの死活監視に使用 |
 
 > サーバ IP は `ip addr show` コマンドで確認してください。
 > 社内ファイアウォールでポート 9080 を社内 LAN 向けに開放してください（外部公開不要）。

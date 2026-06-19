@@ -142,13 +142,13 @@ describe("ThresholdsPage", () => {
 // ---------------------------------------------------------------------------
 
 describe("EtlPage", () => {
-  it("renders data source info section with JMA endpoints", () => {
-    // EtlPage now shows JMA data source information instead of hardcoded stats.
+  it("renders data source info section with configured endpoints", () => {
+    // EtlPage shows production data source information instead of hardcoded stats.
     const { container } = render(<EtlPage />);
     for (const label of [
       "データ取得元情報",
       "AMeDAS",
-      "波浪ナウキャスト",
+      "海象参考情報（Open-Meteo Marine API）",
       "バックエンド接続状況",
     ]) {
       expect(container.textContent).toContain(label);
@@ -171,7 +171,7 @@ describe("EtlPage", () => {
   });
 
   it("renders data-source rows + one row per ETL_JOBS entry", () => {
-    // EtlPage has two tables: data-source table (2 rows: AMeDAS + 波浪ナウキャスト)
+    // EtlPage has two tables: data-source table (2 rows: AMeDAS + marine reference info)
     // and job table (ETL_JOBS.length rows).
     const { container } = render(<EtlPage />);
     const rows = container.querySelectorAll("tbody tr");
@@ -567,9 +567,9 @@ describe("EtlPage — backend fetch path", () => {
       },
       {
         id: 2,
-        name: "海象データ取得",
-        source: "波浪ナウキャスト",
-        schedule: "1時間毎",
+        name: "海象参考情報取得",
+        source: "Open-Meteo Marine API（情報共有用）",
+        schedule: "10分毎確認",
         last_obs_at: "2026-06-14T09:00:00",
         status: "ok",
       },
@@ -603,30 +603,42 @@ describe("EtlPage — backend fetch path", () => {
     expect(container.textContent).toContain("ジョブ一覧");
   });
 
-  it("handleManualRun shows alert when WMCDSS_API_BASE is not set", async () => {
-    const alertSpy = vi.spyOn(window, "alert").mockImplementation(() => {});
-
-    const { container } = render(<EtlPage />);
-    const runBtn = Array.from(container.querySelectorAll("button")).find(
-      (b) => b.textContent?.includes("手動実行"),
-    );
-    await act(async () => {
-      fireEvent.click(runBtn!);
-    });
-    expect(alertSpy).toHaveBeenCalledWith("バックエンドに接続できません");
-  });
-
-  it("handleManualRun posts to /etl/run/1 and shows 実行中", async () => {
+  it("handleManualRun shows an inline error when the run request fails", async () => {
     const mockFetch = vi
       .fn()
       .mockResolvedValueOnce({
         ok: true,
         json: vi.fn().mockResolvedValue({ jobs: [] }),
       })
-      .mockResolvedValueOnce({ ok: true });
+      .mockRejectedValueOnce(new Error("run failed"));
+    vi.stubGlobal("fetch", mockFetch);
+    const { container } = render(<EtlPage />);
+    const runBtn = Array.from(container.querySelectorAll("button")).find(
+      (b) => b.textContent?.includes("手動実行"),
+    );
+    await act(async () => {
+      fireEvent.click(runBtn!);
+    });
+    await waitFor(() => expect(container.textContent).toContain("run failed"));
+  });
+
+  it("handleManualRun posts to /etl/run/1 and shows the completion message", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ jobs: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        text: vi.fn().mockResolvedValue(JSON.stringify({ message: "AMeDAS 完了" })),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ jobs: [] }),
+      });
     vi.stubGlobal("fetch", mockFetch);
     vi.stubGlobal("WMCDSS_API_BASE", "http://localhost:8003/api/v1");
-    vi.useFakeTimers();
 
     const { container } = render(<EtlPage />);
     const runBtn = Array.from(container.querySelectorAll("button")).find(
@@ -635,12 +647,11 @@ describe("EtlPage — backend fetch path", () => {
     await act(async () => {
       fireEvent.click(runBtn!);
     });
-    expect(container.textContent).toContain("実行中");
-
-    act(() => {
-      vi.advanceTimersByTime(1100);
-    });
-    vi.useRealTimers();
+    await waitFor(() => expect(container.textContent).toContain("AMeDAS 完了"));
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:8003/api/v1/etl/run/1",
+      expect.objectContaining({ method: "POST" }),
+    );
   });
 });
 

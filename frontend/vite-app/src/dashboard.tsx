@@ -4,6 +4,11 @@ import {
   generateMarine, generateWeather, getDecision,
   type Site, type Status,
 } from './data';
+import {
+  requestAiChat,
+  requestAiRiskSummary,
+  type AiAssistResponse,
+} from './api';
 
 declare global {
   interface Window {
@@ -259,12 +264,88 @@ export interface DashboardPageProps {
 
 export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => {
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
+  const [riskAi, setRiskAi] = useState<AiAssistResponse | null>(null);
+  const [riskLoading, setRiskLoading] = useState(false);
+  const [chatQuestion, setChatQuestion] = useState('');
+  const [chatAi, setChatAi] = useState<AiAssistResponse | null>(null);
+  const [chatLoading, setChatLoading] = useState(false);
 
   const visibleSites = selectedArea ? SITES.filter((s) => s.area === selectedArea) : SITES;
   const okCount = visibleSites.filter((s) => s.status === 'ok').length;
   const warnCount = visibleSites.filter((s) => s.status === 'warn').length;
   const dangerCount = visibleSites.filter((s) => s.status === 'danger').length;
   const today = FORECAST_DAYS[0];
+
+  const aiSitePayload = visibleSites.map((site) => ({
+    id: site.id,
+    name: site.shortName,
+    type: site.type,
+    status: getDecision(site).status,
+    reasons: getDecision(site).reasons,
+    weather: generateWeather(site.id),
+    marine: generateMarine(site.id),
+    thresholds: site.thresholds,
+  }));
+
+  const renderAiAssist = (result: AiAssistResponse | null) => {
+    if (!result) return null;
+    return (
+      <div className="card mb-16" style={{ borderColor: 'var(--blue-300)' }}>
+        <div className="card-header" style={{ background: 'var(--blue-50)' }}>
+          <span className="card-title">
+            AI補助コメント
+            <span className="badge badge-info" style={{ marginLeft: 8 }}>
+              {result.analysis_type === 'claude_ai' ? 'Claude AI' : 'ルールベース'}
+            </span>
+          </span>
+        </div>
+        <div className="card-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
+          <div style={{ fontWeight: 700, marginBottom: 8 }}>{result.summary}</div>
+          {result.bullets.map((line, idx) => (
+            <div key={`b-${idx}`} style={{ color: 'var(--text-secondary)' }}>・{line}</div>
+          ))}
+          {result.recommendations.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              {result.recommendations.map((line, idx) => (
+                <div key={`r-${idx}`} style={{ color: 'var(--blue-600)' }}>推奨: {line}</div>
+              ))}
+            </div>
+          )}
+          <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
+            {result.disclaimer}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const handleRiskSummary = async () => {
+    setRiskLoading(true);
+    try {
+      setRiskAi(await requestAiRiskSummary(aiSitePayload));
+    } catch {
+      setRiskAi(null);
+    } finally {
+      setRiskLoading(false);
+    }
+  };
+
+  const handleAiChat = async () => {
+    const question = chatQuestion.trim();
+    if (!question) return;
+    setChatLoading(true);
+    try {
+      setChatAi(await requestAiChat(question, {
+        selectedArea: selectedArea ?? '全国',
+        sites: aiSitePayload,
+        forecast: FORECAST_DAYS.slice(0, 3),
+      }));
+    } catch {
+      setChatAi(null);
+    } finally {
+      setChatLoading(false);
+    }
+  };
 
   return (
     <div>
@@ -294,6 +375,19 @@ export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => 
           <div className="stat-sub">基準値超過</div>
         </div>
       </div>
+
+      <div className="card mb-16">
+        <div className="card-header">
+          <span className="card-title">現場別AIリスクサマリー</span>
+          <button className="btn btn-sm btn-primary" onClick={handleRiskSummary} disabled={riskLoading}>
+            {riskLoading ? '分析中...' : 'AIリスク要約'}
+          </button>
+        </div>
+        <div className="card-body" style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+          {selectedArea ?? '全国'}の現場について、今後数時間で優先確認すべき気象・海象リスクを要約します。
+        </div>
+      </div>
+      {renderAiAssist(riskAi)}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 16 }}>
         <div className="card" style={{ overflow: 'hidden' }}>
@@ -379,6 +473,26 @@ export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => 
           </div>
         </div>
       </div>
+
+      <div className="card mt-16">
+        <div className="card-header">
+          <span className="card-title">現場向けAIチャット相談</span>
+        </div>
+        <div className="card-body">
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className="form-input"
+              value={chatQuestion}
+              onChange={(e) => setChatQuestion(e.target.value)}
+              placeholder="例: 今日の午後、港湾作業は注意が必要？"
+            />
+            <button className="btn btn-primary" onClick={handleAiChat} disabled={chatLoading || !chatQuestion.trim()}>
+              {chatLoading ? '回答中...' : '相談'}
+            </button>
+          </div>
+        </div>
+      </div>
+      {renderAiAssist(chatAi)}
     </div>
   );
 };

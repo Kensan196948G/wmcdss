@@ -45,6 +45,7 @@ interface BackendMarineObs {
   wave_period_s: number | null;
   wave_dir_deg: number | null;
   tide_level_m: number | null;
+  source?: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -494,12 +495,14 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
   const [backendM, setBackendM] = useState<MarineSample | null>(null);
   const [obsTime, setObsTime]   = useState<string>('');
   const [isLiveData, setIsLiveData] = useState(false);
+  const [marineSource, setMarineSource] = useState<string>('');
 
   useEffect(() => {
     if (!site) return;
     setBackendM(null);
     setObsTime('');
     setIsLiveData(false);
+    setMarineSource('');
 
     const api = (window as Window & { WMCDSS_API?: { fetchLatestMarine?: (id: string) => Promise<unknown> } }).WMCDSS_API;
     if (!api?.fetchLatestMarine) return;
@@ -510,6 +513,7 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
       const obs = raw as BackendMarineObs;
       setBackendM(adaptBackendMarine(obs, site.id));
       setObsTime(obs.observed_at ? formatObsTime(obs.observed_at) : '');
+      setMarineSource(obs.source || '');
       setIsLiveData(true);
     }).catch(() => {
       // silently fall back to mock data
@@ -529,6 +533,7 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
   }
 
   const m = backendM ?? generateMarine(site.id);
+  const isReferenceMarine = marineSource === 'open_meteo_marine_info';
 
   if (!m) {
     return (
@@ -576,12 +581,30 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
           >
             {isLiveData ? '実データ' : 'サンプルデータ'}
           </span>
+          {isReferenceMarine && (
+            <span className="badge badge-warn">情報共有用</span>
+          )}
           <span className="badge badge-info">観測点: {site.marinePoint}</span>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             観測日時: {obsTime || 'サンプルデータ'}
           </span>
         </div>
       </div>
+
+      {isReferenceMarine && (
+        <div
+          className="mb-16"
+          style={{
+            padding: '10px 12px',
+            borderRadius: 6,
+            fontSize: 13,
+            background: 'rgba(217, 119, 6, 0.12)',
+            color: 'var(--status-warn, #d97706)',
+          }}
+        >
+          Open-Meteo Marine API の参考海象です。情報共有用であり、施工可否判定の根拠には使用しません。
+        </div>
+      )}
 
       <div className="grid-3 mb-16">
         <div className="stat-card">

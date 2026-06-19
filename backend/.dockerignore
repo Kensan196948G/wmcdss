@@ -11,4 +11,5 @@ htmlcov/
 .env
 .env.local
 .env.*.local
+.wmcdss_ai_settings.json
 *.log

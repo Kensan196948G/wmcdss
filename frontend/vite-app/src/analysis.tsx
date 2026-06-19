@@ -530,7 +530,7 @@ export const Wave50Page: FC<Wave50PageProps> = ({ selectedSite }) => {
   }, [backendData]);
 
   const dataSource = backendData
-    ? '気象庁 波浪ナウキャスト (backend DB)'
+    ? 'backend DB 海象履歴データ'
     : '気象庁 沿岸波浪モデル（5km格子）';
 
   const sampleCount = backendData

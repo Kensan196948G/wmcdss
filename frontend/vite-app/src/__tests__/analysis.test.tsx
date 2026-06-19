@@ -440,7 +440,7 @@ describe("Wave50Page — backend fetch path", () => {
     const { container } = render(<Wave50Page />);
 
     await waitFor(() =>
-      expect(container.textContent).toContain("気象庁 波浪ナウキャスト (backend DB)")
+      expect(container.textContent).toContain("backend DB 海象履歴データ")
     );
     expect(container.textContent).toContain("15");
   });
@@ -515,7 +515,7 @@ describe("Wave50Page — backend fetch path", () => {
 
     // Wait for backend data to load
     await waitFor(() =>
-      expect(container.textContent).toContain("気象庁 波浪ナウキャスト (backend DB)")
+      expect(container.textContent).toContain("backend DB 海象履歴データ")
     );
 
     // Switch to genpareto — should clear backendData and show fallback
@@ -536,7 +536,7 @@ describe("Wave50Page — backend fetch path", () => {
     const { container } = render(<Wave50Page />);
 
     await waitFor(() =>
-      expect(container.textContent).toContain("気象庁 波浪ナウキャスト (backend DB)")
+      expect(container.textContent).toContain("backend DB 海象履歴データ")
     );
     expect(mockFetchJSON).toHaveBeenCalled();
   });

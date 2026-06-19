@@ -8,13 +8,14 @@ from typing import Any
 
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import extract, select
+from sqlalchemy import extract, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.models.observations import MarineObservation, WeatherObservation
 
 router = APIRouter(tags=["analysis"])
+REFERENCE_MARINE_SOURCE = "open_meteo_marine_info"
 
 
 # ---------------------------------------------------------------------------
@@ -88,6 +89,10 @@ async def historical_statistics(
     m_stmt = (
         select(MarineObservation)
         .where(MarineObservation.site_id == site_id)
+        .where(or_(
+            MarineObservation.source.is_(None),
+            MarineObservation.source != REFERENCE_MARINE_SOURCE,
+        ))
         .where(extract("year", MarineObservation.observed_at) == year)
         .order_by(MarineObservation.observed_at)
     )
@@ -168,6 +173,10 @@ async def wave_return_period(
         select(MarineObservation)
         .where(MarineObservation.site_id == site_id)
         .where(MarineObservation.sig_wave_h_m.isnot(None))
+        .where(or_(
+            MarineObservation.source.is_(None),
+            MarineObservation.source != REFERENCE_MARINE_SOURCE,
+        ))
         .order_by(MarineObservation.observed_at)
     )
     rows = (await db.execute(stmt)).scalars().all()

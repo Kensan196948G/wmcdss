@@ -104,7 +104,7 @@ _NORMALISED = {
     "current_speed_ms": None,
     "current_dir_deg": None,
     "data_version": 1,
-    "source": "jma_wave",
+    "source": "open_meteo_marine_info",
 }
 
 
@@ -134,9 +134,9 @@ async def test_marine_run_once_writes_row_successfully():
     db = _FakeSession(site_rows=[_fake_marine_site()])
     with (
         patch("app.jobs.ingest_jma_marine.SessionLocal", return_value=_FakeSessionCM(db)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.fetch_latest",
+        patch("app.jobs.ingest_jma_marine.marine_svc.fetch_latest",
               new=AsyncMock(return_value=_FETCH_RESULT)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.normalise", return_value=_NORMALISED),
+        patch("app.jobs.ingest_jma_marine.marine_svc.normalise", return_value=_NORMALISED),
     ):
         n = await ingest_marine.run_once()
     assert n == 1
@@ -152,7 +152,7 @@ async def test_marine_run_once_skips_transient_timeout():
     exc = httpx.TimeoutException("timeout", request=MagicMock())
     with (
         patch("app.jobs.ingest_jma_marine.SessionLocal", return_value=_FakeSessionCM(db)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.fetch_latest",
+        patch("app.jobs.ingest_jma_marine.marine_svc.fetch_latest",
               new=AsyncMock(side_effect=exc)),
     ):
         n = await ingest_marine.run_once()
@@ -168,7 +168,7 @@ async def test_marine_run_once_skips_4xx_upstream():
     exc = httpx.HTTPStatusError("429 Too Many Requests", request=MagicMock(), response=resp)
     with (
         patch("app.jobs.ingest_jma_marine.SessionLocal", return_value=_FakeSessionCM(db)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.fetch_latest",
+        patch("app.jobs.ingest_jma_marine.marine_svc.fetch_latest",
               new=AsyncMock(side_effect=exc)),
     ):
         n = await ingest_marine.run_once()
@@ -183,7 +183,7 @@ async def test_marine_run_once_skips_5xx_upstream():
     exc = httpx.HTTPStatusError("500 Internal Server Error", request=MagicMock(), response=resp)
     with (
         patch("app.jobs.ingest_jma_marine.SessionLocal", return_value=_FakeSessionCM(db)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.fetch_latest",
+        patch("app.jobs.ingest_jma_marine.marine_svc.fetch_latest",
               new=AsyncMock(side_effect=exc)),
     ):
         n = await ingest_marine.run_once()
@@ -196,7 +196,7 @@ async def test_marine_run_once_skips_no_data():
     db = _FakeSession(site_rows=[_fake_marine_site()])
     with (
         patch("app.jobs.ingest_jma_marine.SessionLocal", return_value=_FakeSessionCM(db)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.fetch_latest",
+        patch("app.jobs.ingest_jma_marine.marine_svc.fetch_latest",
               new=AsyncMock(return_value=None)),
     ):
         n = await ingest_marine.run_once()
@@ -212,9 +212,9 @@ async def test_marine_run_once_skips_upsert_failure():
     )
     with (
         patch("app.jobs.ingest_jma_marine.SessionLocal", return_value=_FakeSessionCM(db)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.fetch_latest",
+        patch("app.jobs.ingest_jma_marine.marine_svc.fetch_latest",
               new=AsyncMock(return_value=_FETCH_RESULT)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.normalise", return_value=_NORMALISED),
+        patch("app.jobs.ingest_jma_marine.marine_svc.normalise", return_value=_NORMALISED),
     ):
         n = await ingest_marine.run_once()
     assert n == 0
@@ -229,9 +229,9 @@ async def test_marine_run_once_raises_when_commit_fails():
     )
     with (
         patch("app.jobs.ingest_jma_marine.SessionLocal", return_value=_FakeSessionCM(db)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.fetch_latest",
+        patch("app.jobs.ingest_jma_marine.marine_svc.fetch_latest",
               new=AsyncMock(return_value=_FETCH_RESULT)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.normalise", return_value=_NORMALISED),
+        patch("app.jobs.ingest_jma_marine.marine_svc.normalise", return_value=_NORMALISED),
     ):
         with pytest.raises(SQLAlchemyError):
             await ingest_marine.run_once()
@@ -243,9 +243,9 @@ async def test_marine_run_once_audit_detail_shape():
     db = _FakeSession(site_rows=[_fake_marine_site()])
     with (
         patch("app.jobs.ingest_jma_marine.SessionLocal", return_value=_FakeSessionCM(db)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.fetch_latest",
+        patch("app.jobs.ingest_jma_marine.marine_svc.fetch_latest",
               new=AsyncMock(return_value=_FETCH_RESULT)),
-        patch("app.jobs.ingest_jma_marine.wave_svc.normalise", return_value=_NORMALISED),
+        patch("app.jobs.ingest_jma_marine.marine_svc.normalise", return_value=_NORMALISED),
     ):
         await ingest_marine.run_once()
     detail = db.added[0].detail
@@ -253,7 +253,8 @@ async def test_marine_run_once_audit_detail_shape():
         "written", "fetch_failed", "upsert_failed", "no_data",
         "upstream_4xx", "upstream_5xx", "sites_total", "source",
     }
-    assert detail["source"] == "jma_wave"
+    assert detail["source"] == "open_meteo_marine_info"
+    assert detail["usage"] == "information_sharing_only"
 
 
 async def test_marine_no_sites_commit_failure_raises():

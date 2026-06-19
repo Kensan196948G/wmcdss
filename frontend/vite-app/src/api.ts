@@ -56,6 +56,14 @@ export interface DecisionRequest {
   windowEnd?: string;
 }
 
+export interface AiAssistResponse {
+  summary: string;
+  bullets: string[];
+  recommendations: string[];
+  analysis_type: string;
+  disclaimer: string;
+}
+
 const DEFAULT_THRESHOLDS: SiteThresholds = {
   windSpeed: 10,
   waveHeight: 1.5,
@@ -76,9 +84,14 @@ declare global {
 
 export const WMCDSS_API_BASE: string = (() => {
   if (typeof window !== 'undefined' && window.WMCDSS_API_BASE) return window.WMCDSS_API_BASE;
+  const viteBase = import.meta.env.VITE_WMCDSS_API_BASE;
+  if (viteBase) return viteBase;
+  if (typeof window === 'undefined') return 'http://localhost:8003/api/v1';
   const host =
     (typeof window !== 'undefined' && window.location && window.location.hostname) || 'localhost';
-  return `http://${host}:8003/api/v1`;
+  const port = typeof window !== 'undefined' && window.location ? window.location.port : '';
+  if (port === '5173') return `http://${host}:8003/api/v1`;
+  return '/api/v1';
 })();
 
 if (typeof window !== 'undefined') {
@@ -194,6 +207,52 @@ export async function requestDecisionFromBackend({
   });
 }
 
+export async function requestAiEtlDiagnose(jobs: unknown[]): Promise<AiAssistResponse> {
+  return fetchJSON<AiAssistResponse>('/ai/etl-diagnose', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jobs }),
+  });
+}
+
+export async function requestAiRiskSummary(sites: unknown[]): Promise<AiAssistResponse> {
+  return fetchJSON<AiAssistResponse>('/ai/risk-summary', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sites }),
+  });
+}
+
+export async function requestAiReportComment(payload: Record<string, unknown>): Promise<AiAssistResponse> {
+  return fetchJSON<AiAssistResponse>('/ai/report-comment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function requestAiAnomalyDetect(
+  observations: unknown[],
+  sourceNote?: string,
+): Promise<AiAssistResponse> {
+  return fetchJSON<AiAssistResponse>('/ai/anomaly-detect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ observations, source_note: sourceNote }),
+  });
+}
+
+export async function requestAiChat(
+  question: string,
+  context: Record<string, unknown>,
+): Promise<AiAssistResponse> {
+  return fetchJSON<AiAssistResponse>('/ai/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question, context }),
+  });
+}
+
 export async function initFromBackend(): Promise<boolean> {
   const mockSites = Array.isArray(window.SITES) ? window.SITES : [];
   window.MOCK_SITES = mockSites;
@@ -230,6 +289,11 @@ export interface WmcdssApi {
   fetchThresholdsForSite: typeof fetchThresholdsForSite;
   fetchAuditLog: typeof fetchAuditLog;
   requestDecisionFromBackend: typeof requestDecisionFromBackend;
+  requestAiEtlDiagnose: typeof requestAiEtlDiagnose;
+  requestAiRiskSummary: typeof requestAiRiskSummary;
+  requestAiReportComment: typeof requestAiReportComment;
+  requestAiAnomalyDetect: typeof requestAiAnomalyDetect;
+  requestAiChat: typeof requestAiChat;
   initFromBackend: typeof initFromBackend;
   adaptSite: typeof adaptSite;
 }
@@ -244,6 +308,11 @@ export const WMCDSS_API: WmcdssApi = {
   fetchThresholdsForSite,
   fetchAuditLog,
   requestDecisionFromBackend,
+  requestAiEtlDiagnose,
+  requestAiRiskSummary,
+  requestAiReportComment,
+  requestAiAnomalyDetect,
+  requestAiChat,
   initFromBackend,
   adaptSite,
 };

@@ -45,6 +45,54 @@ interface AiResult {
   disclaimer: string;
 }
 
+interface AiAssistResponse {
+  summary: string;
+  bullets: string[];
+  recommendations: string[];
+  analysis_type: string;
+  disclaimer: string;
+}
+
+async function postAiAssist(path: string, payload: unknown): Promise<AiAssistResponse> {
+  const apiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE
+    ?? '/api/v1';
+  const resp = await fetch(`${apiBase}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return await resp.json() as AiAssistResponse;
+}
+
+const AiAssistPanel: FC<{ title: string; result: AiAssistResponse | null }> = ({ title, result }) => {
+  if (!result) return null;
+  return (
+    <div className="card mb-16" style={{ borderColor: 'var(--blue-300)' }}>
+      <div className="card-header" style={{ background: 'var(--blue-50)' }}>
+        <span className="card-title">
+          {title}
+          <span className="badge badge-info" style={{ marginLeft: 8 }}>
+            {result.analysis_type === 'claude_ai' ? 'Claude AI' : 'ルールベース'}
+          </span>
+        </span>
+      </div>
+      <div className="card-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>{result.summary}</div>
+        {result.bullets.map((line, idx) => (
+          <div key={`b-${idx}`} style={{ color: 'var(--text-secondary)' }}>・{line}</div>
+        ))}
+        {result.recommendations.map((line, idx) => (
+          <div key={`r-${idx}`} style={{ color: 'var(--blue-600)' }}>推奨: {line}</div>
+        ))}
+        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
+          {result.disclaimer}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export interface CheckItemProps {
   label: string;
   value: number;
@@ -143,6 +191,9 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
   const [siteId, setSiteId] = useState<string>(selectedSite || SITES[0].id);
   const [aiResult, setAiResult] = useState<AiResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiAudience, setAiAudience] = useState<'field' | 'manager'>('field');
+  const [windowAiResult, setWindowAiResult] = useState<AiAssistResponse | null>(null);
+  const [windowAiLoading, setWindowAiLoading] = useState(false);
   const site: Site = SITES.find((s) => s.id === siteId) || SITES[0];
   const w = generateWeather(site.id);
   // getDecision is kept for parity with the legacy page (used elsewhere in props
@@ -154,13 +205,14 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
     setAiResult(null);
     try {
       const apiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE
-        ?? `http://${window.location.hostname}:8003/api/v1`;
+        ?? '/api/v1';
       const resp = await fetch(`${apiBase}/ai/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           site_id: site.id,
           work_type: 'concrete',
+          audience: aiAudience,
           weather: { temp: w.temp, hum: w.hum, wind: w.wind, rain: w.rain },
           marine: null,
           thresholds: site.thresholds,
@@ -174,11 +226,31 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
     } finally {
       setAiLoading(false);
     }
-  }, [site.id, site.thresholds, w.temp, w.hum, w.wind, w.rain]);
+  }, [aiAudience, site.id, site.thresholds, w.temp, w.hum, w.wind, w.rain]);
 
   const getCheckStatus = (val: number, thresh: number, invert = false): CheckStatus => {
     if (invert) return val < thresh ? 'danger' : val < thresh * 1.2 ? 'warn' : 'ok';
     return val > thresh ? 'danger' : val > thresh * 0.8 ? 'warn' : 'ok';
+  };
+
+  const handleWorkWindowAi = async () => {
+    setWindowAiLoading(true);
+    try {
+      setWindowAiResult(await postAiAssist('/ai/chat', {
+        question: 'コンクリート打設に適した作業時間帯を提案してください。午前・午後など実務で使える表現にしてください。',
+        context: {
+          site: site.shortName,
+          weather: { temp: w.temp, hum: w.hum, wind: w.wind, rain: w.rain },
+          thresholds: site.thresholds,
+          forecast: FORECAST_DAYS.slice(0, 5),
+          note: 'AIは作業計画補助のみ。最終判断は施工判定と現場責任者が行う。',
+        },
+      }));
+    } catch {
+      setWindowAiResult(null);
+    } finally {
+      setWindowAiLoading(false);
+    }
   };
 
   const concreteChecks: CheckItemProps[] = [
@@ -266,6 +338,15 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm">📥 PDF出力</button>
+          <select
+            className="form-select"
+            value={aiAudience}
+            onChange={(e) => setAiAudience(e.target.value as 'field' | 'manager')}
+            style={{ width: 150, padding: '4px 10px', fontSize: 12 }}
+          >
+            <option value="field">現場向け</option>
+            <option value="manager">管理者向け</option>
+          </select>
           <button
             className="btn btn-sm btn-primary"
             onClick={handleAiAnalyze}
@@ -274,9 +355,13 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
           >
             {aiLoading ? '🤖 分析中...' : '🤖 AI分析'}
           </button>
+          <button className="btn btn-sm" onClick={handleWorkWindowAi} disabled={windowAiLoading}>
+            {windowAiLoading ? '提案中...' : 'AI時間帯提案'}
+          </button>
           <button className="btn btn-sm btn-primary">🔄 再判定</button>
         </div>
       </div>
+      <AiAssistPanel title="作業計画 AI時間帯提案" result={windowAiResult} />
 
       <div className="decision-panel mb-16">
         <div className={`decision-header ${overallStatus}`}>
@@ -460,6 +545,9 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
   );
   const [aiResult, setAiResult] = useState<AiResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiAudience, setAiAudience] = useState<'field' | 'manager'>('field');
+  const [windowAiResult, setWindowAiResult] = useState<AiAssistResponse | null>(null);
+  const [windowAiLoading, setWindowAiLoading] = useState(false);
   const site = marineSites.find((s) => s.id === siteId) || marineSites[0];
   const w = site ? generateWeather(site.id) : null;
   const m = site ? generateMarine(site.id) : null;
@@ -472,13 +560,14 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
     setAiResult(null);
     try {
       const apiBase = (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE
-        ?? `http://${window.location.hostname}:8003/api/v1`;
+        ?? '/api/v1';
       const resp = await fetch(`${apiBase}/ai/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           site_id: site.id,
           work_type: 'marine',
+          audience: aiAudience,
           weather: { temp: w.temp, hum: w.hum, wind: w.wind, rain: w.rain },
           marine: {
             waveHeight: m.waveHeight,
@@ -498,7 +587,29 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
     } finally {
       setAiLoading(false);
     }
-  }, [site, w, m]);
+  }, [aiAudience, site, w, m]);
+
+  const handleWorkWindowAi = async () => {
+    if (!site || !w || !m) return;
+    setWindowAiLoading(true);
+    try {
+      setWindowAiResult(await postAiAssist('/ai/chat', {
+        question: '海上作業に適した作業時間帯を提案してください。波高・風速・降雨を踏まえ、情報共有用海象データの扱いも明示してください。',
+        context: {
+          site: site.shortName,
+          weather: { temp: w.temp, hum: w.hum, wind: w.wind, rain: w.rain },
+          marine: m,
+          thresholds: site.thresholds,
+          wave_forecast: hourlyWave.slice(0, 8),
+          note: 'Open-Meteo Marine APIの海象は情報共有用。最終判断は施工判定と現場責任者が行う。',
+        },
+      }));
+    } catch {
+      setWindowAiResult(null);
+    } finally {
+      setWindowAiLoading(false);
+    }
+  };
 
   if (!site || !w || !m) {
     return (
@@ -591,6 +702,15 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-sm">📥 PDF出力</button>
+          <select
+            className="form-select"
+            value={aiAudience}
+            onChange={(e) => setAiAudience(e.target.value as 'field' | 'manager')}
+            style={{ width: 150, padding: '4px 10px', fontSize: 12 }}
+          >
+            <option value="field">現場向け</option>
+            <option value="manager">管理者向け</option>
+          </select>
           <button
             className="btn btn-sm btn-primary"
             onClick={handleAiAnalyze}
@@ -599,9 +719,13 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
           >
             {aiLoading ? '🤖 分析中...' : '🤖 AI分析'}
           </button>
+          <button className="btn btn-sm" onClick={handleWorkWindowAi} disabled={windowAiLoading}>
+            {windowAiLoading ? '提案中...' : 'AI時間帯提案'}
+          </button>
           <button className="btn btn-sm btn-primary">🔄 再判定</button>
         </div>
       </div>
+      <AiAssistPanel title="作業計画 AI時間帯提案" result={windowAiResult} />
 
       <div className="decision-panel mb-16">
         <div className={`decision-header ${overallStatus}`}>

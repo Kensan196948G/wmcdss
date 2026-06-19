@@ -1,9 +1,9 @@
-"""Periodic job: fetch latest JMA wave nowcast for each marine-enabled site.
+"""Periodic job: fetch latest reference marine data for marine-enabled sites.
 
-Kept separate from `ingest_jma` (AMeDAS) because:
-  - upstream contract is different (gridded JSON, hourly cadence)
-  - site selection criterion differs (`wave_grid_lat IS NOT NULL`)
-  - failure surface is different (URL contract still operator-verified)
+The original JMA wave nowcast point-JSON contract is not stable enough for
+production. This job now uses Open-Meteo Marine API and stores rows as
+source="open_meteo_marine_info". These rows are for information sharing only;
+the decision API excludes them from threshold judgement inputs.
 
 Invoked by systemd timer (`deploy/systemd/wmcdss-jma-fetch-marine.timer`) or
 manually:
@@ -28,7 +28,7 @@ from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models.observations import MarineObservation
 from app.models.site import Site
-from app.services import jma_wave as wave_svc
+from app.services import open_meteo_marine as marine_svc
 from app.services.audit import write_audit
 
 log = logging.getLogger("wmcdss.jobs.ingest_jma_marine")
@@ -57,7 +57,7 @@ async def _upsert_marine(db: AsyncSession, row: dict) -> None:
 
 
 async def run_once() -> int:
-    """Fetch latest wave nowcast for every site with wave_grid_lat set.
+    """Fetch latest reference marine data for every marine/both site.
 
     Returns the count of rows written. Always writes an audit row so a
     silently-failing run is distinguishable from a "no marine sites" run.
@@ -72,21 +72,22 @@ async def run_once() -> int:
 
     async with SessionLocal() as db:
         sites = (await db.execute(
-            select(Site).where(
-                Site.wave_grid_lat.isnot(None),
-                Site.wave_grid_lon.isnot(None),
-            )
+            select(Site).where(Site.kind.in_(["marine", "both"]))
         )).scalars().all()
 
         if not sites:
-            log.info("no sites with wave_grid_lat/lon; nothing to fetch")
+            log.info("no marine/both sites; nothing to fetch")
             # Still audit — distinguishes "no marine sites configured" from
             # "ingester never ran".
             try:
                 await write_audit(
-                    db, actor="jma_fetcher", action="observation.marine.ingest",
+                    db, actor="open_meteo_marine_fetcher", action="observation.marine.ingest",
                     target_type="marine_observation", target_id=None,
-                    detail={"sites_total": 0, "source": "jma_wave"},
+                    detail={
+                        "sites_total": 0,
+                        "source": marine_svc.SOURCE,
+                        "usage": "information_sharing_only",
+                    },
                 )
                 await db.commit()
             except SQLAlchemyError as exc:
@@ -99,21 +100,21 @@ async def run_once() -> int:
             headers={"User-Agent": settings.jma_user_agent}
         ) as client:
             for site in sites:
-                lat, lon = site.wave_grid_lat, site.wave_grid_lon
+                lat, lon = site.lat, site.lon
                 try:
-                    result = await wave_svc.fetch_latest(client, lat, lon)
+                    result = await marine_svc.fetch_latest(client, lat, lon)
                 except httpx.HTTPStatusError as exc:
                     code = exc.response.status_code
                     if 400 <= code < 500:
                         upstream_4xx += 1
                     elif 500 <= code < 600:
                         upstream_5xx += 1
-                    log.error("jma_wave upstream %s site=%s grid=%s,%s url=%s",
+                    log.error("open_meteo_marine upstream %s site=%s coord=%s,%s url=%s",
                               code, site.code, lat, lon, exc.request.url)
                     fetch_failed += 1
                     continue
                 except _FETCH_TOLERATED as exc:
-                    log.warning("jma_wave transient site=%s grid=%s,%s: %s",
+                    log.warning("open_meteo_marine transient site=%s coord=%s,%s: %s",
                                 site.code, lat, lon, exc)
                     fetch_failed += 1
                     continue
@@ -125,9 +126,8 @@ async def run_once() -> int:
                     continue
 
                 observed_at, entry = result
-                row = wave_svc.normalise(
+                row = marine_svc.normalise(
                     entry, observed_at, str(site.id),
-                    grid_lat=lat, grid_lon=lon,
                 )
                 try:
                     async with db.begin_nested():
@@ -140,7 +140,7 @@ async def run_once() -> int:
 
             try:
                 await write_audit(
-                    db, actor="jma_fetcher", action="observation.marine.ingest",
+                    db, actor="open_meteo_marine_fetcher", action="observation.marine.ingest",
                     target_type="marine_observation", target_id=None,
                     detail={
                         "written": written,
@@ -150,7 +150,8 @@ async def run_once() -> int:
                         "upstream_4xx": upstream_4xx,
                         "upstream_5xx": upstream_5xx,
                         "sites_total": len(sites),
-                        "source": "jma_wave",
+                        "source": marine_svc.SOURCE,
+                        "usage": "information_sharing_only",
                     },
                 )
                 await db.commit()
@@ -160,7 +161,7 @@ async def run_once() -> int:
                 raise
 
     log.info(
-        "ingest_jma_marine: wrote=%d fetch_failed=%d (4xx=%d 5xx=%d) "
+        "ingest_jma_marine(open_meteo): wrote=%d fetch_failed=%d (4xx=%d 5xx=%d) "
         "upsert_failed=%d no_data=%d",
         written, fetch_failed, upstream_4xx, upstream_5xx,
         upsert_failed, no_data,

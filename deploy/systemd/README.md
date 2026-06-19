@@ -2,7 +2,7 @@
 
 ## 🚀 WebUI + API 起動サービス
 
-`wmcdss.service` — Docker Compose 全体（WebUI + API + DB）を OS 起動時に自動起動します。
+`wmcdss.service` — 本番用 Docker Compose 全体（WebUI + API + DB）を OS 起動時に自動起動します。
 
 ```bash
 # インストール
@@ -16,7 +16,7 @@ sudo loginctl enable-linger $USER   # ログインなしで常時起動
 **アクセス URL**（IP は `ip addr show` で確認）:
 
 - WebUI: `http://<LAN-IP>:9080`
-- API: `http://<LAN-IP>:8003`
+- API: WebUI の nginx 経由で `/api/v1` に公開します。API コンテナの 8000 番はホストへ直接公開しません。
 
 ---
 
@@ -61,11 +61,13 @@ journalctl --user -u wmcdss-jma-fetch-marine.service -f
 
 ```bash
 # AMeDAS
-docker compose -f ~/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.yml \
+docker compose --env-file ~/Projects/Weather-Marine-Construction-Decision-Support-System/.env.production \
+  -f ~/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.production.yml \
   exec -T backend python -m app.jobs.ingest_jma
 
 # Wave nowcast
-docker compose -f ~/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.yml \
+docker compose --env-file ~/Projects/Weather-Marine-Construction-Decision-Support-System/.env.production \
+  -f ~/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.production.yml \
   exec -T backend python -m app.jobs.ingest_jma_marine
 ```
 

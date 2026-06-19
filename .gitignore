@@ -15,6 +15,12 @@ __pycache__/
 .env.windows
 !.env.production.example
 !.env.windows.example
+.wmcdss_ai_settings.json
+backend/.wmcdss_ai_settings.json
+.claude/
+.mcp.json
+CLAUDE.md
+.coderabbit.yaml.bak-*
 *.pem
 *.key
 

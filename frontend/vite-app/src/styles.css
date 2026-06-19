@@ -252,6 +252,12 @@ body {
 }
 .btn-primary:hover { background: var(--blue-600); }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+.etl-run-button {
+  min-width: 88px;
+  justify-content: center;
+  white-space: nowrap;
+}
 .btn-danger { color: var(--status-danger); border-color: var(--status-danger-border); }
 
 /* Forms */

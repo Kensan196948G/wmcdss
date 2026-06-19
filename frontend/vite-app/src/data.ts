@@ -2250,8 +2250,8 @@ export const ETL_JOBS: ETLJob[] = [
   },
   {
     id: 2,
-    name: "気象庁波浪データ取得",
-    schedule: "3時間毎",
+    name: "海象参考情報取得",
+    schedule: "10分毎確認（情報共有用）",
     lastRun: "2026/05/22 09:00",
     status: "ok",
     records: 48,

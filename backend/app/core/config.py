@@ -53,6 +53,17 @@ class Settings(BaseSettings):
         # 認証済みユーザー（JWT）のみ許可する（下記 ai.py Depends を参照）。
         # 誤って exempt_paths に追加しないこと。
         "/api/v1/ai/analyze",
+        "/api/v1/ai/etl-diagnose",
+        "/api/v1/ai/risk-summary",
+        "/api/v1/ai/report-comment",
+        "/api/v1/ai/anomaly-detect",
+        "/api/v1/ai/chat",
+        # /reports は WebUI のレポート出力操作。DBの変更を伴わないため、
+        # API key middleware から除外してブラウザから直接取得できるようにする。
+        "/api/v1/reports",
+        # /etl/run/{job_id} は route 側で JWT 認証する。API key middleware
+        # からは除外し、WebUI のログイン済みユーザーが手動実行できるようにする。
+        "/api/v1/etl/run",
     ]
 
     rate_limit_per_minute: int = 0
@@ -68,6 +79,8 @@ class Settings(BaseSettings):
 
     # Claude AI API キー (オプション): 設定時は /api/v1/ai/analyze で使用
     claude_api_key: str = ""
+    claude_model: str = "claude-sonnet-4-6"
+    ai_settings_file: str = "/app/.wmcdss_ai_settings.json"
 
     # ローカルユーザー: "username:bcrypt_hash" 形式カンマ区切り
     local_users: str = ""

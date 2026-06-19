@@ -1,0 +1,150 @@
+name: wmcdss-prod
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: wmcdss-prod-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-wmcdss_app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env.production}
+      POSTGRES_DB: ${POSTGRES_DB:-wmcdss}
+      TZ: ${TZ:-Asia/Tokyo}
+    volumes:
+      - wmcdss_prod_pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-wmcdss_app} -d ${POSTGRES_DB:-wmcdss}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    logging: *default-logging
+    restart: always
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+      target: production
+    image: wmcdss-backend:production
+    container_name: wmcdss-prod-backend
+    env_file:
+      - .env.production
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WMCDSS_DATABASE_URL: ${WMCDSS_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-wmcdss_app}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-wmcdss}}
+      WMCDSS_DEBUG: ${WMCDSS_DEBUG:-false}
+      WMCDSS_EXPOSE_OPENAPI: ${WMCDSS_EXPOSE_OPENAPI:-false}
+      WMCDSS_CORS_ORIGINS_RAW: ${WMCDSS_CORS_ORIGINS_RAW:-http://${WMCDSS_WEBUI_HOST:-192.168.0.185}:${WMCDSS_WEBUI_PORT:-9080}}
+      WMCDSS_API_KEYS_RAW: ${WMCDSS_API_KEYS_RAW:?WMCDSS_API_KEYS_RAW must be set in .env.production}
+      WMCDSS_RATE_LIMIT_PER_MINUTE: ${WMCDSS_RATE_LIMIT_PER_MINUTE:-60}
+      WMCDSS_JWT_SECRET: ${WMCDSS_JWT_SECRET:?WMCDSS_JWT_SECRET must be set in .env.production}
+      WMCDSS_JWT_EXPIRE_MINUTES: ${WMCDSS_JWT_EXPIRE_MINUTES:-480}
+      WMCDSS_AI_SETTINGS_FILE: ${WMCDSS_AI_SETTINGS_FILE:-/app/data/ai_settings.json}
+      PYTHONUNBUFFERED: "1"
+      TZ: ${TZ:-Asia/Tokyo}
+    volumes:
+      - wmcdss_prod_ai_data:/app/data
+      - type: bind
+        source: ./backend/.wmcdss_ai_settings.json
+        target: /app/data/ai_settings.json
+        bind:
+          create_host_path: false
+    expose:
+      - "8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c ''import http.client,sys; c=http.client.HTTPConnection("localhost",8000,timeout=2); c.request("GET","/readyz"); sys.exit(0 if c.getresponse().status==200 else 1)''',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 30s
+    logging: *default-logging
+    restart: always
+
+  frontend:
+    build:
+      context: ./frontend/vite-app
+      dockerfile: Dockerfile
+    image: wmcdss-frontend:production
+    container_name: wmcdss-prod-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "0.0.0.0:${WMCDSS_WEBUI_PORT:-9080}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://127.0.0.1/readyz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *default-logging
+    restart: always
+
+  weather-ingest:
+    image: wmcdss-backend:production
+    container_name: wmcdss-prod-weather-ingest
+    env_file:
+      - .env.production
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WMCDSS_DATABASE_URL: ${WMCDSS_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-wmcdss_app}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-wmcdss}}
+      WMCDSS_JMA_WEATHER_INTERVAL_SECONDS: ${WMCDSS_JMA_WEATHER_INTERVAL_SECONDS:-600}
+      PYTHONUNBUFFERED: "1"
+      TZ: ${TZ:-Asia/Tokyo}
+    command:
+      [
+        "sh",
+        "-c",
+        "while true; do python -m app.jobs.ingest_jma || true; sleep $${WMCDSS_JMA_WEATHER_INTERVAL_SECONDS:-600}; done",
+      ]
+    healthcheck:
+      disable: true
+    logging: *default-logging
+    restart: always
+
+  marine-ingest:
+    image: wmcdss-backend:production
+    container_name: wmcdss-prod-marine-ingest
+    env_file:
+      - .env.production
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WMCDSS_DATABASE_URL: ${WMCDSS_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-wmcdss_app}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-wmcdss}}
+      WMCDSS_JMA_MARINE_INTERVAL_SECONDS: ${WMCDSS_JMA_MARINE_INTERVAL_SECONDS:-600}
+      PYTHONUNBUFFERED: "1"
+      TZ: ${TZ:-Asia/Tokyo}
+    command:
+      [
+        "sh",
+        "-c",
+        "while true; do python -m app.jobs.ingest_jma_marine || true; sleep $${WMCDSS_JMA_MARINE_INTERVAL_SECONDS:-600}; done",
+      ]
+    healthcheck:
+      disable: true
+    logging: *default-logging
+    restart: always
+
+volumes:
+  wmcdss_prod_pgdata:
+  wmcdss_prod_ai_data:

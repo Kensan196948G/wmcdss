@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -13,6 +14,7 @@ import {
   TYPE_LABEL,
   type SiteThresholds,
 } from "./data";
+import type { AiAssistResponse } from "./api";
 
 type Role = "field" | "manager";
 type ReportFormat = "pdf" | "excel" | "csv";
@@ -34,9 +36,140 @@ interface ReportForm {
 
 type ThresholdMap = Record<string, SiteThresholds>;
 
+function downloadBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildPrintableReportHtml(form: ReportForm, target: string): string {
+  return `<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>WMCDSS Report</title>
+  <style>
+    body { font-family: system-ui, sans-serif; padding: 32px; line-height: 1.7; color: #1a2332; }
+    h1 { font-size: 20px; margin-bottom: 16px; }
+    table { border-collapse: collapse; width: 100%; margin-top: 16px; }
+    th, td { border: 1px solid #d5dce6; padding: 8px 10px; text-align: left; }
+    th { background: #f8f9fb; }
+    .note { margin-top: 24px; font-size: 12px; color: #4a5568; }
+  </style>
+</head>
+<body>
+  <h1>WMCDSS レポート（PDF印刷用）</h1>
+  <table>
+    <tr><th>対象</th><td>${escapeHtml(target)}</td></tr>
+    <tr><th>テンプレート</th><td>${escapeHtml(form.template)}</td></tr>
+    <tr><th>期間</th><td>${escapeHtml(form.dateFrom)} - ${escapeHtml(form.dateTo)}</td></tr>
+    <tr><th>作成日時</th><td>${escapeHtml(new Date().toLocaleString("ja-JP"))}</td></tr>
+  </table>
+  <p class="note">このファイルをブラウザで開き、印刷メニューからPDF保存してください。</p>
+</body>
+</html>`;
+}
+
+function buildAiReportText(
+  form: ReportForm,
+  target: string,
+  result: AiAssistResponse,
+): string {
+  return [
+    "WMCDSS AI総括コメント付きレポート",
+    "",
+    `対象: ${target}`,
+    `テンプレート: ${form.template}`,
+    `期間: ${form.dateFrom} - ${form.dateTo}`,
+    `作成日時: ${new Date().toLocaleString("ja-JP")}`,
+    `分析種別: ${result.analysis_type === "claude_ai" ? "Claude AI" : "ルールベース"}`,
+    "",
+    "総括",
+    result.summary,
+    "",
+    "確認事項",
+    ...result.bullets.map((line) => `- ${line}`),
+    "",
+    "推奨事項",
+    ...result.recommendations.map((line) => `- ${line}`),
+    "",
+    result.disclaimer,
+    "Open-Meteo Marine APIの海象値は情報共有用です。施工判断の正式根拠には使用しません。",
+  ].join("\n");
+}
+
+async function postAiAssist(path: string, payload: unknown): Promise<AiAssistResponse> {
+  const apiBase =
+    (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE ??
+    "/api/v1";
+  const resp = await fetch(`${apiBase}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return await resp.json() as AiAssistResponse;
+}
+
+const AiAssistCard: FC<{ title: string; result: AiAssistResponse | null }> = ({
+  title,
+  result,
+}) => {
+  if (!result) return null;
+  return (
+    <div className="card mb-16" style={{ borderColor: "var(--blue-300)" }}>
+      <div className="card-header" style={{ background: "var(--blue-50)" }}>
+        <span className="card-title">
+          {title}
+          <span className="badge badge-info" style={{ marginLeft: 8 }}>
+            {result.analysis_type === "claude_ai" ? "Claude AI" : "ルールベース"}
+          </span>
+        </span>
+      </div>
+      <div className="card-body" style={{ fontSize: 13, lineHeight: 1.7 }}>
+        <div style={{ fontWeight: 700, marginBottom: 8 }}>{result.summary}</div>
+        {result.bullets.map((line, idx) => (
+          <div key={`b-${idx}`} style={{ color: "var(--text-secondary)" }}>
+            ・{line}
+          </div>
+        ))}
+        {result.recommendations.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            {result.recommendations.map((line, idx) => (
+              <div key={`r-${idx}`} style={{ color: "var(--blue-600)" }}>
+                推奨: {line}
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ marginTop: 10, fontSize: 11, color: "var(--text-muted)" }}>
+          {result.disclaimer}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ---------- Thresholds ----------
 export const ThresholdsPage: FC = () => {
   const [editing, setEditing] = useState<string | null>(null);
+  const [thresholdAiResult, setThresholdAiResult] = useState<AiAssistResponse | null>(null);
+  const [thresholdAiLoading, setThresholdAiLoading] = useState(false);
   const [thresholds, setThresholds] = useState<ThresholdMap>(() =>
     SITES.reduce<ThresholdMap>(
       (acc, s) => ({ ...acc, [s.id]: { ...s.thresholds } }),
@@ -59,14 +192,45 @@ export const ThresholdsPage: FC = () => {
     }));
   };
 
+  const handleThresholdAi = async () => {
+    setThresholdAiLoading(true);
+    try {
+      setThresholdAiResult(await postAiAssist("/ai/chat", {
+        question: "閾値設定が厳しすぎる、または緩すぎる可能性がある現場を確認してください。自動変更はせず、管理者承認前提の提案にしてください。",
+        context: {
+          thresholds: SITES.map((site) => ({
+            id: site.id,
+            name: site.shortName,
+            type: site.type,
+            thresholds: thresholds[site.id],
+          })),
+        },
+      }));
+    } catch {
+      setThresholdAiResult(null);
+    } finally {
+      setThresholdAiLoading(false);
+    }
+  };
+
   return (
     <div>
       <div className="flex-between mb-16">
         <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
           各現場の施工中止基準値を管理します。変更履歴は監査ログに記録されます。
         </div>
-        <button className="btn btn-sm">📥 一括CSV出力</button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button
+            className="btn btn-sm"
+            onClick={handleThresholdAi}
+            disabled={thresholdAiLoading}
+          >
+            {thresholdAiLoading ? "確認中..." : "AI閾値補助"}
+          </button>
+          <button className="btn btn-sm">📥 一括CSV出力</button>
+        </div>
       </div>
+      <AiAssistCard title="閾値設定 AI補助コメント" result={thresholdAiResult} />
 
       <div className="card">
         <table className="data-table">
@@ -79,7 +243,7 @@ export const ThresholdsPage: FC = () => {
               <th>降水量 (mm/h)</th>
               <th>気温下限 (℃)</th>
               <th>気温上限 (℃)</th>
-              <th>操作</th>
+              <th style={{ width: 116 }}>操作</th>
             </tr>
           </thead>
           <tbody>
@@ -228,11 +392,11 @@ const ETL_SOURCES: EtlSource[] = [
     data: "気温・湿度・気圧・風速・風向・降水量",
   },
   {
-    label: "波浪ナウキャスト",
-    url: "https://www.jma.go.jp/bosai/nowc/",
-    interval: "1時間毎（毎時 03分）",
+    label: "海象参考情報（Open-Meteo Marine API）",
+    url: "https://open-meteo.com/en/docs/marine-weather-api",
+    interval: "10分毎確認（情報共有用・施工判断には使用しない）",
     table: "marine_observations",
-    data: "有義波高・波周期・波向・潮位",
+    data: "波高・波周期・波向・潮位相当・流向流速",
   },
 ];
 
@@ -247,9 +411,9 @@ const ETL_JOB_META: Record<
     url: "https://www.jma.go.jp/bosai/amedas/",
   },
   2: {
-    source: "気象庁 波浪ナウキャスト",
-    dataItems: "有義波高・波周期・波向・潮位",
-    url: "https://www.jma.go.jp/bosai/nowc/",
+    source: "Open-Meteo Marine API（情報共有用）",
+    dataItems: "波高・波周期・波向・潮位相当・流向流速",
+    url: "https://open-meteo.com/en/docs/marine-weather-api",
   },
   3: {
     source: "気象庁 潮位観測",
@@ -271,7 +435,9 @@ interface EtlJobStatus {
   source: string;
   schedule: string;
   last_obs_at: string | null;
+  last_run_at?: string | null;
   status: string;
+  records?: number;
 }
 
 interface EtlStatusResponse {
@@ -285,53 +451,98 @@ export const EtlPage: FC = () => {
       : undefined;
   const isConnected = backendStatus?.ok === true;
 
-  const [runningJob, setRunningJob] = useState(false);
+  const [runningJob, setRunningJob] = useState<number | null>(null);
   const [etlJobStatuses, setEtlJobStatuses] = useState<EtlJobStatus[] | null>(
     null,
   );
+  const [etlStatusError, setEtlStatusError] = useState<string | null>(null);
+  const [etlRunMessage, setEtlRunMessage] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
+  const [etlAiResult, setEtlAiResult] = useState<AiAssistResponse | null>(null);
+  const [etlAiLoading, setEtlAiLoading] = useState<"diagnose" | "anomaly" | null>(null);
 
-  // Fetch ETL status from backend on mount (only when API base is configured)
+  const apiBase =
+    (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE ??
+    "/api/v1";
+
+  const authHeaders = (): Record<string, string> => {
+    const token =
+      typeof localStorage !== "undefined"
+        ? localStorage.getItem("wmcdss_access_token")
+        : null;
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  };
+
+  const refreshEtlStatus = useCallback(async () => {
+    try {
+      const resp = await fetch(`${apiBase}/etl/status`, { cache: "no-store" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = (await resp.json()) as EtlStatusResponse;
+      if (Array.isArray(data?.jobs)) {
+        setEtlJobStatuses(data.jobs);
+        setEtlStatusError(null);
+      }
+    } catch (err) {
+      setEtlStatusError(err instanceof Error ? err.message : String(err));
+    }
+  }, [apiBase]);
+
   useEffect(() => {
-    const configuredApiBase = (window as Window & { WMCDSS_API_BASE?: string })
-      .WMCDSS_API_BASE;
-    if (!configuredApiBase) return;
     let cancelled = false;
-    (async () => {
+    const tick = async () => {
+      if (cancelled) return;
       try {
-        const resp = await fetch(`${configuredApiBase}/etl/status`);
+        const resp = await fetch(`${apiBase}/etl/status`, { cache: "no-store" });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const data = (await resp.json()) as EtlStatusResponse;
         if (!cancelled && Array.isArray(data?.jobs)) {
           setEtlJobStatuses(data.jobs);
+          setEtlStatusError(null);
         }
-      } catch {
-        // Backend not available — stay with static ETL_JOBS data
+      } catch (err) {
+        if (!cancelled) {
+          setEtlStatusError(err instanceof Error ? err.message : String(err));
+        }
       }
-    })();
+    };
+    tick();
+    const timer = window.setInterval(tick, 30_000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
-  }, []);
+  }, [apiBase]);
 
-  const handleManualRun = async () => {
-    const configuredApiBase = (window as Window & { WMCDSS_API_BASE?: string })
-      .WMCDSS_API_BASE;
-    if (!configuredApiBase) {
-      alert("バックエンドに接続できません");
+  const handleManualRun = async (jobId: number) => {
+    setRunningJob(jobId);
+    setEtlRunMessage(null);
+    try {
+      const resp = await fetch(`${apiBase}/etl/run/${jobId}`, {
+        method: "POST",
+        headers: authHeaders(),
+      });
+      const data = typeof resp.text === "function"
+        ? JSON.parse((await resp.text()) || "{}") as { message?: string; detail?: string }
+        : await resp.json() as { message?: string; detail?: string };
+      if (!resp.ok) {
+        throw new Error(data.detail || `HTTP ${resp.status}`);
+      }
+      setEtlRunMessage({
+        ok: true,
+        text: data.message || `ジョブ ${jobId} を実行しました`,
+      });
+      await refreshEtlStatus();
+    } catch (err) {
+      setEtlRunMessage({
+        ok: false,
+        text: err instanceof Error ? err.message : "バックエンドに接続できません",
+      });
+      setRunningJob(null);
       return;
     }
-    setRunningJob(true);
-    try {
-      const resp = await fetch(`${configuredApiBase}/etl/run/1`, {
-        method: "POST",
-      });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      // Success — revert button after 1s
-      setTimeout(() => setRunningJob(false), 1000);
-    } catch {
-      setRunningJob(false);
-      alert("バックエンドに接続できません");
-    }
+    setRunningJob(null);
   };
 
   // Find last_obs_at values for weather and marine jobs from backend status
@@ -339,6 +550,65 @@ export const EtlPage: FC = () => {
     etlJobStatuses?.find((j) => j.id === 1)?.last_obs_at ?? null;
   const marineLastObs =
     etlJobStatuses?.find((j) => j.id === 2)?.last_obs_at ?? null;
+  const jobRows: EtlJobStatus[] =
+    etlJobStatuses ??
+    ETL_JOBS.map((job) => ({
+      id: job.id,
+      name: job.name,
+      source: ETL_JOB_META[job.id]?.source ?? "—",
+      schedule: job.schedule,
+      last_obs_at: job.lastRun,
+      status: job.status,
+      records: job.records,
+    }));
+
+  const handleEtlAiDiagnose = async () => {
+    setEtlAiLoading("diagnose");
+    try {
+      setEtlAiResult(await postAiAssist("/ai/etl-diagnose", { jobs: jobRows }));
+    } catch {
+      setEtlAiResult(null);
+    } finally {
+      setEtlAiLoading(null);
+    }
+  };
+
+  const handleEtlAiAnomaly = async () => {
+    setEtlAiLoading("anomaly");
+    try {
+      setEtlAiResult(await postAiAssist(
+        "/ai/anomaly-detect",
+        {
+          observations: jobRows.map((job) => ({
+            id: job.id,
+            name: job.name,
+            status: job.status,
+            records: job.records ?? 0,
+            last_obs_at: job.last_obs_at,
+            last_run_at: job.last_run_at,
+            source: job.source,
+          })),
+          source_note: "ETLジョブ状態、AMeDAS、Open-Meteo Marine API（情報共有用）",
+        },
+      ));
+    } catch {
+      setEtlAiResult(null);
+    } finally {
+      setEtlAiLoading(null);
+    }
+  };
+
+  const formatTimestamp = (raw: string | null | undefined): string =>
+    raw ? raw.replace("T", " ").replace(/\.\d+/, "") : "未取得";
+  const statusLabel = (status: string): string => {
+    if (status === "ok") return "正常";
+    if (status === "stale") return "要確認";
+    if (status === "unknown") return "未取得";
+    if (status === "not_configured") return "対象未設定";
+    return status;
+  };
+  const statusBadgeClass = (status: string): string =>
+    status === "ok" ? "badge-ok" : "badge-warn";
 
   return (
     <div>
@@ -348,12 +618,27 @@ export const EtlPage: FC = () => {
         </div>
         <button
           className="btn btn-sm btn-primary"
-          onClick={handleManualRun}
-          disabled={runningJob}
+          onClick={() => handleManualRun(1)}
+          disabled={runningJob !== null}
         >
-          {runningJob ? "実行中..." : "▶ 手動実行"}
+          {runningJob === 1 ? "実行中..." : "▶ AMeDAS 手動実行"}
         </button>
       </div>
+      {etlRunMessage && (
+        <div
+          className="mb-16"
+          role={etlRunMessage.ok ? "status" : "alert"}
+          style={{
+            padding: "10px 12px",
+            borderRadius: 6,
+            fontSize: 13,
+            background: etlRunMessage.ok ? "rgba(5, 150, 105, 0.12)" : "rgba(217, 119, 6, 0.12)",
+            color: etlRunMessage.ok ? "var(--status-ok)" : "var(--status-warn, #d97706)",
+          }}
+        >
+          {etlRunMessage.text}
+        </div>
+      )}
 
       {/* データ取得元情報 */}
       <div className="card mb-16">
@@ -448,6 +733,17 @@ export const EtlPage: FC = () => {
               {marineLastObs && <div>最終海象観測: {marineLastObs}</div>}
             </div>
           )}
+          {etlStatusError && (
+            <div
+              style={{
+                marginTop: 8,
+                fontSize: 12,
+                color: "var(--status-warn, #d97706)",
+              }}
+            >
+              ETL status 取得エラー: {etlStatusError}
+            </div>
+          )}
         </div>
         <div className="stat-card">
           <div className="stat-label">取得実績（現場数）</div>
@@ -466,6 +762,22 @@ export const EtlPage: FC = () => {
       <div className="card">
         <div className="card-header">
           <span className="card-title">ジョブ一覧</span>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button
+              className="btn btn-sm"
+              onClick={handleEtlAiAnomaly}
+              disabled={etlAiLoading !== null}
+            >
+              {etlAiLoading === "anomaly" ? "確認中..." : "AI異常確認"}
+            </button>
+            <button
+              className="btn btn-sm btn-primary"
+              onClick={handleEtlAiDiagnose}
+              disabled={etlAiLoading !== null}
+            >
+              {etlAiLoading === "diagnose" ? "診断中..." : "AI診断"}
+            </button>
+          </div>
         </div>
         <table className="data-table">
           <thead>
@@ -482,12 +794,13 @@ export const EtlPage: FC = () => {
             </tr>
           </thead>
           <tbody>
-            {ETL_JOBS.map((job) => {
-              const meta = ETL_JOB_META[job.id];
+            {jobRows.map((job) => {
+              const id = Number(job.id);
+              const meta = ETL_JOB_META[id];
               return (
                 <tr key={job.id}>
                   <td style={{ fontWeight: 600 }}>{job.name}</td>
-                  <td style={{ fontSize: 12 }}>{meta?.source ?? "—"}</td>
+                  <td style={{ fontSize: 12 }}>{job.source || meta?.source || "—"}</td>
                   <td style={{ fontSize: 11, color: "var(--text-secondary)" }}>
                     {meta?.dataItems ?? "—"}
                   </td>
@@ -511,21 +824,27 @@ export const EtlPage: FC = () => {
                   </td>
                   <td>{job.schedule}</td>
                   <td style={{ fontVariantNumeric: "tabular-nums" }}>
-                    {job.lastRun}
+                    {formatTimestamp(job.last_run_at ?? job.last_obs_at)}
                   </td>
                   <td>
                     <span
-                      className={`badge ${job.status === "ok" ? "badge-ok" : "badge-warn"}`}
+                      className={`badge ${statusBadgeClass(job.status)}`}
                     >
                       <span className="badge-dot"></span>
-                      {job.status === "ok" ? "正常" : job.status}
+                      {statusLabel(job.status)}
                     </span>
                   </td>
                   <td style={{ fontVariantNumeric: "tabular-nums" }}>
-                    {job.records.toLocaleString()}
+                    {(job.records ?? 0).toLocaleString()}
                   </td>
-                  <td>
-                    <button className="btn btn-sm">▶ 実行</button>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button
+                      className="btn btn-sm etl-run-button"
+                      onClick={() => handleManualRun(id)}
+                      disabled={runningJob !== null || ![1, 2].includes(id)}
+                    >
+                      {runningJob === id ? "実行中..." : "▶ 実行"}
+                    </button>
                   </td>
                 </tr>
               );
@@ -533,6 +852,7 @@ export const EtlPage: FC = () => {
           </tbody>
         </table>
       </div>
+      <AiAssistCard title="データ取得状況 AI診断コメント" result={etlAiResult} />
     </div>
   );
 };
@@ -579,6 +899,11 @@ const RECENT_REPORTS: RecentReport[] = [
 ];
 
 export const ReportsPage: FC = () => {
+  const reportSites = (
+    typeof window !== "undefined" && Array.isArray(window.SITES)
+      ? window.SITES
+      : SITES
+  ) as Array<{ id: string | number; shortName?: string; name?: string }>;
   const [form, setForm] = useState<ReportForm>({
     site: "all",
     template: "daily",
@@ -588,10 +913,21 @@ export const ReportsPage: FC = () => {
   });
   const [generating, setGenerating] = useState(false);
   const [done, setDone] = useState(false);
+  const [reportMessage, setReportMessage] = useState<string | null>(null);
+  const [reportAiResult, setReportAiResult] = useState<AiAssistResponse | null>(null);
+  const [reportAiLoading, setReportAiLoading] = useState(false);
+
+  const selectedTarget =
+    form.site === "all"
+      ? "全現場"
+      : reportSites.find((site) => String(site.id) === form.site)?.shortName
+        ?? reportSites.find((site) => String(site.id) === form.site)?.name
+        ?? form.site;
 
   const handleGenerate = () => {
     setGenerating(true);
     setDone(false);
+    setReportMessage(null);
 
     // WMCDSS_API_BASE must be explicitly configured at runtime for real backend
     // calls. When it is absent (local dev / test / demo) fall straight through
@@ -603,11 +939,27 @@ export const ReportsPage: FC = () => {
       setTimeout(() => {
         setGenerating(false);
         setDone(true);
+        setReportMessage("レポートが生成されました。サンプル環境のためダウンロードは省略しました。");
       }, 1500);
       return;
     }
 
-    const siteId = form.site !== "all" ? form.site : SITES[0].id;
+    if (form.format === "pdf") {
+      const html = buildPrintableReportHtml(form, selectedTarget);
+      downloadBlob(
+        new Blob([html], { type: "text/html;charset=utf-8" }),
+        `wmcdss_report_${form.template}_pdf_print.html`,
+      );
+      setGenerating(false);
+      setDone(true);
+      setReportMessage("レポートが生成されました。PDF印刷用HTMLレポートをダウンロードしました。ブラウザで開いてPDF保存できます。");
+      return;
+    }
+
+    const siteId =
+      form.site !== "all"
+        ? form.site
+        : String(reportSites[0]?.id ?? SITES[0].id);
 
     fetch(`${configuredApiBase}/reports`, {
       method: "POST",
@@ -617,7 +969,7 @@ export const ReportsPage: FC = () => {
         template: form.template,
         date_from: form.dateFrom,
         date_to: form.dateTo,
-        format: form.format,
+        format: form.format === "excel" ? "excel" : "csv",
       }),
     })
       .then((response) => {
@@ -625,22 +977,52 @@ export const ReportsPage: FC = () => {
         return response.blob();
       })
       .then((blob) => {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `wmcdss_report_${form.template}.${form.format}`;
-        a.click();
-        URL.revokeObjectURL(url);
+        const ext = form.format === "excel" ? "xlsx" : "csv";
+        downloadBlob(blob, `wmcdss_report_${form.template}.${ext}`);
         setGenerating(false);
         setDone(true);
+        setReportMessage(`レポートが生成されました。${form.format === "excel" ? "Excel" : "CSV"}レポートをダウンロードしました。`);
       })
-      .catch(() => {
-        // Fallback to simulated generation when backend call fails
-        setTimeout(() => {
-          setGenerating(false);
-          setDone(true);
-        }, 1500);
+      .catch((err) => {
+        setGenerating(false);
+        setDone(false);
+        setReportMessage(
+          err instanceof Error
+            ? `レポート生成に失敗しました: ${err.message}`
+            : "レポート生成に失敗しました",
+        );
       });
+  };
+
+  const handleReportAiComment = async () => {
+    setReportAiLoading(true);
+    setReportMessage(null);
+    try {
+      const result = await postAiAssist("/ai/report-comment", {
+        template: form.template,
+        date_from: form.dateFrom,
+        date_to: form.dateTo,
+        target: selectedTarget,
+        recent_reports: RECENT_REPORTS,
+      });
+      setReportAiResult(result);
+      downloadBlob(
+        new Blob([buildAiReportText(form, selectedTarget, result)], {
+          type: "text/plain;charset=utf-8",
+        }),
+        `wmcdss_ai_summary_${form.template}.txt`,
+      );
+      setReportMessage("AI総括コメント付きレポートをダウンロードしました。");
+    } catch (err) {
+      setReportAiResult(null);
+      setReportMessage(
+        err instanceof Error
+          ? `AI総括コメントの作成に失敗しました: ${err.message}`
+          : "AI総括コメントの作成に失敗しました",
+      );
+    } finally {
+      setReportAiLoading(false);
+    }
   };
 
   return (
@@ -661,9 +1043,9 @@ export const ReportsPage: FC = () => {
                 }
               >
                 <option value="all">全現場</option>
-                {SITES.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.shortName}
+                {reportSites.map((s) => (
+                  <option key={String(s.id)} value={String(s.id)}>
+                    {s.shortName ?? s.name ?? String(s.id)}
                   </option>
                 ))}
               </select>
@@ -736,6 +1118,13 @@ export const ReportsPage: FC = () => {
             >
               {generating ? "生成中…" : "📄 レポート生成"}
             </button>
+            <button
+              className="btn"
+              onClick={handleReportAiComment}
+              disabled={reportAiLoading}
+            >
+              {reportAiLoading ? "作成中..." : "AI総括コメント"}
+            </button>
           </div>
 
           {done && (
@@ -751,11 +1140,29 @@ export const ReportsPage: FC = () => {
                 fontWeight: 500,
               }}
             >
-              ✓ レポートが生成されました。ダウンロードが開始されます。
+              ✓ {reportMessage ?? "レポートが生成されました。"}
+            </div>
+          )}
+          {!done && reportMessage && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 16,
+                background: "var(--status-warn-bg)",
+                border: "1px solid var(--status-warn-border)",
+                borderRadius: "var(--radius-md)",
+                padding: "12px 16px",
+                fontSize: 13,
+                color: "var(--status-warn)",
+                fontWeight: 500,
+              }}
+            >
+              {reportMessage}
             </div>
           )}
         </div>
       </div>
+      <AiAssistCard title="レポート AI総括コメント" result={reportAiResult} />
 
       <div className="card">
         <div className="card-header">
@@ -1351,7 +1758,7 @@ const DEFAULT_SUPPORTED_MODELS: { id: string; label: string }[] = [
 export const AiSettingsPage: FC = () => {
   const apiBase =
     (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE ??
-    `http://${window.location.hostname}:8003/api/v1`;
+    "/api/v1";
 
   // /ai/settings と /ai/test は JWT 認証が必要（セキュリティ修正）。
   // ログイン済みの JWT トークンを Authorization ヘッダーに付与する。

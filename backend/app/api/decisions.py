@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import select, and_
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import actor_from
@@ -44,6 +44,10 @@ async def _latest_inputs(db: AsyncSession, site_id, t0, t1) -> dict[str, float |
         select(MarineObservation)
         .where(MarineObservation.site_id == site_id)
         .where(MarineObservation.observed_at.between(t0 - timedelta(hours=3), t1))
+        .where(or_(
+            MarineObservation.source.is_(None),
+            MarineObservation.source != "open_meteo_marine_info",
+        ))
         .order_by(MarineObservation.observed_at.desc())
     )
     w = (await db.execute(wq)).scalars().first()

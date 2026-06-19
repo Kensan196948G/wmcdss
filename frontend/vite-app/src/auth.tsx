@@ -17,9 +17,9 @@ import { WMCDSS_API_BASE } from './api';
 const TOKEN_KEY = 'wmcdss_access_token';
 const USER_KEY = 'wmcdss_user';
 
-// WMCDSS_API_BASE = "http://{hostname}:8003/api/v1"
+// WMCDSS_API_BASE = "/api/v1" in production, or "http://{hostname}:8003/api/v1" in Vite dev
 // auth エンドポイントは /auth/login, /auth/login/m365, /auth/me
-// → WMCDSS_API_BASE + "/auth/login" = "http://host:8003/api/v1/auth/login"
+// → WMCDSS_API_BASE + "/auth/login"
 function getApiBase(): string {
   return WMCDSS_API_BASE;
 }

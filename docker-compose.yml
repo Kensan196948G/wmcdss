@@ -27,6 +27,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+      target: dev
     image: wmcdss-backend:dev
     container_name: wmcdss-backend
     working_dir: /app
