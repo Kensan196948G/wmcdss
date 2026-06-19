@@ -1,0 +1,63 @@
+# Dependabot configuration — proactive supply-chain hygiene.
+#
+# Complements the reactive CI audit gates added in PR #46
+# (backend / dependency audit (pip-audit) + frontend / dependency audit
+# (npm audit)): the audit gates *block* known-vulnerable deps at PR time,
+# Dependabot *opens update PRs* when new advisories or releases land.
+#
+# Minor/patch updates are grouped per ecosystem to keep PR noise low; majors
+# stay separate so breaking changes get individual review.
+version: 2
+updates:
+  # Backend Python deps (pyproject.toml)
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "backend"
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      backend-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # Frontend Node deps (package-lock.json)
+  - package-ecosystem: "npm"
+    directory: "/frontend/vite-app"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+    commit-message:
+      prefix: "build(deps)"
+    groups:
+      frontend-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+
+  # GitHub Actions workflow pins (.github/workflows/*.yml)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-all:
+        patterns:
+          - "*"
