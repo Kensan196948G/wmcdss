@@ -214,3 +214,62 @@ jobs:
           name: playwright-report
           path: frontend/vite-app/playwright-report/
           retention-days: 7
+
+  backend-audit:
+    name: backend / dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    # Independent of the test pipeline — a dependency CVE should surface even
+    # when tests are green. Fulfils the "dependency / security scan" minimum
+    # quality gate (CLAUDE.md §11) that was previously missing.
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend (with dev extras)
+        run: pip install -e ".[dev]"
+
+      - name: Audit resolved dependencies (pip-audit)
+        # Audits the resolved environment (project deps + transitive) in the
+        # clean runner and fails on any known-vulnerable package. The editable
+        # project itself is skipped (not on PyPI) without failing the run.
+        #
+        # pip is upgraded first: pip-audit audits the *whole* environment, so an
+        # outdated runner pip would be flagged for its own CVEs — a tool, not a
+        # project dependency — and would falsely fail the gate.
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+          pip-audit --progress-spinner=off
+
+  frontend-audit:
+    name: frontend / dependency audit (npm audit)
+    runs-on: ubuntu-latest
+    # Independent gate — npm advisories (e.g. the undici dev-dep bump in
+    # PR for #45) must block merge at high+ severity, not just be noticed.
+    defaults:
+      run:
+        working-directory: frontend/vite-app
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/vite-app/package-lock.json
+
+      - name: Install (clean, lockfile-pinned)
+        # npm ci also fails fast if package.json and the lockfile drift apart.
+        run: npm ci
+
+      - name: Audit dependencies (high+ severity fails)
+        # moderate/low are reported but do not fail; high & critical block.
+        run: npm audit --audit-level=high
