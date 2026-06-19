@@ -79,7 +79,15 @@ const mockL = {
   marker: vi.fn().mockReturnValue(mockMarker),
 };
 
-const { SiteStatusCard, MapView, DashboardPage } = await import('../dashboard');
+const { SiteStatusCard, MapView, DashboardPage, AREAS } = await import('../dashboard');
+
+const areaButtons = (container: HTMLElement) =>
+  Array.from(container.querySelectorAll('button')).filter((button) =>
+    AREAS.includes(button.textContent ?? ''),
+  );
+
+const firstNonZenkokuAreaButton = (container: HTMLElement) =>
+  areaButtons(container).find((button) => button.textContent !== '全国');
 
 beforeEach(() => {
   vi.stubGlobal('L', mockL);
@@ -216,13 +224,11 @@ describe('DashboardPage — selectedArea area filter (lines 263, 340)', () => {
     const { container } = render(<DashboardPage navigate={vi.fn()} />);
 
     // All area filter buttons: find one that is not '全国'
-    const areaButtons = Array.from(container.querySelectorAll('button')).filter(
-      (b) => b.textContent !== '全国',
-    );
-    expect(areaButtons.length).toBeGreaterThan(0);
+    const buttons = areaButtons(container).filter((button) => button.textContent !== '全国');
+    expect(buttons.length).toBeGreaterThan(0);
 
     // Click the first non-全国 area button (e.g. '北海道')
-    const targetButton = areaButtons[0];
+    const targetButton = buttons[0];
     const areaName = targetButton.textContent ?? '';
     fireEvent.click(targetButton);
 
@@ -233,10 +239,8 @@ describe('DashboardPage — selectedArea area filter (lines 263, 340)', () => {
   it('clicking the same area button twice toggles selectedArea back to null', () => {
     const { container } = render(<DashboardPage navigate={vi.fn()} />);
 
-    const areaButtons = Array.from(container.querySelectorAll('button')).filter(
-      (b) => b.textContent !== '全国',
-    );
-    const targetButton = areaButtons[0];
+    const targetButton = firstNonZenkokuAreaButton(container);
+    expect(targetButton).toBeDefined();
     const areaName = targetButton.textContent ?? '';
 
     // First click: set selectedArea
@@ -266,18 +270,14 @@ describe('DashboardPage — 全国 button resets selectedArea (line 311 area===�
     const { container } = render(<DashboardPage navigate={vi.fn()} />);
 
     // Find a non-全国 area button and click it to set selectedArea
-    const nonZenkokuButton = Array.from(container.querySelectorAll('button')).find(
-      (b) => b.textContent !== '全国',
-    ) as HTMLElement | undefined;
+    const nonZenkokuButton = firstNonZenkokuAreaButton(container);
     expect(nonZenkokuButton).toBeDefined();
     const areaName = nonZenkokuButton!.textContent ?? '';
     fireEvent.click(nonZenkokuButton!);
     expect(container.textContent).toContain(`/ ${areaName}`);
 
     // Now click the '全国' button — area==='全国' → true branch → setSelectedArea(null)
-    const zenkokuButton = Array.from(container.querySelectorAll('button')).find(
-      (b) => b.textContent === '全国',
-    ) as HTMLElement | undefined;
+    const zenkokuButton = areaButtons(container).find((button) => button.textContent === '全国');
     expect(zenkokuButton).toBeDefined();
     fireEvent.click(zenkokuButton!);
 

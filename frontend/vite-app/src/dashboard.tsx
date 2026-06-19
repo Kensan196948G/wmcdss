@@ -19,7 +19,8 @@ declare global {
     AlertBanner?: typeof AlertBanner;
   }
 }
-declare const L: any;
+
+const getLeaflet = () => window.L ?? (globalThis as { L?: any }).L;
 
 const AREA_VIEW: Record<string, [number, number, number]> = {
   '全国':   [36.0, 137.0, 5],
@@ -50,10 +51,12 @@ export const MapView: FC<MapViewProps> = ({ sites, onSiteClick, selectedArea }) 
 
   useEffect(() => {
     if (!mapRef.current || mapInst.current) return;
+    const leaflet = getLeaflet();
+    if (!leaflet) return;
     const [lat, lng, zoom] = AREA_VIEW['全国'];
-    const map = L.map(mapRef.current, { zoomControl: false }).setView([lat, lng], zoom);
-    L.control.zoom({ position: 'topright' }).addTo(map);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    const map = leaflet.map(mapRef.current, { zoomControl: false }).setView([lat, lng], zoom);
+    leaflet.control.zoom({ position: 'topright' }).addTo(map);
+    leaflet.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '&copy; OpenStreetMap contributors',
       maxZoom: 18,
     }).addTo(map);
@@ -71,6 +74,8 @@ export const MapView: FC<MapViewProps> = ({ sites, onSiteClick, selectedArea }) 
   useEffect(() => {
     const map = mapInst.current;
     if (!map) return;
+    const leaflet = getLeaflet();
+    if (!leaflet) return;
     markersRef.current.forEach((m) => map.removeLayer(m));
     markersRef.current = [];
 
@@ -80,7 +85,7 @@ export const MapView: FC<MapViewProps> = ({ sites, onSiteClick, selectedArea }) 
 
     sites.forEach((site) => {
       const color = statusColor[site.status] ?? '#2874a6';
-      const icon = L.divIcon({
+      const icon = leaflet.divIcon({
         className: '',
         html: `<div style="
           width:32px;height:32px;border-radius:50% 50% 50% 0;
@@ -94,7 +99,7 @@ export const MapView: FC<MapViewProps> = ({ sites, onSiteClick, selectedArea }) 
         iconSize: [32, 32],
         iconAnchor: [16, 32],
       });
-      const marker = L.marker([site.lat, site.lng], { icon }).addTo(map);
+      const marker = leaflet.marker([site.lat, site.lng], { icon }).addTo(map);
       const w = generateWeather(site.id);
       const m = generateMarine(site.id);
       marker.bindPopup(`
