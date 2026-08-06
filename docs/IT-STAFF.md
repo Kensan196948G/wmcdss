@@ -76,10 +76,9 @@ docker compose version  # Docker Compose version v2.x.x 以上
 ## 🚀 初回セットアップ
 
 ```bash
-# 1. リポジトリを取得
-git clone https://github.com/<org>/Weather-Marine-Construction-Decision-Support-System.git \
-    ~/Projects/Weather-Marine-Construction-Decision-Support-System
-cd ~/Projects/Weather-Marine-Construction-Decision-Support-System
+# 1. リポジトリを取得（配置先はどこでもよい。以降 $WMCDSS_HOME で参照する）
+git clone https://github.com/Kensan196948G/wmcdss.git ~/Projects/wmcdss
+cd ~/Projects/wmcdss
 
 # 2. 本番環境変数ファイルを作成（テンプレートから）
 cp .env.production.example .env.production
@@ -112,10 +111,21 @@ docker compose --env-file .env.production -f docker-compose.production.yml ps
 
 ### メインサービス（WebUI + API + DB）
 
+systemd の unit ファイルにはリポジトリのパスを書きません。
+`~/.config/wmcdss/deploy.env` の `WMCDSS_HOME` 1 箇所だけで位置を決めます。
+このファイルが無いと unit は起動せず `Failed to load environment files` で止まります
+（黙って動いたふりをするより、明示的に止める方を選んでいます）。
+
 ```bash
+# 0. チェックアウト位置を登録（初回のみ）
+mkdir -p ~/.config/wmcdss
+cp deploy/systemd/deploy.env.example ~/.config/wmcdss/deploy.env
+${EDITOR:-nano} ~/.config/wmcdss/deploy.env   # WMCDSS_HOME を絶対パスへ書き換える
+#   例: WMCDSS_HOME=/home/youruser/Projects/wmcdss
+#   secret は書かないこと。ここはパスだけ、秘密情報は .env.production 側。
+
 mkdir -p ~/.config/systemd/user
-cp ~/Projects/Weather-Marine-Construction-Decision-Support-System/deploy/systemd/wmcdss.service \
-   ~/.config/systemd/user/
+cp deploy/systemd/wmcdss.service ~/.config/systemd/user/
 
 systemctl --user daemon-reload
 systemctl --user enable --now wmcdss.service

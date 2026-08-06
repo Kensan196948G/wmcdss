@@ -1,48 +1,110 @@
 [Unit]
 Description=WMCDSS - Weather Marine Construction Decision Support System (Web UI + API)
-Documentation=file://%h/Projects/Weather-Marine-Construction-Decision-Support-System/README.md
-After=network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
+# Documentation= は specifier も環境変数も展開しないため、チェックアウト位置に
+# 依存しない URL を書く。ここに %h/... を書くと移動のたびに嘘になる。
+Documentation=https://github.com/Kensan196948G/wmcdss
+
+# 本 unit は `systemctl --user` で動かす（README 参照）。user マネージャは
+# system マネージャとは別の unit 名前空間を持ち、docker.service も
+# network-online.target も**見えない**。
+#   - 存在しない unit への Wants=/After= は soft なので黙って無視される
+#   - Requires= は hard で、依存解決に失敗して unit ごと起動不能になる
+# 以前ここにあった `Requires=docker.service` はまさに後者で、README どおり
+# ~/.config/systemd/user/ へ配置すると "Unit docker.service not found" で
+# 起動できなかった。順序制約では表現できないので、下の ExecStartPre で
+# Docker デーモンの実可用性を直接待つ方式へ置き換えている。
+
+# ExecStartPost を正直に失敗させた以上（下記参照）、リトライは有限にする。
+# 30 分の窓で 3 回まで。超えたら systemd は起動を諦めて failed のまま残し、
+# 障害が緑表示に埋もれないようにする（30 秒ごとの再ビルド storm も防ぐ）。
+# StartLimit* は systemd v229 以降 [Service] ではなく [Unit] に置く。
+# [Service] へ書くと "Unknown key name ... ignoring" として黙殺され、
+# 回数制限が効かないまま無限リトライになる。
+StartLimitIntervalSec=1800
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
 
+# チェックアウト位置は ~/.config/wmcdss/deploy.env の WMCDSS_HOME 1 箇所だけで
+# 定義する（雛形: deploy/systemd/deploy.env.example）。
+# `-` を付けず必須にしているのは fail-closed のため。ファイルが無ければ systemd
+# は「環境ファイルを読めない」と明示して起動を止める。省略可にすると
+# ${WMCDSS_HOME} が空へ展開され、`--env-file /.env.production` という原因の
+# 分かりにくい失敗になる。
+EnvironmentFile=%h/.config/wmcdss/deploy.env
+
+# Docker デーモンが応答するまで待つ。user unit からは docker.service へ
+# 順序依存できないため、`docker info` の成否で実可用性を直接見る。
+# 上限 60 秒で諦めて非ゼロ終了 → 下の Restart=on-failure が 30 秒後に再試行する。
+# 起動直後にブートが間に合わない環境でも、赤い失敗を撒き散らさずに収束する。
+ExecStartPre=/bin/bash -c '\
+  for i in $(seq 1 30); do \
+    /usr/bin/docker info >/dev/null 2>&1 && exit 0; \
+    sleep 2; \
+  done; \
+  echo "docker daemon did not become available within 60s"; \
+  exit 1'
+
 # Start: bring up all containers (db, backend, frontend)
 ExecStart=/usr/bin/docker compose \
-    --env-file %h/Projects/Weather-Marine-Construction-Decision-Support-System/.env.production \
-    -f %h/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.production.yml \
+    --env-file ${WMCDSS_HOME}/.env.production \
+    -f ${WMCDSS_HOME}/docker-compose.production.yml \
     up -d --build --remove-orphans
 
 # Stop: graceful shutdown
 ExecStop=/usr/bin/docker compose \
-    --env-file %h/Projects/Weather-Marine-Construction-Decision-Support-System/.env.production \
-    -f %h/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.production.yml \
+    --env-file ${WMCDSS_HOME}/.env.production \
+    -f ${WMCDSS_HOME}/docker-compose.production.yml \
     down --timeout 30
 
 # Reload: recreate changed containers only
 ExecReload=/usr/bin/docker compose \
-    --env-file %h/Projects/Weather-Marine-Construction-Decision-Support-System/.env.production \
-    -f %h/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.production.yml \
+    --env-file ${WMCDSS_HOME}/.env.production \
+    -f ${WMCDSS_HOME}/docker-compose.production.yml \
     up -d --build --remove-orphans
 
-# Give containers time to become healthy before declaring success
+# frontend が実際に応答可能になるまで待ってから成功を宣言する。
+#
+# 判定に healthcheck を使う理由: 旧実装は .State.Status == "running" を見ていたが、
+# running はコンテナが起動した瞬間に真になるだけで、nginx が配信できる保証はない。
+# docker-compose.production.yml は frontend に healthcheck を定義しているので、
+# healthcheck があればその結果を、無ければ Status をそのまま使う。
+# ("starting" / "unhealthy" は成立させない ＝ 待ち続ける)
+#
+# 最後に exit 1 する理由: 旧実装はタイムアウトしても常に exit 0 を返しており、
+# frontend が上がらなくても `systemctl status` は緑のままだった。本 README が
+# 「SuccessExitStatus=0 1 を足すな、本物のバグを隠す」と書いているのと同じ原則を、
+# ここでも守る。無限リトライにならないよう下の StartLimit* で回数を縛る。
 ExecStartPost=/bin/bash -c '\
-  echo "Waiting for wmcdss-prod-frontend to be healthy..."; \
+  echo "Waiting for wmcdss-prod-frontend to become healthy..."; \
   for i in $(seq 1 30); do \
-    status=$(/usr/bin/docker inspect --format="{{.State.Status}}" wmcdss-prod-frontend 2>/dev/null); \
-    if [ "$status" = "running" ]; then \
-      echo "wmcdss-prod-frontend is running"; \
+    state=$(/usr/bin/docker inspect \
+      --format="{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}" \
+      wmcdss-prod-frontend 2>/dev/null); \
+    if [ "$state" = "healthy" ] || [ "$state" = "running" ]; then \
+      echo "wmcdss-prod-frontend is $state"; \
       exit 0; \
     fi; \
     sleep 5; \
   done; \
-  echo "WARNING: wmcdss-prod-frontend did not become running in time"; \
-  exit 0'
+  echo "ERROR: wmcdss-prod-frontend did not become healthy within 150s (last state: $state)"; \
+  exit 1'
 
-WorkingDirectory=%h/Projects/Weather-Marine-Construction-Decision-Support-System
-TimeoutStartSec=180
+# WorkingDirectory= は意図的に持たない。
+# (1) systemd は WorkingDirectory= で環境変数を展開しない（specifier のみ）ため、
+#     ここだけパスが二重管理になり、まさに今回の不整合の温床になる。
+# (2) 上の compose 呼び出しは -f と --env-file を絶対パスで渡しており、
+#     compose プロジェクト名も docker-compose.production.yml の `name: wmcdss-prod`
+#     で固定済みなので、作業ディレクトリは動作に一切影響しない。
+# Type=oneshot では TimeoutStartSec が ExecStartPre + ExecStart + ExecStartPost の
+# 合計に掛かる。内訳の上限は ExecStartPre 60s + ExecStartPost 150s = 210s で、
+# 旧値 180s はこれだけで超過していた（`up -d --build` の時間はゼロ扱い）。
+# ビルド分の目安は CI 実測: frontend image build 23s / `compose up` 込みの
+# live smoke 67s。ローカルはキャッシュ無しでこれより遅くなるため、
+# 210s + ビルド余裕で 600s を確保する。
+TimeoutStartSec=600
 TimeoutStopSec=60
 
 # Restart policy: if Docker Compose fails on start, retry after 30s

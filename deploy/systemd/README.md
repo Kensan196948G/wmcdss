@@ -4,8 +4,32 @@
 
 `wmcdss.service` — 本番用 Docker Compose 全体（WebUI + API + DB）を OS 起動時に自動起動します。
 
+### 事前に 1 回だけ: チェックアウト位置を登録する
+
+すべての unit は `~/.config/wmcdss/deploy.env` の **`WMCDSS_HOME` だけ**を見て
+リポジトリの場所を決めます。unit ファイル側にパスは一切書かれていません。
+
 ```bash
-# インストール
+mkdir -p ~/.config/wmcdss
+cp deploy/systemd/deploy.env.example ~/.config/wmcdss/deploy.env
+# WMCDSS_HOME を自分のチェックアウトの絶対パスへ書き換える
+${EDITOR:-nano} ~/.config/wmcdss/deploy.env
+```
+
+このファイルは必須です。未作成のまま起動すると systemd が
+`Failed to load environment files` で停止します（黙って空パスへ展開して
+分かりにくく失敗するより、明示的に止める方を選んでいます）。
+
+> **なぜ分離したか** — 本リポジトリは過去に
+> `Weather-Marine-Construction-Decision-Support-System` から
+> `Mirai-DX-Project/wmcdss` へ移動しており、その際 unit 3 ファイルと本 README の
+> 計 9 箇所が旧パスを指したまま残り、`wmcdss.service` は起動不能になっていました。
+> 参照を 1 箇所へ集約して再発を止めます。
+> **secret は入れないこと。** ここはパスだけ、本番 secret は `.env.production` 側です。
+
+### インストール
+
+```bash
 mkdir -p ~/.config/systemd/user
 cp wmcdss.service ~/.config/systemd/user/
 systemctl --user daemon-reload
@@ -39,6 +63,9 @@ keeps each ingester's failure mode independent in `audit_log`.
 
 ## Install (user mode — no root needed)
 
+先に上記「事前に 1 回だけ: チェックアウト位置を登録する」を済ませてください。
+タイマー配下の 2 つの ingester も同じ `~/.config/wmcdss/deploy.env` を読みます。
+
 ```bash
 mkdir -p ~/.config/systemd/user
 cp wmcdss-jma-fetch.service        wmcdss-jma-fetch.timer        ~/.config/systemd/user/
@@ -59,15 +86,20 @@ journalctl --user -u wmcdss-jma-fetch-marine.service -f
 
 ## Manual run (debug)
 
+unit と同じ定義を使うため、まず `deploy.env` を読み込みます。こうしておくと
+手動実行と systemd 実行が同じチェックアウトを指すことが保証されます。
+
 ```bash
+set -a; . ~/.config/wmcdss/deploy.env; set +a
+
 # AMeDAS
-docker compose --env-file ~/Projects/Weather-Marine-Construction-Decision-Support-System/.env.production \
-  -f ~/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.production.yml \
+docker compose --env-file "$WMCDSS_HOME/.env.production" \
+  -f "$WMCDSS_HOME/docker-compose.production.yml" \
   exec -T backend python -m app.jobs.ingest_jma
 
 # Wave nowcast
-docker compose --env-file ~/Projects/Weather-Marine-Construction-Decision-Support-System/.env.production \
-  -f ~/Projects/Weather-Marine-Construction-Decision-Support-System/docker-compose.production.yml \
+docker compose --env-file "$WMCDSS_HOME/.env.production" \
+  -f "$WMCDSS_HOME/docker-compose.production.yml" \
   exec -T backend python -m app.jobs.ingest_jma_marine
 ```
 
