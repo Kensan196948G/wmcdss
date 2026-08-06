@@ -11,12 +11,39 @@ from app.models.threshold import Threshold
 from app.models.decision import Decision
 from app.schemas.decision import DecisionRequest, DecisionOut
 from app.services.audit import write_audit
-from app.services.decision import ThresholdRule, evaluate
+from app.services.decision import ThresholdRule, as_utc, evaluate, is_rule_in_effect
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
 
 
-async def _load_thresholds(db: AsyncSession, site_id, work_type: str) -> list[ThresholdRule]:
+async def _load_thresholds(
+    db: AsyncSession,
+    site_id,
+    work_type: str,
+    window_start,
+    window_end,
+) -> tuple[list[ThresholdRule], list[dict]]:
+    """`(判定に使う有効なルール, 有効期間外として除外したルールのスナップショット)`。
+
+    有効期間を **判定対象の施工時間帯** と突き合わせる（`datetime.now()` では
+    ない）。本 API は任意の時間帯を受け取り将来の施工可否も判定するため、
+    「いま有効なルール」ではなく「その施工時間帯に有効なルール」で判定しないと、
+    来月の施工計画を今月の基準で判定してしまう。
+
+    有効期間の絞り込みを SQL の WHERE ではなく Python 側で行っている理由は 2 つ。
+
+    1. **除外したルールを監査へ残すため。** SQL で落とすと「設定はあるが期間外」
+       という事実が消え、事後に「なぜ発火しなかったのか」を再構成できない。
+       `evaluated_count` を持たせているのと同じ理由。
+    2. **意味論を 1 箇所に閉じるため。** SQL の WHERE と Python の述語へ同じ
+       境界条件（inclusive / NULL の扱い / JST 変換）を二重に書くと、片方だけ
+       修正される事故が起きる。加えて本リポジトリのテストは `_FakeDB` が SQL 文を
+       無視して事前設定行を返す方式のため、WHERE に書いた条件は**検証されない
+       まま緑になる**。
+
+    しきい値は `(site_id, work_type)` で既に絞られており（`idx_thresholds_lookup`）
+    件数が小さいため、全件取得してから絞っても実質的なコストは無い。
+    """
     stmt = select(Threshold).where(
         and_(
             Threshold.work_type == work_type,
@@ -24,13 +51,28 @@ async def _load_thresholds(db: AsyncSession, site_id, work_type: str) -> list[Th
         )
     )
     rows = (await db.execute(stmt)).scalars().all()
-    return [
-        ThresholdRule(
-            work_type=r.work_type, metric=r.metric, op=r.op,
-            value=r.value, severity=r.severity, note=r.note,
-        )
-        for r in rows
-    ]
+
+    active: list[ThresholdRule] = []
+    out_of_effect: list[dict] = []
+    for r in rows:
+        if is_rule_in_effect(
+            active_from=r.active_from, active_to=r.active_to,
+            window_start=window_start, window_end=window_end,
+        ):
+            active.append(ThresholdRule(
+                work_type=r.work_type, metric=r.metric, op=r.op,
+                value=r.value, severity=r.severity, note=r.note,
+            ))
+        else:
+            out_of_effect.append({
+                "work_type": r.work_type, "metric": r.metric, "op": r.op,
+                "value": r.value, "severity": r.severity, "note": r.note,
+                # thresholds_snapshot は JSONB 列で、`date` はそのままでは
+                # 直列化できない。ISO 文字列へ落としてから載せる。
+                "active_from": r.active_from.isoformat() if r.active_from else None,
+                "active_to":   r.active_to.isoformat()   if r.active_to   else None,
+            })
+    return active, out_of_effect
 
 
 async def _latest_inputs(db: AsyncSession, site_id, t0, t1) -> dict[str, float | None]:
@@ -70,18 +112,31 @@ async def create_decision(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ):
-    if req.target_window_end <= req.target_window_start:
+    # 施工時間帯を API 境界で 1 回だけ UTC-aware へ正規化し、以降は正規化後の値
+    # だけを使う。`DecisionRequest.target_window_*` は素の `datetime` 型のため
+    # timezone 無しの日時も受理され、片側だけ naive だと直後の比較が `TypeError`
+    # になって 500 を返す。加えて naive のまま素通しすると、監査ログへ
+    # オフセットの無い "2026-05-27T06:00:00" が残り判定を再構成できない。
+    window_start = as_utc(req.target_window_start)
+    window_end = as_utc(req.target_window_end)
+
+    if window_end <= window_start:
         raise HTTPException(400, "target_window_end must be after target_window_start")
 
-    rules = await _load_thresholds(db, req.site_id, req.work_type)
-    inputs = await _latest_inputs(db, req.site_id, req.target_window_start, req.target_window_end)
-    res = evaluate(work_type=req.work_type, inputs=inputs, rules=rules)
+    rules, out_of_effect = await _load_thresholds(
+        db, req.site_id, req.work_type, window_start, window_end,
+    )
+    inputs = await _latest_inputs(db, req.site_id, window_start, window_end)
+    res = evaluate(
+        work_type=req.work_type, inputs=inputs, rules=rules,
+        out_of_effect=out_of_effect,
+    )
 
     decision = Decision(
         site_id=req.site_id,
         work_type=req.work_type,
-        target_window_start=req.target_window_start,
-        target_window_end=req.target_window_end,
+        target_window_start=window_start,
+        target_window_end=window_end,
         status=res.status,
         reason=res.reason,
         inputs=inputs,
@@ -91,6 +146,9 @@ async def create_decision(
         thresholds_snapshot={
             "rules": res.matched_rules,
             "unevaluated": res.unevaluated_rules,
+            # 有効期間外として判定対象から外したルール。これが無いと
+            # 「しきい値が未設定」と「設定はあるが期間外」が監査上区別できない。
+            "out_of_effect": res.out_of_effect_rules,
             "evaluated": res.evaluated_count,
         },
     )
@@ -107,8 +165,10 @@ async def create_decision(
             "site_id": str(req.site_id),
             "work_type": req.work_type,
             "window": {
-                "start": req.target_window_start.isoformat(),
-                "end": req.target_window_end.isoformat(),
+                # 正規化後の値を使う。naive のままだとオフセットの無い文字列が
+                # 残り、監査記録から判定時刻が一意に決まらなくなる。
+                "start": window_start.isoformat(),
+                "end": window_end.isoformat(),
             },
             "status": res.status,
             "reason": res.reason,
@@ -118,6 +178,10 @@ async def create_decision(
             # する。判定の根拠が「該当した」ではなく「評価できなかった」場合、
             # 事後の説明責任はこちらの側にある。
             "unevaluated_rules": res.unevaluated_rules,
+            # 有効期間の設定ミスで安全側のしきい値が外れていた、という事故を
+            # 事後に追跡できるようにする。判定時点でどのルールが期間外と
+            # みなされたかは、後から DB を見ても再現できない（設定は変わりうる）。
+            "out_of_effect_rules": res.out_of_effect_rules,
             "evaluated_rule_count": res.evaluated_count,
         },
         strict=True,

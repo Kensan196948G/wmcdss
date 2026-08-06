@@ -155,6 +155,35 @@ flowchart LR
 
 `site_id` / `work_type` / `metric` / `op` / `value` / `severity`（warn / stop）／ `active_from` / `active_to`
 
+#### 有効期間（`active_from` / `active_to`）の意味論
+
+季節基準（例: 冬季だけ厳しい風速基準）を切り替えるための `date` 列。判定時の
+扱いは以下のとおり（`app/services/decision.py::is_rule_in_effect`）。
+
+| 規則 | 内容 |
+| --- | --- |
+| **NULL = 無期限** | `active_from` が NULL なら過去方向、`active_to` が NULL なら未来方向に無制限。両方 NULL のルールは常に有効 |
+| **両端 inclusive** | `active_to = 2026-03-31` のルールは 3/31 当日も発火する（"to" は "until" ではない） |
+| **比較対象は「今日」ではない** | 判定リクエストの `target_window_start` 〜 `target_window_end` と突き合わせる。本 API は将来の施工計画も判定するため、`datetime.now()` で絞ると来月の計画を今月の基準で判定してしまう |
+| **重なりで判定** | 施工時間帯が有効期間の境界を跨ぐ場合、一部でも重なればルールを適用する（境界日で安全側のしきい値が消えないようにするため） |
+| **JST 暦日で比較** | `active_from` / `active_to` は現場担当者が日本の暦日として入力する。施工時間帯は timestamptz なので JST へ変換してから日付に落とす。UTC のまま比較すると JST 00:00〜09:00 の時間帯が前日扱いになり、有効期間の初日・最終日で 1 日ずれる |
+| **naive datetime = UTC** | `target_window_start` / `target_window_end` に timezone 指定が無い場合は UTC とみなす（`app/services/decision.py::as_utc`）。正規化は API 境界で 1 回だけ行い、以降の判定・永続化・監査ログはすべて正規化後の値を使う。**JST 解釈ではない**ため `2026-03-31T16:00:00`（オフセット無し）は JST 4/1 として扱われ、3/31 までのルールは失効する |
+
+> 施工時間帯は timezone 付き（`2026-03-31T16:00:00Z` や `+09:00`）で送ることを推奨する。
+> オフセットを省略した場合の UTC 解釈は互換のための既定であり、意図した暦日と
+> ずれる余地がある。
+
+有効期間外として判定から外したルールは捨てず、`decisions.thresholds_snapshot`
+の `out_of_effect` と `audit_log.detail.out_of_effect_rules` に残す。これが無いと
+「しきい値が未設定」と「設定はあるが期間外」が監査上まったく同じ
+`{"rules": []}` になり、有効期間の設定ミスを事後に追跡できない。判定理由文も
+両者で別の案内を出す（前者「しきい値を設定してください」／後者「有効期間を
+確認してください」）。
+
+`db/migrations/0002_seed_demo.sql` の INSERT は両列を指定しないため、既定
+データ 11 行はすべて NULL＝無期限であり、この機能の導入で既存の判定結果は
+変わらない。
+
 ### `audit_log`（監査ログ）
 
 `occurred_at` / `actor` / `action` / `target_type` / `target_id` / `detail`（JSONB）
@@ -165,7 +194,7 @@ flowchart LR
 
 ```bash
 # 1. リポジトリ取得
-git clone <repo> wmcdss && cd wmcdss
+git clone https://github.com/Kensan196948G/wmcdss.git && cd wmcdss
 
 # 2. 起動（DB + backend）
 docker compose up -d
@@ -242,14 +271,14 @@ docker compose exec backend pytest -q tests/
 | ユニット（audit hardening）                        |       9 | actor_from の API Key 漏洩防止・write_audit strict モードの SQLAlchemyError 伝播                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | ユニット（JMA AMeDAS fetcher）                     |      16 | パース・品質フラグ・block ロールバック・QC-drop 検出／error-propagation 6 件（Loop 42）／**純粋関数 edge case 4 件 — `_val()` 非数値・`_wind_dir_deg()` non-list/TypeError・`_latest_entry()` non-dict — `jma.py:56-57/63/66-67/84` カバレッジ完全解消（Loop 55）**                                                                                                                                                                                                                                                        |
 | ユニット（JMA wave fetcher）                       |      17 | パース・grid snap・日跨ぎ fallback・sentinel 値除外・scalar/tuple 両対応／error-propagation 5 件（Loop 43）／**純粋関数 edge case 3 件 — `_val()` 短リスト/非数値・`_latest_entry()` non-dict — `jma_wave.py:75/87-88/104` カバレッジ完全解消（Loop 55）**                                                                                                                                                                                                                                                                 |
-| ユニット（decisions）                              |      23 | 判定ロジック・閾値マージ・境界値・OR-merge 優先度／**未評価時の fail-closed 契約 6 件（PR-D — 欠測・演算子不正・しきい値未設定では `go` にしない／`stop` は欠測で緩めない／欠測だけで `stop` へ上げない）**（Loop 35 で 7 → 18、PR-D で 18 → 23）                                                                                                                                                                                                                                                                          |
+| ユニット（decisions）                              |      37 | 判定ロジック・閾値マージ・境界値・OR-merge 優先度／**未評価時の fail-closed 契約 6 件（PR-D — 欠測・演算子不正・しきい値未設定では `go` にしない／`stop` は欠測で緩めない／欠測だけで `stop` へ上げない）**／**有効期間の意味論 14 件（R-1 — NULL＝無期限・両端 inclusive・境界跨ぎ・JST 暦日・全件期間外は「未設定」と別の理由文／`as_utc` の naive→UTC 付与・aware 不変・冪等・JST 境界での解釈固定）**（Loop 35 で 7 → 18、PR-D で 18 → 23、R-1 で 23 → 37）                                                                                              |
 | ユニット（OpenAPI exposure policy）                |       4 | env スイッチで `/openapi.json`・`/docs`・`/redoc` を 404 化／無効でも `/healthz` ・`/` endpoints list は残る                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ユニット（health / readiness probes）              |       3 | `/healthz` は常時 200・`/readyz` は DB 健全時 200／DB 失敗時 **503**（Loop 45 — orchestrator contract pin: k8s/docker healthcheck/LB/`curl -sf` が HTTP status のみで readiness を判定するため、`{"status":"degraded"}` を 200 で返す silent failure を構造修正）                                                                                                                                                                                                                                                          |
 | ユニット（Prometheus `/metrics`）                  |       6 | 200/content-type/auth 免除/rate-limit 免除/`wmcdss_http_requests_total` カウンター/`wmcdss_http_request_duration_seconds` ヒストグラム の存在を構造 pin — prometheus scraper は認証不要（Loop 50）                                                                                                                                                                                                                                                                                                                         |
 | ユニット（observations API）                       |      13 | GET weather/marine list・latest 404/200・POST ingest empty/1-row — `_FakeResult` + `_FakeDB` duck-type で全 6 エンドポイントをカバー（Loop 51）                                                                                                                                                                                                                                                                                                                                                                            |
 | ユニット（sites API）                              |       6 | GET list/404/200・POST 409 重複・POST 201 新規 — `_FakeDB.refresh()` で `id`/`created_at`/`updated_at` を注入（Loop 52）                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ユニット（thresholds API）                         |      10 | GET list（site_id/work_type フィルタ）・GET 404/200・POST 201・PATCH 404/200・DELETE 404/204（Loop 52）                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ユニット（decisions API）                          |      12 | POST 400 window 逆順/同一・go/caution/stop 判定・severity 優先度（挿入順両方）・go-not-met・レスポンス shape・marine stop・write_audit strict=True ロールバック（`_FlushFailDB` + `raise_server_exceptions=False`）／**しきい値未設定・観測値欠測での `caution` 降格と `thresholds_snapshot` の `unevaluated`／`evaluated` 保存（PR-D）**（Loop 53 + PR-D）                                                                                                                                                                |
+| ユニット（decisions API）                          |      22 | POST 400 window 逆順/同一・go/caution/stop 判定・severity 優先度（挿入順両方）・go-not-met・レスポンス shape・marine stop・write_audit strict=True ロールバック（`_FlushFailDB` + `raise_server_exceptions=False`）／**しきい値未設定・観測値欠測での `caution` 降格と `thresholds_snapshot` の `unevaluated`／`evaluated` 保存（PR-D）**／**有効期間による除外 5 件（R-1 — 失効ルールは発火しない／同じ観測値でも期間内なら発火する＝`datetime.now()` 不使用の証明／全件期間外は `caution`／JSONB 直列化安全性／期間無指定は影響なし）**／**施工時間帯の timezone 正規化 5 件（R-1 — 片側 naive で 500 にならない×2／naive でも逆順は 400／永続化と監査ログの手前で aware 化されオフセット付きで記録される／JST 境界で naive が UTC 解釈される）**（Loop 53 + PR-D + R-1）                                    |
 | ユニット（audit API）                              |      13 | GET empty/rows/actor/action/limit フィルタ・null actor・detail フィールド・limit>1000→422・t0/t1/target_type/target_id パラメータ受理・AuditOut 7 フィールド全確認（Loop 53）                                                                                                                                                                                                                                                                                                                                              |
 | ユニット（weather ingest job）                     |      12 | `run_once()` 10 分岐（Loop 54）／**`main()` success+exception の sync テスト 2 件 — `asyncio.run` patch で `ingest_jma.py:156-165` カバレッジ解消（Loop 55）**                                                                                                                                                                                                                                                                                                                                                             |
 | ユニット（marine ingest job）                      |      12 | `run_once()` 10 分岐（Loop 54）／**`main()` success+exception の sync テスト 2 件 — `ingest_jma_marine.py:172-181` カバレッジ解消（Loop 55）**                                                                                                                                                                                                                                                                                                                                                                             |
