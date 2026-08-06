@@ -9,13 +9,35 @@ def _csv(raw: str) -> list[str]:
     return [s.strip() for s in raw.split(",") if s.strip()]
 
 
+# 開発用 JWT 秘密鍵の番兵値。名前に反して「秘密」ではなく、リポジトリを読める
+# 全員が知っている公開の既定値である。だからこそ、この値のまま本番が起動すると
+# 誰でも任意の `sub` を持つトークンを偽造できる。app/core/startup.py がこの定数
+# との一致を検出して起動を拒否する。定数として切り出すのは、検証側と既定値側が
+# 別々に編集されて静かに乖離するのを防ぐため。
+DEV_JWT_SECRET_SENTINEL = "dev-secret-please-change-in-production"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_prefix="WMCDSS_", extra="ignore")
 
     app_name: str = "Weather-Marine Construction DSS"
     debug: bool = False
 
-    expose_openapi: bool = True
+    # 危険な既定値のまま起動することを明示的に許可するフラグ（開発専用）。
+    # 既定を False にしてあるため、何も設定しなければ本番は fail-closed になる。
+    # 「開発では便利に、本番では安全に」を debug フラグで兼ねなかったのは、
+    # docker-compose.yml と docker-compose.production.yml が **どちらも**
+    # `WMCDSS_DEBUG: ${WMCDSS_DEBUG:-false}` を渡しており、debug が実際には
+    # dev/prod の切り替えとして機能していないため。
+    allow_insecure_defaults: bool = False
+
+    # 既定は非公開。/docs と /openapi.json は認証なしで全 API 仕様（パス、
+    # パラメータ、スキーマ）を開示するため、攻撃対象領域の地図を無償で配る。
+    # docker-compose.yml / docker-compose.production.yml は両方とも明示的に
+    # false を渡しているので、この既定値を反転しても既存デプロイの挙動は
+    # 変わらない。効くのは compose を経由しない起動（systemd、素の uvicorn、
+    # 手元検証）だけで、そこが今まで唯一の穴だった。
+    expose_openapi: bool = False
 
     database_url: str = "postgresql+asyncpg://wmcdss:wmcdss@localhost:5432/wmcdss"
 
@@ -43,7 +65,14 @@ class Settings(BaseSettings):
 
     @property
     def auth_required_methods_list(self) -> list[str]:
-        return _csv(self.auth_required_methods)
+        """認証を要求する HTTP メソッド。大文字へ正規化する。
+
+        呼び出し側は必ずこの property を使うこと。生の `auth_required_methods`
+        （コンマ区切り文字列）に対して `method in ...` を書くと Python の
+        部分文字列判定になり、`"T" in "POST,PATCH,PUT,DELETE"` のような
+        意図しない一致が成立してしまう。
+        """
+        return [m.upper() for m in _csv(self.auth_required_methods)]
 
     # auth_exempt_paths は固定値のため list[str] のままとする（env からは設定しない）
     auth_exempt_paths: list[str] = [
@@ -73,7 +102,10 @@ class Settings(BaseSettings):
     # -------------------------------------------------------------------------
     # JWT 認証設定
     # -------------------------------------------------------------------------
-    jwt_secret: str = "dev-secret-please-change-in-production"
+    # 既定値はリテラルではなく定数を参照する。app/core/startup.py はこの定数との
+    # 一致で「未設定のまま起動しようとしている」を判定するため、両者が別々に
+    # 編集されて静かに乖離すると、検査だけが素通りして防御が消える。
+    jwt_secret: str = DEV_JWT_SECRET_SENTINEL
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480  # 8時間
 

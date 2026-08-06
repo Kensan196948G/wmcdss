@@ -22,7 +22,14 @@ from app.core import config as config_mod
 def build_app(monkeypatch):
     """Rebuild app.main with a patched Settings so the FastAPI ctor sees it."""
     def _build(*, expose_openapi: bool):
-        fake = config_mod.Settings(expose_openapi=expose_openapi)
+        # allow_insecure_defaults=True は dev compose と同じ設定。これがないと
+        # app.main トップレベルの enforce_security_posture() が、既定の
+        # jwt_secret と空の api_keys を検出して import 自体を失敗させる。
+        # このフィクスチャが再現したいのは OpenAPI 公開ポリシーであって
+        # 設定検証ではないため、開発環境と同じ姿勢で組み立てる。
+        fake = config_mod.Settings(
+            expose_openapi=expose_openapi, allow_insecure_defaults=True
+        )
         monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
         # Reload main so its module-level `app = FastAPI(...)` runs again with
         # the patched settings — mirrors how a fresh container would start.

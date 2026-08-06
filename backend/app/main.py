@@ -2,13 +2,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.core.security import APIKeyMiddleware
+from app.core.security import APIKeyMiddleware, SecurityHeadersMiddleware
 from app.core.ratelimit import RateLimitMiddleware
 from app.core.monitoring import MetricsMiddleware
+from app.core.startup import enforce_security_posture
 from app.api import health, sites, decisions, thresholds, observations, audit, metrics, auth
 from app.api import analysis, reports, etl, ai
 
 settings = get_settings()
+
+# 危険な既定値のまま起動していないか検査する。lifespan ではなくモジュール
+# トップレベルで実行するのが重要: import 時に失敗させることで、設定不備の
+# プロセスが「起動はしたがリクエストを受けられる」中途半端な状態にならない。
+# 開発時は WMCDSS_ALLOW_INSECURE_DEFAULTS=true で降格できる。
+enforce_security_posture(settings)
 
 # OpenAPI exposure is env-controlled. Passing `openapi_url=None` removes the
 # schema endpoint itself, which in turn makes /docs and /redoc 404 naturally —
@@ -21,8 +28,10 @@ if not settings.expose_openapi:
 app = FastAPI(**_fastapi_kwargs)
 
 # Order matters: Starlette runs the *last-added* middleware first, so the
-# effective request flow is Metrics → CORS → RateLimit → APIKey → route.
-#   - Metrics outermost: records every request including 401/429 rejections,
+# effective flow is SecurityHeaders → Metrics → CORS → RateLimit → APIKey → route.
+#   - SecurityHeaders outermost: it must see the *final* response, so the headers
+#     land on 401/429/500 too — exactly the responses an attacker probes.
+#   - Metrics next: records every request including 401/429 rejections,
 #     giving a complete picture of traffic (not just successful requests).
 #   - CORS next: every response carries CORS headers before auth/rate checks.
 #   - RateLimit above APIKey: drop floods before spending hmac.compare_digest.
@@ -36,6 +45,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.add_middleware(MetricsMiddleware)
+app.add_middleware(SecurityHeadersMiddleware)
 
 app.include_router(health.router)
 app.include_router(metrics.router)

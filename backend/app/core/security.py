@@ -60,6 +60,51 @@ def _key_matches(presented: str, allowed: list[str]) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# セキュリティレスポンスヘッダー
+#
+# nginx 側 (frontend/vite-app/nginx.conf) でも同種のヘッダーを付けているが、
+# backend コンテナは 0.0.0.0 で listen しており nginx を経由せず直接叩ける。
+# 直接アクセス経路でも防御が効くよう、多層防御としてアプリ側でも付与する。
+# ---------------------------------------------------------------------------
+
+_SECURITY_HEADERS = {
+    # Content-Type を推測させない。JSON を HTML として解釈されるのを防ぐ。
+    "X-Content-Type-Options": "nosniff",
+    # API レスポンスが frame に埋め込まれる正当な理由はない。
+    "X-Frame-Options": "DENY",
+    # API の URL には site_id などの識別子が載る。外部へ送出しない。
+    "Referrer-Policy": "no-referrer",
+    # JSON API はいかなるサブリソースも読み込まない。frame-ancestors は
+    # X-Frame-Options の後継で、こちらが対応ブラウザでは優先される。
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+}
+
+# Swagger UI / ReDoc は CDN からスクリプトと CSS を読み込むため、上記の
+# `default-src 'none'` を当てると白画面になる。本番では expose_openapi=false
+# なので到達しないが、開発で /docs が壊れると「邪魔だから」とミドルウェア
+# ごと外される。壊さないことが結果的に防御を残す。
+_CSP_EXEMPT_PATHS = frozenset({"/docs", "/redoc", "/docs/oauth2-redirect"})
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """全レスポンスへセキュリティヘッダーを付与する。
+
+    HSTS は**意図的に含めない**。現状の配信は平文 HTTP であり、TLS 終端が
+    無い状態で HSTS を名乗るのは実態と異なる。TLS 導入と同じ変更で追加する。
+    """
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        for name, value in _SECURITY_HEADERS.items():
+            if name == "Content-Security-Policy" and request.url.path in _CSP_EXEMPT_PATHS:
+                continue
+            # setdefault: 前段 (nginx やルート個別実装) が既に指定していれば
+            # 尊重する。上書きすると意図的な緩和を壊し、重複ヘッダーも生む。
+            response.headers.setdefault(name, value)
+        return response
+
+
 class APIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         s = _config.get_settings()
@@ -79,7 +124,10 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return path.startswith(prefix)
         if any(_exempt(p) for p in s.auth_exempt_paths):
             return await call_next(request)
-        if request.method.upper() not in s.auth_required_methods:
+        # `auth_required_methods_list` (パース済みリスト) で判定すること。
+        # 生の `auth_required_methods` は "POST,PATCH,PUT,DELETE" という
+        # 1本の文字列なので、`in` が部分文字列判定になってしまう。
+        if request.method.upper() not in s.auth_required_methods_list:
             return await call_next(request)
 
         presented = request.headers.get("X-API-Key", "")

@@ -47,6 +47,10 @@ services:
       WMCDSS_DATABASE_URL: ${WMCDSS_DATABASE_URL:-postgresql+asyncpg://${POSTGRES_USER:-wmcdss_app}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-wmcdss}}
       WMCDSS_DEBUG: ${WMCDSS_DEBUG:-false}
       WMCDSS_EXPOSE_OPENAPI: ${WMCDSS_EXPOSE_OPENAPI:-false}
+      # 起動時セキュリティ検査を降格させない。リテラルで "false" を渡すのが
+      # 重要: `${VAR:-false}` にすると、運用者のシェルに残った
+      # WMCDSS_ALLOW_INSECURE_DEFAULTS=true が本番へ流れ込みうる。
+      WMCDSS_ALLOW_INSECURE_DEFAULTS: "false"
       WMCDSS_CORS_ORIGINS_RAW: ${WMCDSS_CORS_ORIGINS_RAW:-http://${WMCDSS_WEBUI_HOST:-192.168.0.185}:${WMCDSS_WEBUI_PORT:-9080}}
       WMCDSS_API_KEYS_RAW: ${WMCDSS_API_KEYS_RAW:?WMCDSS_API_KEYS_RAW must be set in .env.production}
       WMCDSS_RATE_LIMIT_PER_MINUTE: ${WMCDSS_RATE_LIMIT_PER_MINUTE:-60}

@@ -40,6 +40,10 @@ services:
       # --- App ---
       WMCDSS_DEBUG: ${WMCDSS_DEBUG:-false}
       WMCDSS_EXPOSE_OPENAPI: ${WMCDSS_EXPOSE_OPENAPI:-false}
+      # 開発スタックは API キーなし・既定 JWT 秘密鍵で動く。本番なら起動を
+      # 拒否される構成なので、ここで明示的に検査を降格する。
+      # 本番 (docker-compose.production.yml) では false に固定している。
+      WMCDSS_ALLOW_INSECURE_DEFAULTS: "${WMCDSS_ALLOW_INSECURE_DEFAULTS:-true}"
       # --- CORS: コンマ区切り URL 文字列 (str フィールド cors_origins_raw にマップ) ---
       WMCDSS_CORS_ORIGINS_RAW: "${WMCDSS_CORS_ORIGINS_RAW:-http://${WMCDSS_WEBUI_HOST:-172.23.10.251}:${WMCDSS_WEBUI_PORT:-9080},http://localhost:${WMCDSS_WEBUI_PORT:-9080},http://127.0.0.1:${WMCDSS_WEBUI_PORT:-9080}}"
       # --- API キー: コンマ区切り文字列 (str フィールド api_keys_raw にマップ) ---

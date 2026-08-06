@@ -272,3 +272,74 @@ def test_key_matches_bytes_returns_false():
     # bytes has no .encode() → AttributeError caught at security.py:55-56.
     # Callers are expected to pass str, but HTTP parsing could yield bytes.
     assert security_mod._key_matches(b"secret", ["secret"]) is False  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# auth_required_methods: 文字列 `in` ではなくパース済みリストで判定すること
+#
+# 以前の実装は raw 設定文字列に対して `request.method.upper() not in
+# s.auth_required_methods` と書いていた。`auth_required_methods` は
+# "POST,PATCH,PUT,DELETE" という 1 本の文字列なので、この `in` は集合の所属
+# 判定ではなく**部分文字列判定**になる。既定値では偶然すべて正しく動くため、
+# 設定を変えた瞬間まで誰も気付かない類のバグである。
+#
+# 壊れ方は 2 方向あり、危険度が違う:
+#   - 大文字小文字: 設定を小文字で書くと一致しなくなり、認証が丸ごと外れる
+#     (fail-open)。これが本当に危ない方。
+#   - 部分文字列: 設定値の一部に一致する別メソッドまで認証必須になる
+#     (fail-closed)。安全側だが、原因不明の 401 として運用を止める。
+# 両方向を固定する。
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def make_methods_app(monkeypatch):
+    """`auth_required_methods` を差し替えられるアプリ。同一パスに全メソッドを生やす。"""
+
+    def _build(auth_required_methods: str) -> FastAPI:
+        fake = config_mod.Settings(
+            api_keys_raw="secret", auth_required_methods=auth_required_methods
+        )
+        monkeypatch.setattr(config_mod, "get_settings", lambda: fake)
+        monkeypatch.setattr(security_mod, "_config", config_mod)
+
+        app = FastAPI()
+        app.add_middleware(APIKeyMiddleware)
+
+        @app.api_route("/w", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
+        async def w():
+            return {"ok": True}
+
+        return app
+
+    return _build
+
+
+def test_lowercase_configured_method_still_requires_auth(make_methods_app):
+    # fail-open 回帰ガード。運用者が設定を小文字で書いても認証は外れないこと。
+    # 旧実装: "POST" not in "post,patch,put,delete" → True → 認証スキップ → 200。
+    assert TestClient(make_methods_app("post,patch,put,delete")).post("/w").status_code == 401
+
+
+def test_whitespace_padded_config_is_parsed(make_methods_app):
+    # "POST, PATCH" のように空白を入れて書くのは自然な記法。_csv が strip する。
+    assert TestClient(make_methods_app("POST, PATCH")).post("/w").status_code == 401
+
+
+def test_method_only_substring_of_config_is_not_required(make_methods_app):
+    # PROPPATCH は WebDAV (RFC 4918) の実在するメソッド。これだけを設定したとき、
+    # 素の PATCH は設定されていないので認証不要でなければならない。
+    # 旧実装: "PATCH" in "PROPPATCH" → True → 設定していない PATCH まで 401。
+    assert TestClient(make_methods_app("PROPPATCH")).patch("/w").status_code == 200
+
+
+def test_unconfigured_method_passes_without_key(make_methods_app):
+    # 対照群: 設定に無いメソッドは素通りする、という本来の意味論。
+    assert TestClient(make_methods_app("DELETE")).post("/w").status_code == 200
+    assert TestClient(make_methods_app("DELETE")).delete("/w").status_code == 401
+
+
+def test_auth_required_methods_list_normalizes_case_and_whitespace():
+    # property 単体の契約。ミドルウェア経由の確認とは別に、正規化そのものを固定する。
+    s = config_mod.Settings(auth_required_methods=" post , PATCH ,, put ")
+    assert s.auth_required_methods_list == ["POST", "PATCH", "PUT"]

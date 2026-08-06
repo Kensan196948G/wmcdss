@@ -220,8 +220,12 @@ def test_get_me_with_invalid_token_returns_401(monkeypatch):
 
 
 def test_get_me_with_wrong_secret_returns_401(monkeypatch):
-    # Token signed with a different secret must be rejected
-    fake_wrong = _settings(jwt_secret="wrong-secret-key-padding!!!!!!")
+    # Token signed with a different secret must be rejected.
+    # 鍵は 32 バイト以上にすること — RFC 7518 §3.2 は HS256 の HMAC 鍵に
+    # ハッシュ出力長以上を MUST としており、PyJWT は下回ると
+    # InsecureKeyLengthWarning を出す。テストのダミー値であっても、
+    # 恒常的な警告は本物の警告を埋もれさせる。
+    fake_wrong = _settings(jwt_secret="wrong-secret-key-padding!!!!!!!!")
     c_wrong = _make_client(monkeypatch, fake_wrong)
     r_login = c_wrong.post(
         "/api/v1/auth/login", json={"username": "admin", "password": "testpass123"}
