@@ -32,9 +32,9 @@ def actor_from(request: Request) -> str:
     """Resolve the audit `actor` for a mutating request.
 
     Only `X-Actor` is honoured. Falling back to `X-API-Key` would leak the
-    credential into `audit_log.actor`, which `GET /api/v1/audit` exposes
-    unauthenticated. When no `X-Actor` is supplied, "anonymous" is used and
-    a warning is logged so a sustained absence in production is visible.
+    credential into `audit_log.actor`, which `GET /api/v1/audit` returns to
+    every logged-in user. When no `X-Actor` is supplied, "anonymous" is used
+    and a warning is logged so a sustained absence in production is visible.
     """
     raw = (request.headers.get("X-Actor") or "").strip()
     if not raw:

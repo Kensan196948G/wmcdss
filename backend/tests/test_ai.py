@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
 import app.api.ai as ai_mod
 from app.api.auth import UserInfo
@@ -92,6 +93,7 @@ async def test_etl_diagnose_falls_back_without_api_key(monkeypatch):
                 {"id": 2, "name": "海象参考情報", "status": "stale", "records": 5},
             ],
         ),
+        _user(),
     )
 
     assert result.analysis_type == "rule_based"
@@ -115,9 +117,99 @@ async def test_risk_summary_uses_claude_when_configured(monkeypatch):
                 {"id": "s1", "name": "A現場", "status": "warn", "weather": {"wind": 9}},
             ],
         ),
+        _user(),
     )
 
     assert result.analysis_type == "claude_ai"
     assert result.summary == "全体要約"
     assert result.bullets == ["強風注意", "波高確認", "排水確認"]
     assert calls[0]["kwargs"]["json"]["max_tokens"] == 700
+
+
+# ---------------------------------------------------------------------------
+# 入力量の上限
+#
+# /ai/* のボディはそのまま prompt へ文字列展開され、Anthropic への従量課金
+# リクエストになる。上限が無いと、ログイン済みユーザー 1 人が 1 リクエストで
+# API 利用料と応答遅延を任意に押し上げられる。認証を掛けた（PR-C）だけでは
+# 「正規利用者による過大請求」は防げないので、量そのものを縛る。
+#
+# ここでは model を直接組み立てて ValidationError を見る。HTTP 経由だと
+# 認証依存が先に解決されて 401 になり、上限の検証にならないためである
+# （逆に言えば、上限テストが 401 で落ちたら認証が効いている証拠でもある）。
+# ---------------------------------------------------------------------------
+
+def test_list_field_rejects_too_many_items():
+    """list の要素数上限。"""
+    with pytest.raises(ValidationError):
+        ai_mod.AiRiskSummaryRequest(
+            sites=[{"id": f"s{i}"} for i in range(ai_mod.MAX_LIST_ITEMS + 1)],
+        )
+
+
+def test_list_field_accepts_boundary_item_count():
+    """上限ちょうどは通ること（off-by-one で実運用を壊さない）。"""
+    req = ai_mod.AiRiskSummaryRequest(
+        sites=[{"id": f"s{i}"} for i in range(ai_mod.MAX_LIST_ITEMS)],
+    )
+    assert len(req.sites) == ai_mod.MAX_LIST_ITEMS
+
+
+def test_list_field_rejects_oversized_payload_within_item_limit():
+    """要素数が上限内でも、直列化サイズが上限を超えれば弾くこと。
+
+    `Field(max_length=...)` は list の**要素数**しか縛らない。要素が
+    dict[str, Any] なので、1 要素へ巨大な文字列を入れれば要素数 1 のまま
+    いくらでも膨らませられる。バイト数の別チェックが要る理由がこれである。
+    """
+    with pytest.raises(ValidationError):
+        ai_mod.AiRiskSummaryRequest(
+            sites=[{"id": "s1", "note": "あ" * ai_mod.MAX_PAYLOAD_BYTES}],
+        )
+
+
+def test_dict_field_rejects_oversized_payload():
+    with pytest.raises(ValidationError):
+        ai_mod.AiAnalyzeRequest(
+            site_id="s1",
+            work_type="concrete",
+            weather={"note": "x" * (ai_mod.MAX_PAYLOAD_BYTES + 1)},
+            thresholds={},
+        )
+
+
+def test_text_field_rejects_overlong_string():
+    with pytest.raises(ValidationError):
+        ai_mod.AiChatRequest(question="x" * (ai_mod.MAX_TEXT_CHARS + 1))
+
+
+@pytest.mark.asyncio
+async def test_call_claude_refuses_oversized_prompt_without_billing(monkeypatch):
+    """背水の陣: 上限を付け忘れた経路が将来増えても課金前に止まること。
+
+    httpx を「呼ばれたら失敗する」ものへ差し替えて、HTTP に到達しないこと
+    自体を検証する。空文字を返すのは既存のフォールバック契約に合わせている
+    （呼び出し側は rule_based へ落ちる）。
+    """
+    def _explode(*args, **kwargs):
+        raise AssertionError("上限超過の prompt で Anthropic を呼び出した（課金発生）")
+
+    monkeypatch.setattr(ai_mod.httpx, "AsyncClient", _explode)
+
+    result = await ai_mod._call_claude(
+        "x" * (ai_mod.MAX_PROMPT_CHARS + 1),
+        api_key="sk-ant-test",
+    )
+    assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_call_claude_allows_normal_prompt(monkeypatch):
+    """上限が通常運用を塞いでいないこと（背水の陣が前線に出ていないこと）。"""
+    response = httpx.Response(200, json={"content": [{"type": "text", "text": "OK"}]})
+    calls = _patch_anthropic_client(monkeypatch, response)
+
+    result = await ai_mod._call_claude("通常の長さのプロンプト", api_key="sk-ant-test")
+
+    assert result == "OK"
+    assert len(calls) == 1

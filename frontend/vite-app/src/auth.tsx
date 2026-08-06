@@ -9,13 +9,9 @@
  */
 import { type FC, useState } from 'react';
 import { WMCDSS_API_BASE } from './api';
-
-// ---------------------------------------------------------------------------
-// 定数
-// ---------------------------------------------------------------------------
-
-const TOKEN_KEY = 'wmcdss_access_token';
-const USER_KEY = 'wmcdss_user';
+// トークンの保管は auth-token.ts が単一の情報源。api.ts もそこから読むため、
+// キー文字列や localStorage の扱いをここで再定義しない。
+import { TOKEN_KEY, USER_KEY, clearToken, getToken } from './auth-token';
 
 // WMCDSS_API_BASE = "/api/v1" in production, or "http://{hostname}:8003/api/v1" in Vite dev
 // auth エンドポイントは /auth/login, /auth/login/m365, /auth/me
@@ -46,9 +42,7 @@ function safeStorage() {
 }
 
 export const AuthStore = {
-  getToken(): string | null {
-    return safeStorage()?.getItem(TOKEN_KEY) ?? null;
-  },
+  getToken,
   getUser(): AuthUser | null {
     try {
       const raw = safeStorage()?.getItem(USER_KEY);
@@ -62,11 +56,7 @@ export const AuthStore = {
     s?.setItem(TOKEN_KEY, token);
     s?.setItem(USER_KEY, JSON.stringify(user));
   },
-  clear(): void {
-    const s = safeStorage();
-    s?.removeItem(TOKEN_KEY);
-    s?.removeItem(USER_KEY);
-  },
+  clear: clearToken,
   isAuthenticated(): boolean {
     const token = AuthStore.getToken();
     if (!token) return false;

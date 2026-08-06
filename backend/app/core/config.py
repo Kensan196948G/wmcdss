@@ -75,23 +75,38 @@ class Settings(BaseSettings):
         return [m.upper() for m in _csv(self.auth_required_methods)]
 
     # auth_exempt_paths は固定値のため list[str] のままとする（env からは設定しない）
+    #
+    # 重要 — このリストが免除するのは「API キー middleware」だけであり、
+    # 「認証」全般ではない。本システムの認証は 2 層に分かれている。
+    #
+    #   1. API キー層 (app/core/security.py APIKeyMiddleware)
+    #      機械間連携向け。`X-API-Key` ヘッダーを検査する。
+    #      auth_required_methods (既定 POST,PATCH,PUT,DELETE) のメソッドのみ対象。
+    #   2. JWT 層 (app/api/auth.py get_current_user)
+    #      ブラウザ利用者向け。route ごとに Depends で個別に適用する。
+    #
+    # ブラウザは `X-API-Key` を持たないため、WebUI から呼ぶ経路は 1 を免除し、
+    # 代わりに 2 を route 側で必ず付ける。**免除するなら JWT を付ける**の対で
+    # 運用すること。片方だけだと無認証の穴になる。
+    #
+    # 下記のうち /auth/login 系だけが本当の無認証（ログイン自体に必要なため）。
+    # 残りは全て対応する route に Depends(get_current_user) が付いている。
     auth_exempt_paths: list[str] = [
         "/healthz", "/readyz", "/docs", "/openapi.json", "/metrics",
+        # ログイン前に呼ぶ必要があるため、両層とも無認証。
         "/api/v1/auth/login", "/api/v1/auth/login/m365",
-        # /ai/analyze は認証なしで呼べるが、/ai/settings と /ai/test は
-        # 認証済みユーザー（JWT）のみ許可する（下記 ai.py Depends を参照）。
-        # 誤って exempt_paths に追加しないこと。
+        # /ai/* は全て app/api/ai.py 側で JWT を要求する。
+        # 従量課金の Anthropic 呼び出しが発生するため、無認証にはできない。
         "/api/v1/ai/analyze",
         "/api/v1/ai/etl-diagnose",
         "/api/v1/ai/risk-summary",
         "/api/v1/ai/report-comment",
         "/api/v1/ai/anomaly-detect",
         "/api/v1/ai/chat",
-        # /reports は WebUI のレポート出力操作。DBの変更を伴わないため、
-        # API key middleware から除外してブラウザから直接取得できるようにする。
+        # /reports は WebUI のレポート出力。DB は変更しないが監査ログを含む
+        # 業務データを書き出すため、app/api/reports.py 側で JWT を要求する。
         "/api/v1/reports",
-        # /etl/run/{job_id} は route 側で JWT 認証する。API key middleware
-        # からは除外し、WebUI のログイン済みユーザーが手動実行できるようにする。
+        # /etl/run/{job_id} は app/api/etl.py 側で JWT を要求する。
         "/api/v1/etl/run",
     ]
 

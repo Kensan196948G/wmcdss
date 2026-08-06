@@ -9,6 +9,8 @@
 // Behavior is intentionally byte-equivalent to api.jsx so we can swap
 // callers one at a time without subtle drift.
 
+import { authHeader, notifyUnauthorized } from './auth-token';
+
 export interface BackendSite {
   id: number;
   code: string;
@@ -111,11 +113,33 @@ export class APIError extends Error {
   }
 }
 
+/**
+ * バックエンド API への共通 fetch。
+ *
+ * ここが全ての API 呼び出しの単一の通り道なので、Authorization ヘッダーの
+ * 付与もここ 1 箇所で行う。呼び出し側それぞれに付けさせると、付け忘れた
+ * 経路だけが 401 になり、しかもそれは「認証を足した時」ではなく
+ * 「新しい呼び出しを書いた時」に発覚するため原因が見えにくい。
+ *
+ * ヘッダーは authHeader() を先に展開し、呼び出し側指定を後に置く。
+ * 呼び出し側が明示した Content-Type 等を壊さないためであり、同時に
+ * 呼び出し側が意図的に別の Authorization を渡す余地も残る。
+ */
 export async function fetchJSON<T = unknown>(path: string, init?: RequestInit): Promise<T> {
   const url = path.startsWith('http') ? path : `${WMCDSS_API_BASE}${path}`;
-  const resp = await fetch(url, init);
+  const resp = await fetch(url, {
+    ...init,
+    headers: { ...authHeader(), ...(init?.headers as Record<string, string> | undefined) },
+  });
   if (!resp.ok) {
     const body = await resp.text().catch(() => '');
+    if (resp.status === 401) {
+      // トークンが無効か期限切れ。保持し続けても以降の呼び出しが全て
+      // 失敗するだけなので破棄し、ログイン画面へ戻すよう通知する。
+      // 破棄してから投げるので、この後の APIError を握り潰す呼び出し側が
+      // あっても認証状態は正しく巻き戻る。
+      notifyUnauthorized();
+    }
     throw new APIError({ status: resp.status, url, body });
   }
   return resp.json() as Promise<T>;

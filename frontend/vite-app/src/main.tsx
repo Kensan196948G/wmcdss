@@ -1,9 +1,10 @@
-import { StrictMode, useState } from 'react';
+import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { AppShell } from './app-shell';
 import { WMCDSS_API } from './api';
 import { AuthStore, LoginPage, type AuthUser } from './auth';
+import { UNAUTHORIZED_EVENT } from './auth-token';
 import './tweaks-panel';
 import './styles.css';
 
@@ -76,6 +77,18 @@ function App() {
     }
     return null;
   });
+
+  // API が 401 を返したら（＝トークンが失効・改竄されている）ログイン画面へ戻す。
+  //
+  // 起動時のチェックだけでは足りない。トークンの有効期限は開いたままの画面でも
+  // 切れるため、それを検知できるのは実際に API を叩いた瞬間しかない。これが無いと
+  // 期限切れ後は「画面は表示されているのに全ての操作が黙って失敗する」状態になる。
+  // 破棄自体は fetchJSON 側で済んでいるので、ここでは表示の巻き戻しだけを行う。
+  useEffect(() => {
+    const onUnauthorized = () => setUser(null);
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
 
   if (!user) {
     return (

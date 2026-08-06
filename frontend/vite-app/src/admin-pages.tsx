@@ -15,6 +15,7 @@ import {
   type SiteThresholds,
 } from "./data";
 import type { AiAssistResponse } from "./api";
+import { authHeader } from "./auth-token";
 
 type Role = "field" | "manager";
 type ReportFormat = "pdf" | "excel" | "csv";
@@ -467,13 +468,8 @@ export const EtlPage: FC = () => {
     (window as Window & { WMCDSS_API_BASE?: string }).WMCDSS_API_BASE ??
     "/api/v1";
 
-  const authHeaders = (): Record<string, string> => {
-    const token =
-      typeof localStorage !== "undefined"
-        ? localStorage.getItem("wmcdss_access_token")
-        : null;
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  };
+  // トークンの読み出しは auth-token.ts へ集約済み（キー文字列の重複を排除）。
+  const authHeaders = authHeader;
 
   const refreshEtlStatus = useCallback(async () => {
     try {
@@ -1762,13 +1758,7 @@ export const AiSettingsPage: FC = () => {
 
   // /ai/settings と /ai/test は JWT 認証が必要（セキュリティ修正）。
   // ログイン済みの JWT トークンを Authorization ヘッダーに付与する。
-  const authHeaders = (): Record<string, string> => {
-    const token =
-      typeof localStorage !== "undefined"
-        ? localStorage.getItem("wmcdss_access_token")
-        : null;
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  };
+  const authHeaders = authHeader;
 
   const isMounted = useRef(true);
   useEffect(() => {

@@ -1,4 +1,15 @@
-"""Unit tests for GET /audit endpoint — no DB required."""
+"""Unit tests for GET /audit endpoint — no DB required.
+
+テストアプリは 2 種類ある。
+
+  * `_make_app`         … JWT 認証を override した「挙動」検証用
+  * `_make_guarded_app` … override しない「認可」検証用
+
+分けているのは、認証 override が**まさに検証したい防御そのものを無効化する**
+ためである。1 つのファクトリに override を入れてしまうと、route から
+`Depends(get_current_user)` が消えても全テストが緑のまま通ってしまい、
+「監査ログが無認証で読める」状態への退行を誰も検出できない。
+"""
 from __future__ import annotations
 from datetime import datetime, timezone
 
@@ -6,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.audit import router
+from app.api.auth import UserInfo, get_current_user
 from app.db.session import get_db
 from app.models.audit import AuditLog
 
@@ -41,7 +53,8 @@ class _FakeDB:
     async def delete(self, obj): pass
 
 
-def _make_app(fake_db: _FakeDB) -> FastAPI:
+def _make_guarded_app(fake_db: _FakeDB) -> FastAPI:
+    """DB だけ差し替え、認証は本物のまま。認可の検証に使う。"""
     app = FastAPI()
     app.include_router(router)
 
@@ -49,6 +62,17 @@ def _make_app(fake_db: _FakeDB) -> FastAPI:
         yield fake_db
 
     app.dependency_overrides[get_db] = _override
+    return app
+
+
+def _make_app(fake_db: _FakeDB) -> FastAPI:
+    """DB と認証の両方を差し替える。クエリ・スキーマ等の挙動検証に使う。"""
+    app = _make_guarded_app(fake_db)
+
+    async def _current_user() -> UserInfo:
+        return UserInfo(username="tester", display_name="tester", auth_type="local")
+
+    app.dependency_overrides[get_current_user] = _current_user
     return app
 
 
@@ -70,6 +94,47 @@ def _fake_log(n: int = 1, actor: str | None = "api-key:test",
         row.detail = {"note": f"row {i}"}
         rows.append(row)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# GET /audit — 認可
+#
+# 監査ログは actor（利用者名。M365 認証ではメールアドレス由来）と全操作履歴を
+# 保持する。API キー middleware は auth_required_methods（既定
+# POST,PATCH,PUT,DELETE）しか守らないため、GET であるこの経路は middleware では
+# 一切保護されない。route 側の JWT が唯一の防御であり、それが外れたことを
+# 検出できるのはここだけである。
+#
+# TestClient を使うのは必須。handler を直接 await する形式では FastAPI の
+# 依存解決自体が走らないため、`Depends(get_current_user)` は評価されず、
+# 「保護されている」ことを原理的に証明できない。
+# ---------------------------------------------------------------------------
+
+def test_list_audit_without_token_is_401():
+    rows = _fake_log(1)
+    c = TestClient(_make_guarded_app(_FakeDB(_FakeResult(rows=rows))))
+    r = c.get("/audit")
+    assert r.status_code == 401
+
+
+def test_list_audit_with_garbage_token_is_401():
+    rows = _fake_log(1)
+    c = TestClient(_make_guarded_app(_FakeDB(_FakeResult(rows=rows))))
+    r = c.get("/audit", headers={"Authorization": "Bearer not-a-real-jwt"})
+    assert r.status_code == 401
+
+
+def test_unauthenticated_response_leaks_no_audit_content():
+    """401 の本文に監査行（actor 等）が混ざっていないこと。
+
+    エラー応答経由の情報漏えいは見落としやすい。actor はユーザー名なので、
+    401 なのに本文へ載っていれば防御した意味がなくなる。
+    """
+    rows = _fake_log(1, actor="secret-user@example.com")
+    c = TestClient(_make_guarded_app(_FakeDB(_FakeResult(rows=rows))))
+    r = c.get("/audit")
+    assert r.status_code == 401
+    assert "secret-user@example.com" not in r.text
 
 
 # ---------------------------------------------------------------------------

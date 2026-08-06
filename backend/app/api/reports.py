@@ -2,6 +2,11 @@
 
 Generates CSV or Excel (xlsx) files from observation and audit data.
 Falls back to CSV if openpyxl is not installed.
+
+認証: JWT を要求する (``Depends(get_current_user)``)。監査ログを含む業務データを
+一括で書き出すため、未認証で叩ける状態は事実上のデータ全件持ち出し口になる。
+API キー middleware (app/core/security.py) からは除外したままにしてあり、
+ブラウザは ``X-API-Key`` ではなく ``Authorization: Bearer`` で認証する。
 """
 from __future__ import annotations
 
@@ -17,6 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import UserInfo, get_current_user
 from app.db.session import get_db
 from app.models.audit import AuditLog
 from app.models.observations import MarineObservation, WeatherObservation
@@ -289,6 +295,10 @@ def _to_excel(headers: list[str], rows: list[list[Any]]) -> io.BytesIO:
 @router.post("/reports")
 async def generate_report(
     req: ReportRequest,
+    # 認証を DB より先に宣言する。FastAPI は依存を宣言順に解決するため、
+    # この順序だと未認証リクエストは DB セッションを取得せずに 401 で終わる。
+    # 逆順にすると、認証されないアクセスでもコネクションプールを消費できる。
+    _current_user: UserInfo = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """レポート生成エンドポイント。

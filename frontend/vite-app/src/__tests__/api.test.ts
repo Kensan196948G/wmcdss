@@ -89,7 +89,8 @@ describe('fetchJSON', () => {
   it('prepends WMCDSS_API_BASE for relative paths', async () => {
     mockFetch.mockResolvedValue(okResponse({}));
     await fetchJSON('/test-path');
-    expect(mockFetch).toHaveBeenCalledWith(`${WMCDSS_API_BASE}/test-path`, undefined);
+    const [url] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${WMCDSS_API_BASE}/test-path`);
   });
 
   it('uses absolute URL directly when path starts with http', async () => {
@@ -103,13 +104,22 @@ describe('fetchJSON', () => {
     mockFetch.mockResolvedValue(okResponse({}));
     const init: RequestInit = { method: 'POST', body: '{}' };
     await fetchJSON('/data', init);
-    expect(mockFetch).toHaveBeenCalledWith(`${WMCDSS_API_BASE}/data`, init);
+    // headers は fetchJSON が Authorization 注入のために必ず組み立てるので、
+    // init と同一オブジェクトにはならない。呼び出し側の指定が保たれることを見る。
+    const [url, sent] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${WMCDSS_API_BASE}/data`);
+    expect(sent.method).toBe('POST');
+    expect(sent.body).toBe('{}');
   });
 
   it('throws APIError when response is not ok', async () => {
     mockFetch.mockResolvedValue(failResponse(404, 'not found'));
     await expect(fetchJSON('/missing')).rejects.toBeInstanceOf(APIError);
   });
+
+  // Authorization ヘッダー注入と 401 時のログアウトは api-auth.test.ts が担当する。
+  // localStorage と window イベントが要るので、あちらは jsdom で走らせている
+  // （このファイルは node 環境。WMCDSS_API_BASE の node 分岐を検証するため）。
 
   it('sets correct status on thrown APIError', async () => {
     mockFetch.mockResolvedValue(failResponse(503, 'unavailable'));

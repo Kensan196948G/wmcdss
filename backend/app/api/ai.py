@@ -10,6 +10,12 @@ language recommendation.  When the environment variable ``WMCDSS_CLAUDE_API_KEY`
 is set (or an API key is saved via POST /api/v1/ai/settings) the analysis is
 delegated to Anthropic Claude.  Otherwise a deterministic rule-based fallback
 generates the result in Japanese so the feature works even without an API key.
+
+認証: 本モジュールの **全** エンドポイントが JWT を要求する
+(``Depends(get_current_user)``)。これらは Anthropic への従量課金リクエストを
+発生させるため、未認証で叩ける状態は「誰でも課金できる」ことを意味する。
+API キー middleware (app/core/security.py) からは除外したままにしてあり、
+ブラウザは ``X-API-Key`` ではなく ``Authorization: Bearer`` で認証する。
 """
 from __future__ import annotations
 
@@ -18,13 +24,13 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 import httpx
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, field_validator
+from pydantic import AfterValidator, BaseModel, Field, field_validator
 
-# JWT 認証依存関係 — /ai/settings と /ai/test はログイン済みユーザーのみ許可。
+# JWT 認証依存関係 — /ai/* は全てログイン済みユーザーのみ許可。
 # app.api.auth → app.core.auth → app.core.config のチェーンは一方向なので循環なし。
 from app.api.auth import UserInfo, get_current_user
 
@@ -137,16 +143,67 @@ def _detect_source() -> Literal["ui", "env", "none"]:
 
 
 # ---------------------------------------------------------------------------
+# 入力量の上限
+#
+# /ai/* のリクエストボディはそのまま prompt へ文字列展開され、Anthropic への
+# 従量課金リクエストになる。上限が無いと、ログイン済みユーザー 1 人が 1 回の
+# リクエストで API 利用料と応答遅延を任意に押し上げられる（可用性と費用の
+# 両方に効く）。業務上ありえない大きさで頭打ちにする。
+#
+# 実利用の目安（frontend/vite-app/src/dashboard.tsx）は現場一覧が数十件、
+# 予報が 3 日分なので、下の上限は実運用の 1 桁以上うえに置いてある。
+#
+# なお list の max_length は **要素数** しか縛らない。要素が dict[str, Any] の
+# 場合は 1 要素が巨大でも通ってしまうため、直列化後のバイト数でも別途縛る。
+# ---------------------------------------------------------------------------
+
+MAX_LIST_ITEMS = 200
+MAX_PAYLOAD_BYTES = 64 * 1024  # 自由形式 dict / list 1 フィールドあたり
+MAX_TEXT_CHARS = 4_000
+
+# _call_claude へ渡る最終 prompt の背水の陣。上の宣言的な上限を付け忘れた
+# エンドポイントが将来追加されても、課金経路の手前で必ず止まるようにする。
+MAX_PROMPT_CHARS = 80_000
+
+
+def _bounded_json(value: Any) -> Any:
+    """自由形式 JSON フィールドを直列化サイズで制限する。
+
+    pydantic は ValueError を field の位置情報付き 422 へ変換するので、
+    ここでフィールド名を組み立てる必要はない。
+    """
+    if value is None:
+        return value
+    size = len(json.dumps(value, ensure_ascii=False, default=str).encode("utf-8"))
+    if size > MAX_PAYLOAD_BYTES:
+        raise ValueError(
+            f"入力が大きすぎます（{size} バイト > 上限 {MAX_PAYLOAD_BYTES} バイト）"
+        )
+    return value
+
+
+# 自由形式 dict / list[dict] 用の再利用可能な型。個々のモデルで
+# バリデータを書き写さないことで、付け忘れによる穴を作らない。
+BoundedDict = Annotated[dict[str, Any], AfterValidator(_bounded_json)]
+BoundedDictList = Annotated[
+    list[dict[str, Any]],
+    Field(max_length=MAX_LIST_ITEMS),
+    AfterValidator(_bounded_json),
+]
+BoundedText = Annotated[str, Field(max_length=MAX_TEXT_CHARS)]
+
+
+# ---------------------------------------------------------------------------
 # Request / Response schemas
 # ---------------------------------------------------------------------------
 
 class AiAnalyzeRequest(BaseModel):
-    site_id: str
+    site_id: BoundedText
     work_type: Literal["concrete", "marine"]
     audience: Literal["field", "manager"] = "field"
-    weather: dict[str, Any]
-    marine: dict[str, Any] | None = None
-    thresholds: dict[str, Any]
+    weather: BoundedDict
+    marine: BoundedDict | None = None
+    thresholds: BoundedDict
 
 
 class AiAnalyzeResponse(BaseModel):
@@ -210,29 +267,29 @@ class AiAssistResponse(BaseModel):
 
 
 class AiEtlDiagnoseRequest(BaseModel):
-    jobs: list[dict[str, Any]]
+    jobs: BoundedDictList
 
 
 class AiRiskSummaryRequest(BaseModel):
-    sites: list[dict[str, Any]]
+    sites: BoundedDictList
 
 
 class AiReportCommentRequest(BaseModel):
-    template: str
-    date_from: str | None = None
-    date_to: str | None = None
-    target: str | None = None
-    recent_reports: list[dict[str, Any]] = []
+    template: BoundedText
+    date_from: BoundedText | None = None
+    date_to: BoundedText | None = None
+    target: BoundedText | None = None
+    recent_reports: BoundedDictList = []
 
 
 class AiAnomalyDetectRequest(BaseModel):
-    observations: list[dict[str, Any]]
-    source_note: str | None = None
+    observations: BoundedDictList
+    source_note: BoundedText | None = None
 
 
 class AiChatRequest(BaseModel):
-    question: str
-    context: dict[str, Any] = {}
+    question: BoundedText
+    context: BoundedDict = {}
 
     @field_validator("question")
     @classmethod
@@ -492,6 +549,18 @@ async def _call_claude(
 
     Returns empty string on any error so the caller can fall back gracefully.
     """
+    # 全ての課金リクエストがこの関数を通る。リクエストモデル側の宣言的な上限を
+    # 付け忘れたエンドポイントが将来追加されても、ここで必ず止まる。
+    # 通常運用では到達しない（到達したら上限設定の不備を意味する）。
+    if len(prompt) > MAX_PROMPT_CHARS:
+        log.warning(
+            "prompt が上限を超えたため Claude API を呼ばずにフォールバックします "
+            "(%d 文字 > 上限 %d 文字)",
+            len(prompt),
+            MAX_PROMPT_CHARS,
+        )
+        return ""
+
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
@@ -775,7 +844,10 @@ async def test_ai_connection(
 
 
 @router.post("/ai/analyze", response_model=AiAnalyzeResponse)
-async def analyze(body: AiAnalyzeRequest) -> AiAnalyzeResponse:
+async def analyze(
+    body: AiAnalyzeRequest,
+    _current_user: UserInfo = Depends(get_current_user),
+) -> AiAnalyzeResponse:
     """AI-assisted construction judgment analysis.
 
     When an API key is configured (via UI settings or ``WMCDSS_CLAUDE_API_KEY``),
@@ -825,7 +897,10 @@ async def analyze(body: AiAnalyzeRequest) -> AiAnalyzeResponse:
 
 
 @router.post("/ai/etl-diagnose", response_model=AiAssistResponse)
-async def etl_diagnose(body: AiEtlDiagnoseRequest) -> AiAssistResponse:
+async def etl_diagnose(
+    body: AiEtlDiagnoseRequest,
+    _current_user: UserInfo = Depends(get_current_user),
+) -> AiAssistResponse:
     fallback = _fallback_etl_diagnosis(body.jobs)
     prompt = (
         "以下のデータ取得ジョブ状態を日本語で診断してください。\n"
@@ -837,7 +912,10 @@ async def etl_diagnose(body: AiEtlDiagnoseRequest) -> AiAssistResponse:
 
 
 @router.post("/ai/risk-summary", response_model=AiAssistResponse)
-async def risk_summary(body: AiRiskSummaryRequest) -> AiAssistResponse:
+async def risk_summary(
+    body: AiRiskSummaryRequest,
+    _current_user: UserInfo = Depends(get_current_user),
+) -> AiAssistResponse:
     fallback = _fallback_risk_summary(body.sites)
     prompt = (
         "以下の現場一覧から、今後数時間で注意すべき現場リスクを日本語で要約してください。\n"
@@ -849,7 +927,10 @@ async def risk_summary(body: AiRiskSummaryRequest) -> AiAssistResponse:
 
 
 @router.post("/ai/report-comment", response_model=AiAssistResponse)
-async def report_comment(body: AiReportCommentRequest) -> AiAssistResponse:
+async def report_comment(
+    body: AiReportCommentRequest,
+    _current_user: UserInfo = Depends(get_current_user),
+) -> AiAssistResponse:
     fallback = _fallback_report_comment(body)
     prompt = (
         "施工支援システムのレポート総括コメントを日本語で作成してください。\n"
@@ -861,7 +942,10 @@ async def report_comment(body: AiReportCommentRequest) -> AiAssistResponse:
 
 
 @router.post("/ai/anomaly-detect", response_model=AiAssistResponse)
-async def anomaly_detect(body: AiAnomalyDetectRequest) -> AiAssistResponse:
+async def anomaly_detect(
+    body: AiAnomalyDetectRequest,
+    _current_user: UserInfo = Depends(get_current_user),
+) -> AiAssistResponse:
     fallback = _fallback_anomaly_detection(body.observations)
     prompt = (
         "以下の観測値について、急変・欠損・外部APIの違和感を日本語で確認してください。\n"
@@ -873,7 +957,10 @@ async def anomaly_detect(body: AiAnomalyDetectRequest) -> AiAssistResponse:
 
 
 @router.post("/ai/chat", response_model=AiAssistResponse)
-async def ai_chat(body: AiChatRequest) -> AiAssistResponse:
+async def ai_chat(
+    body: AiChatRequest,
+    _current_user: UserInfo = Depends(get_current_user),
+) -> AiAssistResponse:
     fallback = _fallback_chat(body)
     prompt = (
         "あなたは海洋土木向け気象・海象施工支援システムの補助AIです。\n"
