@@ -13,6 +13,19 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
+    // @testing-library/react は import 時にグローバル afterEach の有無を見て、
+    // 自動 cleanup（描画ツリーの unmount）を仕込むかどうかを決める。globals が
+    // 無効だと登録されず、テスト終了後もコンポーネントがマウントされたまま残る。
+    //
+    // React 18 では無害だったが、React 19 はスケジューラの保留タスクを
+    // setImmediate で実行するため、vitest がファイル単位で jsdom 環境を破棄した
+    // *後* にタスクが発火し `window is not defined` で落ちる（テスト自体は全件
+    // 成功するのに unhandled error でプロセスが exit 1 になる）。
+    //
+    // 各テストファイルは今も 'vitest' から明示 import しており、globals を有効に
+    // してもその書き方は変わらない。ここで有効化するのは RTL に後始末を
+    // 登録させるためだけ。
+    globals: true,
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     coverage: {
       provider: 'v8',
