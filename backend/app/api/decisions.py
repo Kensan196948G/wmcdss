@@ -85,7 +85,14 @@ async def create_decision(
         status=res.status,
         reason=res.reason,
         inputs=inputs,
-        thresholds_snapshot={"rules": res.matched_rules},
+        # `rules` は発火したルール、`unevaluated` は欠測や設定不正で評価できな
+        # かったルール、`evaluated` は実際に評価できた件数。3 つ揃って初めて、
+        # 「なぜこの判定になったか」を事後に再構成できる。
+        thresholds_snapshot={
+            "rules": res.matched_rules,
+            "unevaluated": res.unevaluated_rules,
+            "evaluated": res.evaluated_count,
+        },
     )
     db.add(decision)
     await db.flush()
@@ -107,6 +114,11 @@ async def create_decision(
             "reason": res.reason,
             "inputs": inputs,
             "matched_rules": res.matched_rules,
+            # 欠測を理由に caution へ落ちた判定を、監査ログだけで追跡できるように
+            # する。判定の根拠が「該当した」ではなく「評価できなかった」場合、
+            # 事後の説明責任はこちらの側にある。
+            "unevaluated_rules": res.unevaluated_rules,
+            "evaluated_rule_count": res.evaluated_count,
         },
         strict=True,
     )

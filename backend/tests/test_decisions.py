@@ -11,6 +11,7 @@ from app.api.decisions import router
 from app.db.session import get_db
 from app.models.observations import WeatherObservation, MarineObservation
 from app.models.threshold import Threshold
+from app.services.decision import REASON_ALL_CLEAR
 
 _NOW = datetime(2026, 5, 27, 9, 0, 0, tzinfo=timezone.utc)
 
@@ -180,12 +181,41 @@ def test_create_decision_400_when_window_equal():
 # POST /decisions — decision status outcomes
 # ---------------------------------------------------------------------------
 
-def test_create_decision_go_when_no_thresholds():
+def test_create_decision_caution_when_no_thresholds_configured():
+    """しきい値も観測値も無い状態は「施工可」ではない。
+
+    以前はここで status="go" ／ 理由「全しきい値を満たしています。施工可。」を
+    返していた。`_empty_3()` は「しきい値 0 件・気象 0 件・海象 0 件」であり、
+    一件も評価していないのに全件クリアと断言する状態だった。新規 site を
+    登録した直後や ETL 停止中に、そのまま画面へ「施工可」と出る。
+    """
     c = TestClient(_make_app(_FakeDB(_empty_3())))
     r = c.post("/decisions", json=_payload())
     assert r.status_code == 200
-    assert r.json()["status"] == "go"
-    assert r.json()["reason"] == "全しきい値を満たしています。施工可。"
+    assert r.json()["status"] == "caution"
+    assert REASON_ALL_CLEAR not in r.json()["reason"]
+    assert "1 件も設定されていません" in r.json()["reason"]
+
+
+def test_create_decision_caution_when_observations_missing():
+    """しきい値はあるが観測値が無い場合も go にしない。
+
+    `_latest_inputs` は観測行が 1 件も無いと 7 メトリクス全てを None で返す。
+    その状態でしきい値だけ設定されていると、全ルールが評価不能になる。
+    """
+    returns = [
+        _FakeResult(rows=[_fake_threshold("wind_speed_ms", ">=", 10.0, "warn")]),
+        _FakeResult(),   # weather: 観測行なし
+        _FakeResult(),   # marine:  観測行なし
+    ]
+    c = TestClient(_make_app(_FakeDB(returns)))
+    r = c.post("/decisions", json=_payload())
+    assert r.status_code == 200
+    assert r.json()["status"] == "caution"
+    assert "wind_speed_ms" in r.json()["reason"]
+    snapshot = r.json()["thresholds_snapshot"]
+    assert snapshot["evaluated"] == 0
+    assert len(snapshot["unevaluated"]) == 1
 
 
 def test_create_decision_caution_when_warn_threshold_met():
@@ -263,6 +293,9 @@ def test_create_decision_go_when_threshold_not_met():
     r = c.post("/decisions", json=_payload())
     assert r.status_code == 200
     assert r.json()["status"] == "go"
+    # 「評価して該当しなかった」ことの証跡。matched_rules は発火分しか残さない
+    # ため、この件数が無いと未設定 (evaluated=0) と区別できない。
+    assert r.json()["thresholds_snapshot"]["evaluated"] == 1
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +312,7 @@ def test_create_decision_response_shape():
         "temperature_c", "humidity_pct", "precip_mm_1h",
         "wind_speed_ms", "wind_gust_ms", "sig_wave_h_m", "wave_period_s",
     }
-    assert body["thresholds_snapshot"] == {"rules": []}
+    assert body["thresholds_snapshot"] == {"rules": [], "unevaluated": [], "evaluated": 0}
     assert "generated_at" in body
     assert body["status"] in {"go", "caution", "stop"}
     assert body["work_type"] == "concrete"
