@@ -14,7 +14,7 @@ from typing import Any
 
 import bcrypt as _bcrypt
 import httpx
-from jose import JWTError, jwt
+import jwt  # PyJWT
 
 from app.core.config import get_settings
 
@@ -39,6 +39,14 @@ def hash_password(plain: str) -> str:
 
 # ---------------------------------------------------------------------------
 # JWT 発行・検証
+#
+# PyJWT を使用 (python-jose から移行)。python-jose は署名検証に `ecdsa` を
+# 引き込むが、`ecdsa` 0.19.2 には未修正の脆弱性 PYSEC-2026-1325 があり、
+# upstream に fix version が存在しないため CI の pip-audit を恒常的に赤化させる。
+# 本システムは HS256 (HMAC) しか使わず ECDSA を必要としないため、純 Python の
+# ECDSA 実装を持たない PyJWT へ移行して依存そのものを除去した。
+# encode/decode のシグネチャは python-jose と互換で、`algorithms` を明示指定
+# しているため alg=none による署名回避も従来どおり成立しない。
 # ---------------------------------------------------------------------------
 
 def create_access_token(subject: str, auth_type: str, extra: dict[str, Any] | None = None) -> str:
@@ -58,7 +66,7 @@ def decode_access_token(token: str) -> dict[str, Any] | None:
     s = get_settings()
     try:
         return jwt.decode(token, s.jwt_secret, algorithms=[s.jwt_algorithm])
-    except JWTError as e:
+    except jwt.PyJWTError as e:
         log.debug("JWT decode failed: %s", e)
         return None
 

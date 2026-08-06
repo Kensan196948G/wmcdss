@@ -8,6 +8,9 @@ Covers:
 
 from __future__ import annotations
 
+import base64
+import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi import FastAPI
@@ -229,3 +232,59 @@ def test_get_me_with_wrong_secret_returns_401(monkeypatch):
     c = _make_client(monkeypatch)
     r = c.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {bad_token}"})
     assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# アルゴリズム混同 (alg confusion) の回帰ガード
+#
+# JWT の古典的な脆弱性: 攻撃者がヘッダーの `alg` を "none" に書き換えて署名を
+# 削除すると、ヘッダーを信用する実装は無署名トークンを受理してしまう。
+# decode_access_token は `algorithms=[...]` を明示指定しているのでこれを拒否する
+# が、それは JWT ライブラリの選択に依存する挙動である。python-jose → PyJWT の
+# 移行 (PYSEC-2026-1325 / ecdsa 除去) でこの防御が失われていないことを固定し、
+# 将来ライブラリを差し替えた際にも同じ検証が走るようにする。
+# トークンは意図的に手組みする — ライブラリ自身の encoder を使うと、
+# 「decoder がヘッダーを信用するか」という検証したい性質を回避してしまうため。
+# ---------------------------------------------------------------------------
+
+
+def _b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+
+def _forged_none_alg_token(subject: str = "admin") -> str:
+    """`alg: none` の無署名トークンを手組みする（署名部は空）。"""
+    header = _b64url(json.dumps({"alg": "none", "typ": "JWT"}).encode())
+    exp = int((datetime.now(timezone.utc) + timedelta(hours=1)).timestamp())
+    payload = _b64url(
+        json.dumps({"sub": subject, "auth_type": "local", "exp": exp}).encode()
+    )
+    return f"{header}.{payload}."
+
+
+def test_get_me_with_alg_none_token_returns_401(monkeypatch):
+    """署名なし (alg=none) の偽造トークンは受理してはならない。"""
+    c = _make_client(monkeypatch)
+    r = c.get(
+        "/api/v1/auth/me",
+        headers={"Authorization": f"Bearer {_forged_none_alg_token()}"},
+    )
+    assert r.status_code == 401
+
+
+def test_decode_access_token_rejects_alg_none(monkeypatch):
+    """ミドルウェア経由ではなく decode 関数自体が None を返すことを確認する。"""
+    monkeypatch.setattr(core_auth_mod, "get_settings", lambda: _settings())
+    assert core_auth_mod.decode_access_token(_forged_none_alg_token()) is None
+
+
+def test_decode_access_token_roundtrip(monkeypatch):
+    """発行したトークンが同じ設定で復号でき、クレームが保たれること。"""
+    monkeypatch.setattr(core_auth_mod, "get_settings", lambda: _settings())
+    token = core_auth_mod.create_access_token("admin", "local", {"display_name": "管理者"})
+    claims = core_auth_mod.decode_access_token(token)
+    assert claims is not None
+    assert claims["sub"] == "admin"
+    assert claims["auth_type"] == "local"
+    assert claims["display_name"] == "管理者"
+    assert "exp" in claims

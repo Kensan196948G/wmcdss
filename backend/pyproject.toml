@@ -16,7 +16,10 @@ dependencies = [
   "numpy>=2.0",
   "prometheus_client>=0.21",
   # 認証関連
-  "python-jose[cryptography]>=3.3",
+  # PyJWT を使用。python-jose は未修正の脆弱性 PYSEC-2026-1325 を持つ `ecdsa`
+  # を必ず引き込むが、本システムの JWT は HS256 (HMAC) のみで ECDSA を使わない。
+  # 詳細は app/core/auth.py の JWT セクション参照。
+  "PyJWT>=2.10",
   "bcrypt>=3.2",
   "msal>=1.28",
   "python-multipart>=0.0.12",
@@ -27,12 +30,25 @@ dependencies = [
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.24",
-  "ruff>=0.7",
+  # ruff は品質ゲートそのものなので厳密固定する。`>=` だけだと新リリースが
+  # 既定ルールセットを拡張した瞬間に、コード変更ゼロで CI が赤化する
+  # (実際に 0.16 で YTT/ASYNC/S/BLE/B/UP/I などが既定入りし 161 件検出された)。
+  # 更新は Dependabot の PR としてレビュー可能な形で受け取る。
+  "ruff==0.16.1",
 ]
 
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# ruff の「既定ルールセット」はバージョン間で変化するため、ゲートの意味を
+# 固定する目的で明示宣言する。ここに列挙した集合は 0.16 以前の既定と同一で、
+# 本リポジトリが継続的に緑を維持してきた実績のある範囲。
+#   E4  = import 関連エラー / E7 = 文法・比較の誤り / E9 = 構文エラー
+#   F   = pyflakes (未定義名・未使用 import など実バグ検出)
+# ルール追加 (B, UP, I, SIM 等) は lint 専用 PR で段階的に行う。
+select = ["E4", "E7", "E9", "F"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
