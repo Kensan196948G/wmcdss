@@ -99,9 +99,26 @@ docker compose --env-file .env.production -f docker-compose.production.yml ps
 | WebUI が開く | ブラウザで `http://<サーバIP>:9080` |
 | API が応答する | ブラウザで `http://<サーバIP>:9080/readyz` |
 | コンテナ状態 | `docker compose --env-file .env.production -f docker-compose.production.yml ps` |
+| DB スキーマ適用 | `docker compose --env-file .env.production -f docker-compose.production.yml logs db-migrate` |
 | ログ確認 | `docker compose --env-file .env.production -f docker-compose.production.yml logs -f backend` |
 
 > サーバの IP アドレスは `ip addr show` コマンドで確認できます。
+
+**`db-migrate` について:** DB のスキーマ適用専用の使い捨てコンテナです。
+`backend` より先に必ず実行され、成功（`Exited (0)`）しない限り `backend` も
+気象取得も起動しません。「デプロイは成功したのにスキーマだけ古い」状態を
+作らないための仕組みなので、`ps` で `Exited (0)` になっているのが正常です。
+ログには次のように出ます。
+
+```
+検出: 2 件 / 適用済み: 0 件 / 未適用: 2 件
+適用: 0001_init.sql
+適用: 0002_seed_demo.sql
+完了
+```
+
+2 回目以降の起動では `適用対象なし` と出ます（何度実行しても安全です）。
+更新版を配布したときだけ、新しいファイルが `適用:` として流れます。
 
 ---
 
@@ -220,6 +237,39 @@ gunzip -c backup_20260614.sql.gz \
 
 **推奨**: cron で毎日自動バックアップを設定し、世代管理（30 日分）することを推奨します。
 
+### ⚠️ 更新版を適用する前は必ずバックアップを取る
+
+新しいバージョンには DB スキーマの変更（migration）が含まれることがあります。
+**スキーマを元に戻す自動手段は用意していません**（自動生成した逆操作は
+`DROP COLUMN` などでデータを失う経路を常に抱えるため）。上記の `pg_dump` が
+唯一の復旧地点になります。
+
+```bash
+# 1. バックアップ（復旧地点）
+docker compose --env-file .env.production -f docker-compose.production.yml exec db \
+  pg_dump -U wmcdss_app wmcdss | gzip > backup_$(date +%Y%m%d_%H%M).sql.gz
+
+# 2. 更新版を取得して起動（db-migrate が自動でスキーマを適用する）
+git pull
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+```
+
+問題が起きた場合の戻し方は、**アプリと DB の両方**を同じ時点へ戻します。
+
+```bash
+# 書き込みを止める
+docker compose --env-file .env.production -f docker-compose.production.yml \
+  stop backend weather-ingest marine-ingest
+
+# DB を復元（適用記録もダンプに含まれるため、その時点の状態ごと戻る）
+gunzip -c backup_YYYYMMDD_HHMM.sql.gz | docker compose --env-file .env.production \
+  -f docker-compose.production.yml exec -T db psql -U wmcdss_app wmcdss
+
+# アプリも同じ時点へ戻してから起動
+git checkout <戻したい commit>
+docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
+```
+
 ---
 
 ## 👤 ユーザー管理
@@ -296,6 +346,45 @@ docker compose --env-file .env.production -f docker-compose.production.yml logs 
 # DB に直接接続して確認
 docker compose --env-file .env.production -f docker-compose.production.yml exec db psql -U wmcdss_app wmcdss
 ```
+
+### backend が起動しない（`db-migrate` が失敗している）
+
+`backend` は `db-migrate` の成功を待つため、スキーマ適用に失敗すると
+`backend` は `Created` のまま起動しません。まず原因をログで確認します。
+
+```bash
+docker compose --env-file .env.production -f docker-compose.production.yml logs db-migrate
+```
+
+**ケース 1: 「DB にスキーマが存在するのに migration の適用記録が無い」**
+
+このバージョンを導入する**前から動いていた DB** で一度だけ起きます。旧方式では
+適用記録を残していなかったため、記録を作り直す必要があります。
+
+```bash
+# 現在のバックアップを取ってから実行すること（下記「バックアップ」参照）
+docker compose --env-file .env.production -f docker-compose.production.yml \
+  run --rm db-migrate python -m app.db.migrate baseline
+
+# → baseline: 0001_init.sql を適用済みとして記録（SQL は実行していない）
+
+# 記録できたら通常どおり起動
+docker compose --env-file .env.production -f docker-compose.production.yml up -d
+```
+
+これはデータを変更しません（記録を書くだけで SQL は実行しません）。
+一度実行すれば以後は不要です。
+
+**ケース 2: 「適用済み migration の内容が変更されている」**
+
+配布ファイルが書き換わっています。安全のため停止しています。チェックアウトを
+正規の状態に戻してください（`git status` で差分を確認）。判断に迷う場合は
+自己判断で先へ進めず、開発元へログを添えて連絡してください。
+
+**ケース 3: 「migration ファイルが 1 件も無い」「ディレクトリが存在しない」**
+
+リポジトリの配置場所から `docker compose` を実行していない可能性があります。
+`$WMCDSS_HOME` に移動してから起動し直してください。
 
 ---
 

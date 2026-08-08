@@ -190,6 +190,108 @@ flowchart LR
 
 ---
 
+## 🧱 DB migration（スキーマ適用）
+
+`db/migrations/*.sql` の適用経路は **`backend/app/db/migrate.py` のランナー 1 本だけ**。
+compose では `db-migrate` サービス（ワンショット）として定義され、`backend` と
+ingest 系は `depends_on: { db-migrate: { condition: service_completed_successfully } }`
+で待つ。migration が失敗すれば API は起動しない。
+
+### なぜ `/docker-entrypoint-initdb.d` を使わないか
+
+postgres 公式 entrypoint は `$PGDATA/PG_VERSION` が存在すると初期化処理を
+**丸ごと飛ばす**（ログに `Skipping initialization` と出る）。つまり
+`/docker-entrypoint-initdb.d` へのマウントは **DB ボリュームを作った最初の 1 回
+しか実行されない**。0003 以降を追加しても既存環境には二度と届かず、
+「デプロイは成功したのにスキーマだけ古い」状態が静かに成立する。
+この構造欠陥を塞ぐため、initdb マウントは dev / production 双方から撤去した。
+
+### コマンド
+
+いずれも `python -m app.db.migrate <command>`。ディレクトリは
+`WMCDSS_MIGRATIONS_DIR`（既定 `/migrations`）、`--dir` で上書き可。
+
+| コマンド | 動作 | 終了コード |
+| --- | --- | --- |
+| `up`（既定） | 未適用を番号順に適用。**1 ファイル = 1 トランザクション** | 0 = 適用完了 or 適用対象なし |
+| `status` | 何も適用せず件数と異常だけ報告 | 0 = 健全 / 1 = 要 baseline または改竄検出 |
+| `baseline` | 既存 DB の現状を「全て適用済み」と**記録だけ**する（SQL は実行しない） | 0 = 記録成功 / 1 = 誤用 |
+
+```bash
+# 開発（compose が自動実行するので通常は不要。手動確認したいとき）
+docker compose run --rm db-migrate python -m app.db.migrate status
+
+# 本番
+docker compose --env-file .env.production -f docker-compose.production.yml \
+  run --rm db-migrate python -m app.db.migrate status
+```
+
+### 安全側の作り
+
+| 仕組み | 目的 |
+| --- | --- |
+| **checksum 照合** | 適用済みファイルが書き換えられたら停止（exit 1）。DB には旧版、ファイルは新版という「どの版が当たっているか誰も分からない」状態を作らせない。**再適用はしない** — 既に当たっている DDL を再実行すれば `relation already exists` で落ちるだけで、正しい対処は停止 |
+| **`pg_advisory_lock`** | 同時デプロイで 2 本走っても 2 本目は待つ。ロックはセッション単位で、`finally` で必ず解放 |
+| **1 ファイル 1 トランザクション** | 途中で失敗しても半端な DDL が残らない |
+| **番号順（数値）ソート** | `10_` は `2_` より後。辞書順ではない |
+| **規則外ファイルで停止** | `hotfix.sql` のように番号が無い `.sql`、番号重複を検出したら適用せず exit 1。「置いたのに適用されない」が一番気付きにくい |
+| **ディレクトリ空 / 不在で停止** | マウント忘れ・パス打ち間違いを「適用対象 0 件で成功」にしない。Docker はホスト側パスを打ち間違えると**空ディレクトリを作って**マウントするため、両方を弾く |
+| **`schema_migrations` 記録** | `version` / `checksum` / `applied_at` / `applied_by` を保存。監査に耐える |
+
+### 新しい migration を足す
+
+1. `db/migrations/0003_<説明>.sql` を作る（`<数字>_<名前>.sql`、番号は連番）。
+2. **適用済みファイルは絶対に書き換えない**。変更は必ず新しい番号のファイルで行う。
+3. additive・後方互換のみ（`ADD COLUMN` / `CREATE INDEX` / `CREATE TABLE`）。
+   破壊的変更は expand-and-contract に分解し、Approval PR へ分離する。
+4. `docker compose up -d` すれば `db-migrate` が適用してから backend が起動する。
+
+### 既存 DB の baseline（ランナー導入前から動いている環境のみ・一度きり）
+
+このランナーを入れる前に initdb 経路で作られた DB は、**スキーマはあるのに
+`schema_migrations` が空**になる。どのファイルが適用済みかは DB からは判定
+できないため、ランナーは自動では進めず次を出して停止する（exit 1）。
+
+```
+DB にスキーマが存在するのに migration の適用記録が無い。
+...
+一度だけ次を実行すること:
+    python -m app.db.migrate baseline
+```
+
+この状態では `backend` は起動しない（`service_completed_successfully` で待つため）。
+**現在の migration ファイル群が全て適用済みであることを確認してから**、一度だけ：
+
+```bash
+docker compose --env-file .env.production -f docker-compose.production.yml \
+  run --rm db-migrate python -m app.db.migrate baseline
+# → baseline: 0001_init.sql を適用済みとして記録（SQL は実行していない）
+# → baseline: 0002_seed_demo.sql を適用済みとして記録（SQL は実行していない）
+
+# 記録後は通常どおり起動する
+docker compose --env-file .env.production -f docker-compose.production.yml up -d
+```
+
+`baseline` は誤用を両側で拒否する — 記録が 1 件でもあれば実行しない（二重
+baseline 防止）、スキーマが無ければ「`up` を実行すること」と案内して実行しない
+（新規 DB を空のまま「適用済み」と誤記録する事故の防止）。
+
+### rollback
+
+**down migration は用意していない。** SQL の逆操作を自動生成すると、
+`DROP COLUMN` が復元不能なデータ損失になる経路を常時抱えることになるため。
+スキーマを戻す必要が出た場合の手順は次のとおり。
+
+1. `docker compose ... stop backend weather-ingest marine-ingest`（書き込みを止める）
+2. 事前バックアップから復元（→ [`IT-STAFF.md` 💾 バックアップ](./IT-STAFF.md)）。
+   `schema_migrations` もダンプに含まれるため、復元時点の適用記録ごと戻る。
+3. アプリのイメージも同じ時点の commit へ戻してから起動する。
+
+つまり **migration を伴うデプロイの前には必ず `pg_dump` を取る**。これが唯一の
+復旧地点になる。
+
+---
+
 ## 🚀 ローカル起動（5 分）
 
 ```bash
@@ -236,6 +338,7 @@ docker build -t wmcdss-frontend .   # multi-stage build — CI と同等 image
 | 変数                           | 既定                                                       | 用途                                                                                     |
 | ------------------------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
 | `WMCDSS_DATABASE_URL`          | `postgresql+asyncpg://wmcdss:wmcdss@localhost:5432/wmcdss` | DB 接続                                                                                  |
+| `WMCDSS_MIGRATIONS_DIR`        | `/migrations`                                              | migration ランナーが読む SQL ディレクトリ（compose が read-only で bind mount）           |
 | `WMCDSS_API_KEYS`              | （空＝認証無効）                                           | カンマ区切りの API キー一覧                                                              |
 | `WMCDSS_CORS_ORIGINS`          | 192.168.0.185:8888 等                                      | CORS 許可元                                                                              |
 | `WMCDSS_JMA_USER_AGENT`        | `wmcdss/0.1 (+contact: …)`                                 | JMA への User-Agent                                                                      |

@@ -11,7 +11,10 @@ services:
       - "127.0.0.1:5434:5432"
     volumes:
       - wmcdss_pgdata:/var/lib/postgresql/data
-      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+      # db/migrations は /docker-entrypoint-initdb.d へマウントしない。
+      # postgres 公式 entrypoint は $PGDATA/PG_VERSION があると初期化を丸ごと
+      # 飛ばすため、初回以降に追加した migration が二度と適用されない。
+      # 適用は db-migrate サービス（app/db/migrate.py）へ一本化する。
     healthcheck:
       test:
         [
@@ -22,6 +25,28 @@ services:
       timeout: 3s
       retries: 20
     restart: always
+
+  # スキーマ適用専用のワンショット。backend より先に必ず完走させる。
+  # イメージは backend サービスのビルドで作られる（weather-ingest 等と同じ流儀）。
+  db-migrate:
+    image: wmcdss-backend:dev
+    container_name: wmcdss-db-migrate
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WMCDSS_DATABASE_URL: "${WMCDSS_DATABASE_URL:-postgresql+asyncpg://wmcdss:wmcdss@db:5432/wmcdss}"
+      WMCDSS_MIGRATIONS_DIR: /migrations
+      PYTHONUNBUFFERED: "1"
+      TZ: ${TZ:-Asia/Tokyo}
+    volumes:
+      # /app の外へマウントする。backend が ./backend:/app を bind mount して
+      # いるため配下へネストさせるとホスト側に空ディレクトリが作られる。
+      - ./db/migrations:/migrations:ro
+    command: ["python", "-m", "app.db.migrate", "up"]
+    # ワンショットなので再起動しない。失敗したら backend も起動しない
+    # （backend の depends_on が service_completed_successfully のため）。
+    restart: "no"
 
   backend:
     build:
@@ -34,6 +59,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # スキーマ未適用のまま API を公開しない。migrate が失敗すれば backend は
+      # 起動せず、「デプロイは成功したのにスキーマが古い」状態を作らない。
+      db-migrate:
+        condition: service_completed_successfully
     environment:
       # --- Database ---
       WMCDSS_DATABASE_URL: "${WMCDSS_DATABASE_URL:-postgresql+asyncpg://wmcdss:wmcdss@db:5432/wmcdss}"

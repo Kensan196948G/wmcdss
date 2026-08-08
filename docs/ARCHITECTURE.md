@@ -250,3 +250,17 @@ smoke は `tests/test_api_smoke.py` で `target_id` の audit row を **件数�
 ### backend-smoke の起動待ち
 
 backend コンテナには **Loop 46 で healthcheck を追加** — `python -c 'http.client → GET /readyz; exit 0 if status==200 else 1'` を `interval: 10s / timeout: 5s / retries: 6 / start_period: 30s` で実行。これにより `docker compose up -d --wait` は **healthy 状態（FastAPI 起動 ＋ DB 接続成立 ＋ Loop 45 で 503 化した `/readyz` の 200 応答）** まで待つようになり、`frontend` サービスの `depends_on` も `condition: service_healthy` に格上げされて起動順序が k8s readiness probe と等価になった。CI 側の `/readyz` ポーリング（2 秒間隔 × 最大 45 回 = 90s）は冗長になるが多重防御として残置 — タイムアウト時は引き続き `docker compose logs backend` をダンプして diagnose 可能。実際には `pip install --quiet -e .` が走るため `start_period: 30s` で warm-up を吸収する。
+
+起動順序はその後 **`db-migrate` ワンショットを挟む形へ拡張**された（`db` healthy →
+`db-migrate` 完走 → `backend` healthy → `frontend`）。`backend` の `depends_on` は
+`condition: service_completed_successfully` なので、スキーマ適用に失敗すれば API は
+起動しない。「デプロイは成功したのにスキーマだけ古い」状態を構造的に作らせないための
+gate であり、`/readyz` の 200 だけでは検出できない層を塞ぐ（`/readyz` は DB 接続の
+成立は見るが、スキーマの版までは見ない）。
+
+CI の `docker compose up -d --wait db backend` は**変更していない**。compose は
+`--wait` の**対象として明示された**サービスがワンショットで終了すると、終了コードが
+0 でも自身は exit 1 を返す（`container X exited (0)` と表示されたうえで失敗扱い）。
+一方 `db-migrate` のように**依存として暗黙に起動されるだけ**のワンショットでは
+exit 0 を返す。この差があるため、CI 側は `db backend` を対象にしたままで正しく動く。
+`db-migrate` を `--wait` の引数に足すと、成功しているのに CI が落ちる。

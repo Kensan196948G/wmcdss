@@ -41,6 +41,18 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+asyncpg://wmcdss:wmcdss@localhost:5432/wmcdss"
 
+    # migration ランナー (app/db/migrate.py) が読む SQL ディレクトリ。
+    # backend イメージのビルドコンテキストは ./backend なので db/migrations は
+    # イメージに含まれない。compose が read-only で bind mount する前提の既定値。
+    #
+    # `/app` の**外**に置くのが重要。dev の backend は `./backend:/app` を
+    # bind mount しているため、その配下へネストさせると Docker がマウント
+    # ポイントをホスト側 (`./backend/db/migrations`) に作ってしまう。加えて、
+    # mount を書き忘れた場合に `/app` 配下だと「空ディレクトリが存在する」
+    # 状態になり、discover() が 0 件を返して静かに成功する。`/app` の外なら
+    # 「ディレクトリが無い」になり MigrationError で止まる。
+    migrations_dir: str = "/migrations"
+
     # pydantic-settings v2 は list[str] の env 値に JSON 配列を期待するため、
     # コンマ区切り URL 文字列を受け取る際に SettingsError が発生する。
     # str フィールドとして受け取り、cors_origins property でリストに変換する。
