@@ -3,7 +3,7 @@
 > このドキュメントは **開発者・運用担当者向け** の技術詳細をまとめたものです。
 > プロダクトの概要・使い方・収集データについては [`README.md`](../README.md) を参照してください。
 
-[![tests](https://img.shields.io/badge/tests-640%20unit%20%2B%205%20E2E%20%2B%209%20smoke-brightgreen)](#-テスト)
+[![tests](https://img.shields.io/badge/tests-925%20unit%20%2B%2038%20E2E-brightgreen)](#-テスト)
 [![frontend coverage](https://img.shields.io/badge/frontend%20coverage-99.27%25-brightgreen)](#-frontend-coverage-matrix)
 [![backend coverage](https://img.shields.io/badge/backend%20coverage-99%25-brightgreen)](#-テスト)
 [![ci](https://img.shields.io/badge/CI-ruff%20%2B%20pytest%20%2B%20vitest%20%2B%20vite%20%2B%20docker-2088FF)](../.github/workflows/ci.yml)
@@ -33,7 +33,7 @@ flowchart LR
   end
 
   subgraph Client[ブラウザ]
-    F[React 18 + Vite 6<br/>SPA]
+    F[React 19 + Vite 6<br/>SPA]
   end
 
   A1 --> T1
@@ -62,7 +62,7 @@ flowchart LR
 
 | レイヤ             | 技術                                                                                                                                                                                      | パス                                                              | 役割                                                                                        |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| 🖥️ Frontend        | React 18 + Vite 6 + TypeScript（**全 15 ページ ESM port 完了 ＋ density/dark/role 永続化 ＋ Babel Standalone 完全退役 Loop 44**）                                                         | `frontend/vite-app/`（唯一の entry, nginx multi-stage 配信）      | ダッシュボード・現場/閾値管理画面（**全国マップ 40件・エリアフィルター・横並びアラートバナー** ＋ mock 警告帯 ＋ localStorage 永続化） |
+| 🖥️ Frontend        | React 19 + Vite 6 + TypeScript（**全 15 ページ ESM port 完了 ＋ density/dark/role 永続化 ＋ Babel Standalone 完全退役 Loop 44**）                                                         | `frontend/vite-app/`（唯一の entry, nginx multi-stage 配信）      | ダッシュボード・現場/閾値管理画面（**全国マップ 40件・エリアフィルター・横並びアラートバナー** ＋ mock 警告帯 ＋ localStorage 永続化） |
 | 🌐 Frontend エッジ | nginx 1.27-alpine（multi-stage Docker build, lazy DNS）                                                                                                                                   | `frontend/vite-app/Dockerfile`<br/>`frontend/vite-app/nginx.conf` | Vite 静的配信 ＋ `/api/` reverse proxy ＋ `/readyz` passthrough                             |
 | 🐍 Backend API     | FastAPI + SQLAlchemy 2.0 async（**Loop 46: docker healthcheck で `/readyz` を judge — `compose up --wait` が DB 接続成立まで待つようになり frontend は `service_healthy` 依存に格上げ**） | `backend/app/`                                                    | 観測値・閾値・判定 REST API                                                                 |
 | 🗄️ DB              | PostgreSQL 16                                                                                                                                                                             | `db/migrations/`                                                  | 観測値・現場・閾値・監査ログ                                                                |
@@ -109,9 +109,23 @@ flowchart LR
 | `GET`                 | `/api/v1/observations/weather/latest`  | 不要    | 最新観測値                                                         |
 | `POST`                | `/api/v1/observations/marine`          | 🔐 必要 | 波浪観測値の upsert                                                |
 | `GET`                 | `/api/v1/observations/marine[/latest]` | 不要    | 海象観測値                                                         |
+| `GET`                 | `/api/v1/observations/historical`      | 不要    | 過去観測値集計                                                     |
 | `GET`                 | `/api/v1/audit`                        | 不要    | 監査ログ                                                           |
+| `POST`                | `/api/v1/auth/login`                   | 不要    | ローカルユーザーログイン（JWT 発行）                               |
+| `POST`                | `/api/v1/auth/login/m365`              | 不要    | Microsoft 365 ログイン                                             |
+| `GET`                 | `/api/v1/auth/me`                      | 不要    | 現在のユーザー情報                                                 |
+| `GET`                 | `/api/v1/analysis/wave50`              | 不要    | 50 年確率波解析                                                    |
+| `POST`                | `/api/v1/reports`                      | 不要    | レポート出力                                                       |
+| `POST`                | `/api/v1/etl/run/{job_id}`             | 不要    | ETL ジョブ実行                                                     |
+| `GET`                 | `/api/v1/etl/status`                   | 不要    | ETL 実行状態一覧                                                   |
+| `POST`                | `/api/v1/ai/analyze`                   | 不要    | AI 分析                                                            |
+| `POST`                | `/api/v1/ai/etl-diagnose`              | 不要    | AI データ診断                                                      |
+| `POST`                | `/api/v1/ai/risk-summary`              | 不要    | AI リスク要約                                                      |
+| `POST`                | `/api/v1/ai/report-comment`            | 不要    | AI レポートコメント生成                                             |
+| `POST`                | `/api/v1/ai/anomaly-detect`            | 不要    | AI 異常検知                                                        |
+| `POST`                | `/api/v1/ai/chat`                      | 不要    | AI チャット                                                        |
 
-🔐 = `X-API-Key` ヘッダ必須（`WMCDSS_API_KEYS` 環境変数で設定）
+🔐 = `X-API-Key` ヘッダ必須（`WMCDSS_API_KEYS` 環境変数で設定）。上表で「不要」のエンドポイントも、JWT 認証を route 側で要求するものがある（`get_current_user` Depends）。
 
 ---
 
@@ -325,7 +339,7 @@ open http://localhost:8080/   # docker compose の nginx service (frontend/vite-
 
 ```bash
 cd frontend/vite-app
-npm ci                          # Vite 6 + React 18 + TS（lockfile-pinned, CI と同手順）
+npm ci                          # Vite 6 + React 19 + TS（lockfile-pinned, CI と同手順）
 npm run dev                     # HMR dev server → http://localhost:5173
 npm run build                   # → dist/   (Loop 38 時点: 37 modules, CSS gzip 2.86 kB / JS gzip 74.27 kB)
 docker build -t wmcdss-frontend .   # multi-stage build — CI と同等 image
@@ -392,7 +406,7 @@ docker compose exec backend pytest -q tests/
 | ユニット（frontend charts.tsx）                    |      36 | `ChartColors` 全 8 色 hex 検証・`LineChart`（empty→null/SVG/threshold 破線/thresholdLabel/yLabel/circle-per-point/custom-size）・`BarChart`（empty→null/viewBox/rect-per-point/yLabel）・`WindRose`（SVG/8方向ラベル/データドット数/N方向 `??` fix/empty/custom-size）・`Sparkline`（< 2 値→null/SVG/polyline/defaultSize）・`GaugeMeter`（SVG/value表示/unit/label/threshold marker/Loop17 fix threshAngle=0/red-amber-blue 色分岐/size）— `// @vitest-environment jsdom` ＋ `@testing-library/react` パターン（Loop 58） |
 | ユニット（frontend decisions.tsx）                 |      21 | `CheckItem`（ok/warn/danger icon・badge text・badge class・value/unit・threshold・thresholdUnit）・`ConcretePage`（5 判定項目ラベル・判定項目カード・コンクリート打設判定タイトル・打設見通し・selectedSite prop・fallback）・`MarineWorkPage`（site selector・5 WORK_TYPES テーブル・海上作業判定タイトル・4 marine checks・波高推移・selectedSite prop）— jsdom + render() パターン（Loop 59）                                                                                                                           |
 | ユニット（frontend dashboard.tsx）                 |      19 | `AlertBanner`（all-ok→null/danger banner/warn banner/shortName 表示/mixed danger+warn・**横並びチップ最大5件＋+N件バッジ**）・`SiteStatusCard`（shortName/決定バッジ/温度+風速/density padding diff/marine wave height/land rainfall）・`MapView`（div render/`L.map` 1回呼/`L.marker` × sites数/`onSiteClick` mount 時非呼・**全国zoom/エリアズーム**）・`DashboardPage`（4 stat cards/現場マップ/**エリアフィルターボタン**/現場ステータス/週間天気予報）— `vi.stubGlobal('L', mockL)` Leaflet mock パターン（Loop 59）                                                                                             |
-| **E2E（Playwright / Firefox）**                    |   **5** | **sidebar・status badge・気象データ/海上作業ナビゲーション・ダッシュボード復帰 — `vite preview` のみ（backend 不要、Loop 49）**                                                                                                                                                                                                                                                                                                                                                                                            |
+| **E2E（Playwright / Firefox）**                    |  **38** | **sidebar・status badge・気象データ/海上作業ナビゲーション・ダッシュボード復帰 — `vite preview` のみ（backend 不要、Loop 49）**                                                                                                                                                                                                                                                                                                                                                                                            |
 | API スモーク (要ライブ backend)                    |       9 | 起動中バックエンドに対する黒箱（audit 書込み契約を含む）                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ユニット（frontend weather-marine.tsx）            |      26 | `WeatherPage`（13 — 3 tab UI: current/hourly/table 切替 / 6 stat cards / 24h table / 風配図 / 週間予報）・`MarinePage`（12 — marine-only filter / 5 stat cards / 24h LineChart / 24-row 海象 table）— `vi.spyOn(Math, 'random')` 決定論化（Loop 60）                                                                                                                                                                                                                                                                       |
 | ユニット（frontend analysis.tsx）                  |      27 | `HistoricalPage`（13 — 現場×年度×metric 軸 / wind/wave/rain で LineChart⇔BarChart swap / 12 月集計 table）・`Wave50Page`（13 — 再現期間別 8 行 table / 50年行 設計基準 badge / 観測点+推定手法 select）— カバレッジ 100% stmts（Loop 61）                                                                                                                                                                                                                                                                                  |
@@ -401,7 +415,7 @@ docker compose exec backend pytest -q tests/
 | ユニット（frontend tweaks-panel.tsx）              |      41 | 11 components + 1 hook + dual-surface（Loop 64） — `TweaksPanel` postMessage protocol（`window.dispatchEvent(new MessageEvent(...))` + `await act(async)`）・`TweakRadio` ≤3 セグメント / >3 select fallback・`TweakNumber` clamp（min/max）・`TweakColor` 配列 vs string emit の型保持契約・`useTweaks` hook                                                                                                                                                                                                              |
 | ユニット（frontend admin-pages.tsx）               |      34 | `ThresholdsPage`（7 — 編集→保存/取消切替・land "—"）・`EtlPage`（5 — 4 stats + ETL_JOBS テーブル）・`ReportsPage`（8 — 6 templates / 3 format btn / **vi.advanceTimersByTime(1600) で生成中→完了 transition**）・`AuditPage`（5 — filter dynamic action 抽出）・`SettingsPage`（7 — role別defaults / **2000ms 自動消去バナー**）（Loop 65）                                                                                                                                                                                |
 | ユニット（frontend main.tsx）                      |       7 | bootstrap module を `vi.resetModules()` + `await import('../main')` で各 test 独立再起動。`BackendStatusStrip` の 5 分岐（undefined/ok+full/ok+missing/!ok+default/!ok+custom）+ AppShell mount + initFromBackend reject 時の catch path — main.tsx カバレッジ **100% stmts**（Loop 66）                                                                                                                                                                                                                                   |
-| **合計**                                           | **571** | ✅ 各行の件数合計＝**571**（PR-D 適用後の実測値。適用前は 565 で、この合計行と 6 件ずれていた）。**【2026-08-06 実測 — 下記内訳は stale】** 「backend unit 197/197 + frontend unit 360/360 + E2E 5/5」は本表の更新が止まった時点の値であり、合計 562 で `571` とも一致していない。**実測は backend unit 295**（`pytest --ignore=tests/test_api_smoke.py`）／**frontend unit 587**（23 files）／**E2E 38**（4 spec files）＝ **920**。PR-D では自身が変更した 2 行のみ更新しており、他行の件数と coverage（backend **99%** / frontend **96.03% Statements・82.67% Branches**）は**未再測定**。表全体の再突合は別 PR のバックログとする。smoke は `docker compose up` 環境で別実行 |
+| **合計**                                           | **963** | **実測 2026-08-09: backend unit 338（`pytest --ignore=tests/test_api_smoke.py`）／frontend unit 587（23 files）／E2E 38（4 spec files）＝ 963。smoke 9 件は要ライブ backend のため別カウント。** |
 
 ### 📊 Frontend Coverage Matrix
 
@@ -432,11 +446,11 @@ docker compose exec backend pytest -q tests/
 
 | ジョブ                                                    | ステップ                                                                                                                                                                   |        並走         | 失敗時の影響      |
 | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :-----------------: | ----------------- |
-| `backend-unit`                                            | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (197 件)                                                                                                       |          —          | ❌ マージブロック |
+| `backend-unit`                                            | `ruff check .` ／ `pytest --ignore=tests/test_api_smoke.py` (338 件)                                                                                                       |          —          | ❌ マージブロック |
 | `backend-smoke` (`needs: backend-unit`)                   | `docker compose up -d --wait` ／ `/readyz` ポーリング ／ `pytest tests/test_api_smoke.py` (9 件)                                                                           |       unit 後       | ❌ マージブロック |
-| `frontend-unit` (Loop 47 追加 / Loop 60-80 拡張)          | `npm ci` ／ `vitest run` (**444 件 / 17 files / coverage 99.27% Stmts / 93.02% Branches / 95.91% Funcs**)                                                                 | backend-unit と並走 | ❌ マージブロック |
+| `frontend-unit` (Loop 47 追加 / Loop 60-80 拡張)          | `npm ci` ／ `vitest run` (**587 件 / 23 files / coverage 99.27% Stmts / 93.02% Branches / 95.91% Funcs**)                                                                 | backend-unit と並走 | ❌ マージブロック |
 | `frontend-build` (`needs: frontend-unit`)                 | `npm ci` ／ `npm run build` ／ bundle size 報告                                                                                                                            |       unit 後       | ❌ マージブロック |
-| `frontend-e2e` (`needs: frontend-build`) **Loop 49 追加** | `npm ci` ／ `playwright install --with-deps firefox` ／ `playwright test` (5 件 — `vite preview` 内蔵、backend 不要)                                                       |      build 後       | ❌ マージブロック |
+| `frontend-e2e` (`needs: frontend-build`) **Loop 49 追加** | `npm ci` ／ `playwright install --with-deps firefox` ／ `playwright test` (**38 件** — `vite preview` 内蔵、backend 不要)                                                       |      build 後       | ❌ マージブロック |
 | `frontend-docker` (Loop 38 追加)                          | `docker buildx build` で `frontend/vite-app/Dockerfile` を multi-stage build（host の `npm run build` では検出不能な Docker context-escape ／ nginx eager DNS を機械検出） |     unit と並走     | ❌ マージブロック |
 
 > 📝 backend-unit と frontend-unit が並走してトータル壁時計時間を最小化。`frontend-build` は `frontend-unit` 通過後のみ起動し、vitest が落ちているときに重い build を走らせない。`frontend-e2e` は `frontend-build` 後に起動し、build 失敗時に E2E を走らせない。smoke は同じコマンドでローカルでも再現可能 (`docker compose exec backend pytest tests/test_api_smoke.py`)。

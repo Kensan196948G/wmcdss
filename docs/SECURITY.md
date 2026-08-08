@@ -20,7 +20,7 @@
 # .env / 環境変数
 WMCDSS_API_KEYS=ops-prod-aaaa,ops-prod-bbbb
 WMCDSS_AUTH_REQUIRED_METHODS=POST,PATCH,PUT,DELETE
-WMCDSS_AUTH_EXEMPT_PATHS=/healthz,/readyz,/docs,/openapi.json
+WMCDSS_AUTH_EXEMPT_PATHS=/healthz,/readyz,/docs,/openapi.json,/metrics,/api/v1/auth/login,/api/v1/auth/login/m365,/api/v1/ai/analyze,/api/v1/ai/etl-diagnose,/api/v1/ai/risk-summary,/api/v1/ai/report-comment,/api/v1/ai/anomaly-detect,/api/v1/ai/chat,/api/v1/reports,/api/v1/etl/run
 ```
 
 - `api_keys` が **空のときは認証無効**（ローカル開発デフォルト）
@@ -83,13 +83,52 @@ def _exempt(p: str) -> bool:
 ### 2.4 middleware 登録順
 
 ```python
-app.add_middleware(APIKeyMiddleware)        # 後 add ＝ 先実行 ではない
-app.add_middleware(CORSMiddleware, ...)     # 後 add ＝ 外側 ＝ 先実行
+app.add_middleware(APIKeyMiddleware)           # 内側 → 遅く実行
+app.add_middleware(RateLimitMiddleware)         # ↑
+app.add_middleware(CORSMiddleware, ...)         # ↑
+app.add_middleware(MetricsMiddleware)           # ↑
+app.add_middleware(SecurityHeadersMiddleware)   # 外側 → 先に実行
 ```
 
 Starlette は `add_middleware` を**スタック**として扱うため、**後から add した
-ミドルウェアが外側＝先に実行**される。CORS が外側なので、認証拒否の 401 に対しても
-CORS ヘッダが付与され、ブラウザは body を読める。
+ミドルウェアが外側＝先に実行**される。実効フローは:
+
+```
+SecurityHeaders → Metrics → CORS → RateLimit → APIKey → route
+```
+
+- **SecurityHeaders 最外層**: 最終レスポンスにセキュリティヘッダーを付与。401/429/500 にもヘッダーが載る
+- **Metrics**: 認証拒否やレート制限による拒否も含め全リクエストを計測
+- **CORS**: 認証拒否の 401 に対しても CORS ヘッダが付与され、ブラウザは body を読める
+- **RateLimit**: APIKey の上流に配置し、`hmac.compare_digest` 実行前にフラッドを遮断
+- **APIKey**: 最内層で認証
+
+### 2.5 SecurityHeadersMiddleware
+
+`backend/app/core/security.py` の `SecurityHeadersMiddleware` が全レスポンスに
+セキュリティヘッダーを付与する。nginx 側（`frontend/vite-app/nginx.conf`）でも
+同種のヘッダーを付けているが、backend コンテナは `0.0.0.0` で listen しており
+nginx を経由せず直接叩けるため、多層防御としてアプリ側でも付与する。
+
+```python
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
+}
+```
+
+- **X-Content-Type-Options**: Content-Type を推測させない（JSON を HTML として解釈されるのを防止）
+- **X-Frame-Options: DENY**: API レスポンスが frame に埋め込まれるのを防止
+- **Referrer-Policy: no-referrer**: API URL に含まれる site_id などの識別子を外部へ送出しない
+- **Content-Security-Policy**: JSON API はサブリソースを読み込まない。`frame-ancestors 'none'` で frame 埋め込みを防止
+
+Swagger UI / ReDoc が使う CDN リソースのために、`/docs` `/redoc` のパスでは
+CSP の `default-src 'none'` を免除している。
+
+HSTS は**意図的に含めない**。現状の配信は平文 HTTP であり、TLS 終端が無い状態で
+HSTS を名乗るのは実態と異なる。TLS 導入と同じ変更で追加する。
 
 ## 3. 監査ログ (audit_log)
 

@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart TB
-  subgraph FE[Frontend - React 18 + Vite 6]
+  subgraph FE[Frontend - React 19 + Vite 6]
     UI[Dashboards / Admin pages]
     API_TS[src/api.ts adapter]
     UI --> API_TS

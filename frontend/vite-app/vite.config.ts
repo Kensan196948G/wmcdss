@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   server: {
     port: 5173,
@@ -9,7 +9,11 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // 本番ビルドでは sourcemap を無効化。ソースコードをクライアントに
+    // 公開しないようにする。開発時 (`npm run dev`) は mode='development'、
+    // 本番ビルド (`npm run build`) は mode='production' となる。
+    // vitest (`npm test`) は mode='test' だが build は走らないので影響なし。
+    sourcemap: mode !== 'production' ? true : false,
   },
   test: {
     environment: 'node',
@@ -33,4 +37,4 @@ export default defineConfig({
       include: ['src/**/*.ts', 'src/**/*.tsx'],
     },
   },
-});
+}));

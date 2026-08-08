@@ -206,6 +206,7 @@ export function AppShell() {
   const [density, setDensity] = usePersistedState<Density>('density', 'normal', isDensity);
   const [theme, setTheme] = usePersistedState<'light' | 'dark'>('theme', 'light', isTheme);
   const [now, setNow] = useState<Date>(new Date());
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const openTweaks = () => {
     window.postMessage({ type: '__activate_edit_mode' }, '*');
@@ -219,6 +220,7 @@ export function AppShell() {
   const navigate: NavigateFn = (pg, site) => {
     setPage(pg);
     if (site !== undefined) setSelectedSite(site);
+    setSidebarOpen(false);
   };
 
   const okCount = SITES.filter((s) => s.status === 'ok').length;
@@ -274,9 +276,12 @@ export function AppShell() {
 
   return (
     <div
-      className={`app-layout ${density === 'compact' ? 'density-compact' : ''} ${theme === 'dark' ? 'theme-dark' : ''}`.trim()}
+      className={`app-layout ${density === 'compact' ? 'density-compact' : ''} ${theme === 'dark' ? 'theme-dark' : ''} ${sidebarOpen ? 'sidebar-open' : ''}`.trim()}
       data-theme={theme}
     >
+      {sidebarOpen && (
+        <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />
+      )}
       <nav className="sidebar">
         <div className="sidebar-logo">
           <div className="sidebar-logo-icon">WM</div>
@@ -337,6 +342,14 @@ export function AppShell() {
       <div className="main-area">
         <header className="header">
           <div className="header-left">
+            <button
+              className="hamburger-btn"
+              type="button"
+              aria-label="メニューを開く"
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+            >
+              ☰
+            </button>
             <div className="header-title">{PAGE_TITLES[page] || 'ダッシュボード'}</div>
             {breadcrumbVisible ? (
               <div className="header-breadcrumb">

@@ -1,5 +1,3 @@
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;600;700&display=swap');
-
 :root {
   /* Primary Blues */
   --navy-900: #0c2340;
@@ -372,6 +370,9 @@ body {
 .fade-in { animation: fadeIn 0.25s ease; }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
+/* ハンバーガーボタン (デスクトップでは非表示) */
+.hamburger-btn { display: none; }
+
 /* Reason text */
 .reason-text {
   font-size: 12px; color: var(--text-secondary);
@@ -418,6 +419,176 @@ body {
    .theme-dark or [data-theme="dark"]. Twin-selector design echoes the dual
    declaration in app-shell.tsx (className + data-theme) so a host that only
    wires one of the two still gets the dark palette. */
+
+/* ==============================================
+   レスポンシブ: モバイル (~768px 以下)
+   ============================================== */
+@media (max-width: 767px) {
+  /* サイドバー → 固定オーバーレイ */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    height: 100vh;
+    width: var(--sidebar-w);
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    z-index: 200;
+    box-shadow: var(--shadow-lg);
+  }
+  .sidebar-open .sidebar {
+    transform: translateX(0);
+  }
+  /* オーバーレイ背景 (JS 側で要素を出し分け) */
+  .sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 199;
+    display: none;
+  }
+  .sidebar-open .sidebar-overlay {
+    display: block;
+  }
+
+  /* ハンバーガーボタン */
+  .hamburger-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text);
+    font-size: 18px;
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+
+  /* メインエリアは全幅 */
+  .main-area {
+    width: 100%;
+  }
+
+  /* ヘッダーを折り返し可能に */
+  .header {
+    flex-wrap: wrap;
+    padding: 0 12px;
+    height: auto;
+    min-height: 48px;
+  }
+  .header-left {
+    gap: 6px;
+  }
+  .header-title {
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 180px;
+  }
+  .header-right {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 0;
+    width: 100%;
+    justify-content: flex-start;
+  }
+  .header-time {
+    margin-left: auto;
+  }
+
+  /* コンテンツ余白調整 */
+  .content {
+    padding: 12px;
+  }
+
+  /* グリッドを1列に */
+  .grid-2,
+  .grid-3,
+  .grid-4,
+  .grid-2-1,
+  .grid-1-2 {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  /* カード */
+  .card-header {
+    padding: 12px 14px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .card-body {
+    padding: 14px;
+    overflow-x: auto;
+  }
+
+  /* テーブル横スクロール */
+  .data-table {
+    display: block;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .data-table thead,
+  .data-table tbody {
+    display: table;
+    width: 100%;
+    table-layout: auto;
+  }
+
+  /* statカード */
+  .stat-card {
+    padding: 12px;
+  }
+  .stat-value {
+    font-size: 20px;
+  }
+
+  /* Decision panel */
+  .decision-header {
+    padding: 14px 16px;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .decision-body {
+    padding: 14px 16px;
+  }
+  .decision-title {
+    font-size: 17px;
+  }
+
+  /* フォーム */
+  .form-input,
+  .form-select {
+    font-size: 13px;
+    padding: 8px 10px;
+  }
+
+  /* タブ */
+  .tabs {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    flex-wrap: nowrap;
+  }
+  .tab {
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* Density モバイル調整 */
+  .density-compact .content {
+    padding: 10px;
+  }
+  .density-compact .header {
+    padding: 0 10px;
+  }
+}
+
 .theme-dark,
 [data-theme="dark"] {
   --bg: #0c1623;

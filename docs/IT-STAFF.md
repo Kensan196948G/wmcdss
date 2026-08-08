@@ -274,16 +274,29 @@ docker compose --env-file .env.production -f docker-compose.production.yml up -d
 
 ## 👤 ユーザー管理
 
-初期管理者アカウントは `.env` ファイルの `ADMIN_EMAIL` / `ADMIN_PASSWORD` で設定します。
+ユーザーは環境変数 `WMCDSS_LOCAL_USERS` で静的に定義します。
+`username:bcrypt_hash` 形式のエントリをカンマ区切りで並べます。
 
-ユーザーの追加・削除・権限変更は WebUI の「設定 → ユーザー管理」画面から行います。
-操作はすべて監査ログに記録されます。
+```bash
+# .env.production の設定例
+WMCDSS_LOCAL_USERS=admin:$2b$12$...,user1:$2b$12$...
+```
+
+bcrypt ハッシュの生成:
+
+```bash
+# backend コンテナの Python で生成
+docker compose exec backend python -c "import bcrypt; print(bcrypt.hashpw(b'your-password', bcrypt.gensalt()).decode())"
+```
+
+ユーザーの追加・削除は `.env.production` を編集し、`docker compose restart backend` で反映します。
+WebUI からユーザーを管理する画面は**存在しません**。操作はすべて監査ログに記録されます。
 
 | 権限レベル | 操作可能な範囲 |
 |---|---|
-| 閲覧者 | データ閲覧・レポート出力のみ |
-| 施工判定者 | 施工判定の実行・しきい値の参照 |
-| 管理者 | すべての操作 + ユーザー管理・しきい値変更 |
+| 全認証ユーザー | すべての操作（現状は同等） |
+
+> **ロールベースアクセス制御（RBAC）は未実装**: `users.role` カラムはスキーマ上存在しますが、権限による機能制限は行われていません。全ユーザーが同等の権限を持ちます。ロール制御は将来の課題です。
 
 ---
 
@@ -297,7 +310,7 @@ docker compose --env-file .env.production -f docker-compose.production.yml logs 
 
 ### 監査ログ（誰が・何を操作したか）
 
-WebUI の「設定 → 監査ログ」画面で確認できます。CSV 形式でエクスポートも可能です。
+WebUI の「設定 → 監査ログ」画面で確認できます。CSV エクスポート機能は未実装です。
 
 ### ログのローテーション
 

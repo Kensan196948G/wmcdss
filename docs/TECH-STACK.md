@@ -29,7 +29,7 @@
 │  │ ブラウザ端末  │ ────────▶ │  🖥️  フロントエンド（Nginx + React） │  │
 │  │ PC・スマホ   │  :9080    │  ・SPA（シングルページアプリ）       │  │
 │  └──────────────┘           │  ・Vite ビルド / TypeScript         │  │
-│                             │  ・Leaflet マップ / Chart.js        │  │
+│                             │  ・Leaflet マップ / 独自 SVG チャート  │  │
 │                             └───────────────┬─────────────────────┘  │
 │                                             │ HTTP REST API           │
 │                                             ▼  :8003                  │
@@ -64,9 +64,9 @@
 
 ## ⚙️ バックエンド（API サーバ）
 
-### 🐍 Python 3.12
+### 🐍 Python 3.11+
 
-最新の安定版 Python を採用。型ヒントの強化、パフォーマンス改善、セキュリティパッチ対応が充実。
+`pyproject.toml` は `requires-python = ">=3.11"`。CI は 3.12 で実行。型ヒントの強化、パフォーマンス改善、セキュリティパッチ対応が充実。
 
 ### ⚡ FastAPI
 
@@ -74,24 +74,30 @@
 |---|---|
 | 役割 | REST API フレームワーク |
 | 選定理由 | 型安全・自動ドキュメント生成・高パフォーマンス |
-| 主要機能 | JWT 認証、ロール制御、リクエストバリデーション |
+| 主要機能 | JWT 認証（ロール制御は未実装・将来課題）、リクエストバリデーション |
 | ドキュメント | `/api/docs`（Swagger UI）で自動生成 |
 
 ```
-GET  /api/v1/weather/current    ← 最新気象データ取得
-GET  /api/v1/sites              ← 現場一覧
+GET  /healthz                   ← プロセス死活監視
+GET  /readyz                    ← DB 健全性含む準備状態
+GET  /metrics                   ← Prometheus メトリクス
 POST /api/v1/auth/login         ← ログイン（JWT 発行）
-GET  /api/v1/construction/judge ← 施工判定
-GET  /api/health                ← 死活監視
+GET  /api/v1/sites              ← 現場一覧
+POST /api/v1/decisions          ← 施工判定
+GET  /api/v1/thresholds         ← しきい値一覧
+GET  /api/v1/observations/weather ← 気象観測値
+GET  /api/v1/observations/marine  ← 海象観測値
 ```
 
-### 🔷 SQLAlchemy 2.x + Alembic
+### 🔷 SQLAlchemy 2.x + 独自マイグレーションランナー
 
 | ライブラリ | 役割 |
 |---|---|
 | SQLAlchemy | ORM（Python オブジェクト ↔ DB テーブル変換） |
-| Alembic | DB スキーマバージョン管理・マイグレーション |
+| 独自ランナー | `app/db/migrate.py` — advisory lock + checksum + `schema_migrations` テーブルによる版管理 |
 | asyncpg | 非同期 PostgreSQL ドライバ（高速処理） |
+
+※ Alembic は使用していない。独自ランナーは `db/migrations/*.sql` を番号順に適用し、checksum 照合で改竄を検出する。
 
 ### 📦 主要 Python ライブラリ
 
@@ -100,10 +106,9 @@ GET  /api/health                ← 死活監視
 | `fastapi` | 0.115+ | API フレームワーク |
 | `uvicorn` | 0.34+ | ASGI サーバ |
 | `sqlalchemy` | 2.0+ | ORM |
-| `alembic` | 1.14+ | DB マイグレーション |
 | `pydantic` | 2.10+ | データバリデーション |
-| `python-jose` | 3.3+ | JWT 生成・検証 |
-| `passlib[bcrypt]` | 1.7+ | パスワードハッシュ |
+| `PyJWT` | 2.10+ | JWT 生成・検証（`python-jose` から移行済み） |
+| `bcrypt` | 3.2+ | パスワードハッシュ |
 | `httpx` | 0.28+ | JMA API 呼び出し |
 | `aiofiles` | 24.x | 非同期ファイル I/O |
 
@@ -111,7 +116,7 @@ GET  /api/health                ← 死活監視
 
 ## 🖥️ フロントエンド（WebUI）
 
-### ⚛️ React 18 + TypeScript 5
+### ⚛️ React 19 + TypeScript
 
 ```
 React（UI コンポーネント）
@@ -146,25 +151,28 @@ Leaflet（地図ライブラリ）
   └── クリックでポップアップ（気象データ詳細）
 ```
 
-### 📊 Chart.js（グラフ・チャート）
+### 🖌️ 独自 SVG チャート（Chart.js 不使用）
+
+Chart.js は使っていない。`charts.tsx` で React SVG コンポーネント（LineChart, BarChart, WindRose, Sparkline, GaugeMeter）を実装。
 
 | グラフ種別 | 用途 |
 |---|---|
-| 折れ線グラフ | 気温・風速の時系列変化 |
-| 棒グラフ | 降水量・波高の日別比較 |
-| 円グラフ | 現場別施工可否の割合 |
+| 折れ線グラフ | 気温・風速の時系列変化（独自 SVG LineChart） |
+| 棒グラフ | 降水量・波高の日別比較（独自 SVG BarChart） |
+| 風配図 | 風向・風速の分布（独自 SVG WindRose） |
+| スパークライン | 小型トレンド表示（独自 SVG Sparkline） |
+| ゲージメーター | 現在値の可視化（独自 SVG GaugeMeter） |
 
 ### 📦 主要 npm パッケージ
 
 | パッケージ | バージョン | 用途 |
 |---|---|---|
-| `react` | 18.3+ | UI フレームワーク |
-| `typescript` | 5.7+ | 型安全開発 |
-| `vite` | 6.3+ | ビルドツール |
-| `leaflet` | 1.9+ | 地図表示 |
-| `chart.js` | 4.4+ | グラフ描画 |
-| `react-leaflet` | 4.2+ | React 向け Leaflet ラッパー |
-| `react-chartjs-2` | 5.3+ | React 向け Chart.js ラッパー |
+| `react` | 19.2+ | UI フレームワーク |
+| `vite` | 6.0+ | ビルドツール |
+| `leaflet` | （CDN 読み込み） | 地図表示 |
+| `react-leaflet` | （未使用） | React 向け Leaflet ラッパー |
+
+> ※ chart.js / react-chartjs-2 / typescript は依存関係に含まれない。TypeScript は Vite バンドルに内包。
 
 ---
 
@@ -175,22 +183,38 @@ Leaflet（地図ライブラリ）
 ```
 wmcdss データベース
   │
-  ├── users（ユーザーテーブル）
-  │     id / email / hashed_password / role / is_active / created_at
+  ├── sites（現場マスタ）
+  │     id / code / name / kind / lat / lon / jma_station_id
+  │     wave_grid_lat / wave_grid_lon / address / note
   │
   ├── weather_observations（気象観測データ）
-  │     id / station_id / observed_at / temperature / wind_speed
-  │     wind_direction / precipitation / humidity / pressure
+  │     id / site_id / observed_at / temperature_c / humidity_pct
+  │     pressure_hpa / precip_mm / wind_speed_ms / wind_gust_ms
+  │     wind_dir_deg / sunshine_h / fetched_at / source
   │
-  ├── wave_observations（波浪観測データ）
-  │     id / area_code / observed_at / wave_height / wave_period
-  │     wave_direction / current_speed
+  ├── marine_observations（波浪観測データ）
+  │     id / site_id / observed_at / sig_wave_h_m / wave_period_s
+  │     wave_dir_deg / tide_level_m / current_speed_ms / current_dir_deg
   │
-  ├── construction_sites（現場テーブル）
-  │     id / name / lat / lng / area / station_id / thresholds
+  ├── forecasts（予報スナップショット）
+  │     id / site_id / forecast_for / issued_at / domain / payload
   │
-  └── audit_log（監査ログ）
-        id / user_email / action / resource / timestamp / ip_address
+  ├── thresholds（判定しきい値）
+  │     id / site_id / work_type / metric / op / value / severity
+  │     active_from / active_to / note
+  │
+  ├── decisions（判定結果）
+  │     id / site_id / work_type / target_window_start / target_window_end
+  │     status / reason / inputs / thresholds_snapshot
+  │
+  ├── users（ユーザー）
+  │     id / email / display_name / role / is_active / created_at
+  │
+  ├── audit_log（監査ログ）
+  │     id / occurred_at / actor / action / target_type / target_id / detail
+  │
+  └── etl_runs（ETL 実行状態）
+        id / job / status / started_at / finished_at / rows_in / rows_out
 ```
 
 ### 接続設定
@@ -303,16 +327,18 @@ WMCDSS は気象庁が提供する公開 API を利用します。
   ▼ 認証成功
 JWT トークン発行
   ├── Header: アルゴリズム（HS256）
-  ├── Payload: user_id, email, role, 有効期限
-  └── Signature: SECRET_KEY で署名
+  ├── Payload: user_id, email, 有効期限
+  └── Signature: JWT_SECRET で署名（PyJWT）
 
   ↓ フロントエンドは localStorage に保存
   ↓ 以降のリクエストに Authorization: Bearer <token>
 
 API 側でトークン検証
   ├── 署名検証
-  ├── 有効期限チェック
-  └── ロール確認（閲覧者/施工判定者/管理者）
+  └── 有効期限チェック
+```
+
+> **ロール制御（RBAC）は未実装**: `users.role` カラムはスキーマ上存在するが未使用。全認証ユーザーが同等の権限を持つ。ロールベースの制御は将来課題。
 ```
 
 ### セキュリティ対策一覧
@@ -322,9 +348,12 @@ API 側でトークン検証
 | パスワードハッシュ | bcrypt（ソルト付き） |
 | 通信暗号化 | 社内 LAN 内。外部公開する場合は HTTPS 必須 |
 | SQL インジェクション対策 | SQLAlchemy ORM（生 SQL を直接結合しない） |
-| ロールベースアクセス制御 | FastAPI Depends による API レベル制御 |
+| API キー認証 | mutation エンドポイントは `X-API-Key` 必須（`WMCDSS_API_KEYS`） |
+| JWT 認証 | WebUI からのログインセッション（`WMCDSS_JWT_SECRET`） |
 | 監査ログ | 全操作を audit_log テーブルに記録 |
 | SECRET_KEY | `.env` ファイル管理（Git 管理対象外） |
+
+> **ロールベースアクセス制御は未実装**。`users.role` カラムは存在するが、権限による API 制御は行われていない。将来の課題。
 
 ---
 
@@ -341,7 +370,6 @@ PR 作成・Push
   │     └── Docker build 確認
   │
   ├── ⚛️ Frontend CI
-  │     ├── ESLint（TypeScript Lint）
   │     ├── Vitest（ユニットテスト）
   │     ├── Vite build（型チェック含む）
   │     └── Playwright E2E テスト
@@ -357,14 +385,13 @@ PR 作成・Push
 | TypeScript ユニットテスト | Vitest | コンポーネント・ユーティリティ関数 |
 | E2E テスト | Playwright | ブラウザ自動操作・画面遷移確認 |
 | Python Lint | ruff | PEP8 準拠・未使用インポート検出 |
-| TypeScript Lint | ESLint | 型エラー・コードスタイル |
+| TypeScript Lint | （ESLint 未使用・Vite + TypeScript の型チェックで代替） |
 
 ### 🔍 コード品質ツール
 
 | ツール | 用途 |
 |---|---|
 | ruff | Python 高速 Lint（flake8 + isort 代替） |
-| ESLint | TypeScript/JavaScript Lint |
 | Vitest | Vite ネイティブテストランナー（Jest 互換） |
 | Playwright | クロスブラウザ E2E テスト |
 | pytest | Python テストフレームワーク |
@@ -375,17 +402,15 @@ PR 作成・Push
 
 | 技術・ライブラリ | バージョン | カテゴリ |
 |---|---|---|
-| Python | 3.12 | バックエンド |
+| Python | 3.11+ | バックエンド |
 | FastAPI | 0.115+ | バックエンド |
 | SQLAlchemy | 2.0+ | バックエンド |
-| Alembic | 1.14+ | バックエンド |
 | Pydantic | 2.10+ | バックエンド |
 | uvicorn | 0.34+ | バックエンド |
-| React | 18.3+ | フロントエンド |
-| TypeScript | 5.7+ | フロントエンド |
-| Vite | 6.3+ | フロントエンド |
-| Leaflet.js | 1.9+ | フロントエンド |
-| Chart.js | 4.4+ | フロントエンド |
+| React | 19.2+ | フロントエンド |
+| TypeScript | （Vite バンドル内蔵） | フロントエンド |
+| Vite | 6.0+ | フロントエンド |
+| Leaflet.js | CDN | フロントエンド |
 | PostgreSQL | 16 | データベース |
 | Docker Engine | 24.x+ | インフラ |
 | Docker Compose | v2.x | インフラ |

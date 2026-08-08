@@ -1,5 +1,8 @@
-from fastapi import FastAPI
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.core.config import get_settings
 from app.core.security import APIKeyMiddleware, SecurityHeadersMiddleware
@@ -8,6 +11,8 @@ from app.core.monitoring import MetricsMiddleware
 from app.core.startup import enforce_security_posture
 from app.api import health, sites, decisions, thresholds, observations, audit, metrics, auth
 from app.api import analysis, reports, etl, ai
+
+log = logging.getLogger(__name__)
 
 settings = get_settings()
 
@@ -89,3 +94,9 @@ async def root():
             "/api/v1/etl/status",
         ],
     }
+
+
+@app.exception_handler(Exception)
+async def _global_exception_handler(request: Request, exc: Exception):
+    log.error("unhandled exception %s %s", request.method, request.url.path, exc_info=exc)
+    return JSONResponse(status_code=500, content={"detail": "internal server error"})
