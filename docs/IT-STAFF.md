@@ -236,8 +236,10 @@ docker compose --env-file .env.production -f docker-compose.production.yml exec 
 ### DB バックアップ（PostgreSQL）
 
 ```bash
-# バックアップを取得
-docker compose --env-file .env.production -f docker-compose.production.yml exec db pg_dump -U wmcdss_app wmcdss \
+# バックアップを取得（--clean --if-exists で復元時に既存オブジェクトを
+# 置き換え可能にする。無いと既存 DB への復元が "already exists" で失敗する）
+docker compose --env-file .env.production -f docker-compose.production.yml exec db \
+  pg_dump --clean --if-exists -U wmcdss_app wmcdss \
   | gzip > backup_$(date +%Y%m%d).sql.gz
 
 # 復元
@@ -257,7 +259,7 @@ gunzip -c backup_20260614.sql.gz \
 ```bash
 # 1. バックアップ（復旧地点）
 docker compose --env-file .env.production -f docker-compose.production.yml exec db \
-  pg_dump -U wmcdss_app wmcdss | gzip > backup_$(date +%Y%m%d_%H%M).sql.gz
+  pg_dump --clean --if-exists -U wmcdss_app wmcdss | gzip > backup_$(date +%Y%m%d_%H%M).sql.gz
 
 # 2. 更新版を取得して起動（db-migrate が自動でスキーマを適用する）
 git pull

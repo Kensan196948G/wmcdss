@@ -75,10 +75,13 @@ out_file="${BACKUP_DIR}/wmcdss_${stamp}.sql.gz"
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup start (target=${COMPOSE_TARGET}, keep=${KEEP_GENERATIONS})"
 
 if [[ $DRY_RUN -eq 1 ]]; then
-  echo "[dry-run] would run: ${COMPOSE[*]} exec -T db pg_dump -U wmcdss_app wmcdss | gzip > ${out_file}"
+  echo "[dry-run] would run: ${COMPOSE[*]} exec -T db pg_dump --clean --if-exists -U wmcdss_app wmcdss | gzip > ${out_file}"
 else
   # compose exec の stdin を閉じる (-T) ことで cron 環境でもハングしない。
-  "${COMPOSE[@]}" exec -T db pg_dump -U wmcdss_app wmcdss | gzip > "$out_file"
+  # --clean --if-exists: 復元時に既存のオブジェクトを DROP してから CREATE する。
+  # これを付けないと既存 DB へ復元した際に "already exists" で失敗する
+  # （2026-08-09 の復元試験で実証済み）。
+  "${COMPOSE[@]}" exec -T db pg_dump --clean --if-exists -U wmcdss_app wmcdss | gzip > "$out_file"
   size="$(du -h "$out_file" | cut -f1)"
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup complete: ${out_file} (${size})"
 fi
