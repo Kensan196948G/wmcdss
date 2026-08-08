@@ -85,6 +85,16 @@ cp .env.production.example .env.production
 # → .env.production を編集:
 #   POSTGRES_PASSWORD / WMCDSS_API_KEYS_RAW / WMCDSS_JWT_SECRET は必ず変更する
 
+# 2-2. AI 設定ファイルの初期ファイルを作成（必須）
+# backend コンテナは backend/.wmcdss_ai_settings.json を bind mount する。
+# ファイルが無いとコンテナ自体が起動しない（検証済み 2026-08）。
+# AI 機能を使わない場合も空の JSON が必要。
+mkdir -p backend
+printf '{}' > backend/.wmcdss_ai_settings.json
+chmod 600 backend/.wmcdss_ai_settings.json
+# ※ このファイルは .gitignore 対象（秘密の API キーを保存し得る）のため
+#    Git へ commit しない。設定は WebUI「AI 設定・管理」から保存される。
+
 # 3. 本番サービスを起動
 docker compose --env-file .env.production -f docker-compose.production.yml up -d --build
 
