@@ -20,6 +20,7 @@
 | compose 検証 | `docker compose -f docker-compose.yml config --quiet` | **成功** |
 | compose 検証（本番） | `.env.production` 一時作成 + `config --quiet` | **成功（rc=0）** |
 | 秘密スキャン | `git grep`（trackedコード） | **該当なし**（テストfixture除く） |
+| gitleaks（CI） | 全242コミット・フルヒストリ | **no leaks found**（E2Eフィクスチャはallowlist登録） |
 | JMA AMeDAS 実測 | `https://www.jma.go.jp/bosai/amedas/data/point/44132/...` | 200（取得可能） |
 | JMA 波浪 実測 | 旧URL `.../wave/data/point/...` | **404（破損を確認）** |
 | 代替JMA波浪 | `.../wave/data/swjp/{station}.json` | 200 だが 2026-03-25 で更新停止 |
@@ -42,3 +43,16 @@
 - リストア実地ドリル（バックアップ実体が無いため保留。`--dry-run` は確認済み）
 - 負荷・性能テスト（Phase 2）
 - NOWPHAS 実取り込み（本番DB適用）と判定エンドポイントでの動作確認（デプロイ先未確定のため保留）
+
+## 追記（2026-08-13）: GitHub CI 実証
+
+リポジトリ復旧後、PR #1 で CI 全10ジョブを実証:
+
+| ジョブ | 結果 |
+|---|---|
+| backend pure-function / smoke / pip-audit | ✅ |
+| frontend vitest / build / docker image / npm audit / playwright e2e | ✅ |
+| gitleaks（バイナリ直接実行・allowlist付き） | ✅ |
+| CodeRabbit | ✅ |
+
+PR #1 は 2026-08-12T15:09Z に squash merge（`e200207`）。main の CI（push トリガ）も green を確認。
