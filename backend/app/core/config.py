@@ -75,6 +75,17 @@ class Settings(BaseSettings):
 
     auth_required_methods: str = "POST,PATCH,PUT,DELETE"
 
+    # RBAC: "username:role" のカンマ区切りマッピング（role は field / hq / admin）。
+    # 未設定のユーザーは default_role になる。M365 認証ではメールアドレス
+    # （小文字化済み）が username として一致判定される。
+    role_users_raw: str = ""
+    default_role: str = "field"
+
+    # AI 利用予算・上限。0 は無制限（既定）。単位は「1 日あたりのリクエスト数」と
+    # 「1 か月あたりの総トークン数」で、超過時は 429 を返す。
+    ai_max_requests_per_day: int = 0
+    ai_max_tokens_per_month: int = 0
+
     @property
     def auth_required_methods_list(self) -> list[str]:
         """認証を要求する HTTP メソッド。大文字へ正規化する。
@@ -85,6 +96,23 @@ class Settings(BaseSettings):
         意図しない一致が成立してしまう。
         """
         return [m.upper() for m in _csv(self.auth_required_methods)]
+
+    @property
+    def role_users(self) -> dict[str, str]:
+        """username → role の辞書。username は小文字に正規化する。"""
+        result: dict[str, str] = {}
+        for entry in self.role_users_raw.split(","):
+            entry = entry.strip()
+            if ":" in entry:
+                username, role = entry.split(":", 1)
+                role = role.strip().lower()
+                if role in ("field", "hq", "admin"):
+                    result[username.strip().lower()] = role
+        return result
+
+    def role_for(self, username: str) -> str:
+        """ユーザーのロールを返す。未設定なら default_role。"""
+        return self.role_users.get(username.strip().lower(), self.default_role)
 
     # auth_exempt_paths は固定値のため list[str] のままとする（env からは設定しない）
     #
@@ -122,7 +150,10 @@ class Settings(BaseSettings):
         "/api/v1/etl/run",
     ]
 
-    rate_limit_per_minute: int = 0
+    # 本番既定は 60 req/min。0 のまま env 未設定だとログイン総当たりを
+    # 止められないため、fail-safe に有効化しておく（開発で無効化したい場合は
+    # 明示的に 0 を設定する）。
+    rate_limit_per_minute: int = 60
     rate_limit_methods: list[str] = ["POST", "PATCH", "PUT", "DELETE"]
     rate_limit_exempt_paths: list[str] = ["/healthz", "/readyz", "/metrics"]
 

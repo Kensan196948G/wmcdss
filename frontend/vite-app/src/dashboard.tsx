@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FC } from 'react';
+import { useEffect, useMemo, useRef, useState, type FC } from 'react';
 import {
   FORECAST_DAYS, SITES, STATUS_CLASS, STATUS_LABEL, TYPE_LABEL, WEATHER_ICONS,
   generateMarine, generateWeather, getDecision,
@@ -7,6 +7,9 @@ import {
 import {
   requestAiChat,
   requestAiRiskSummary,
+  backendConnected,
+  fetchDashboardSummary,
+  type DashboardSiteSummary,
   type AiAssistResponse,
 } from './api';
 
@@ -38,10 +41,22 @@ const AREA_VIEW: Record<string, [number, number, number]> = {
 export const AREAS = Object.keys(AREA_VIEW);
 
 export interface MapViewProps {
-  sites: Site[];
+  sites: Array<Site & { summary?: DashboardSiteSummary }>;
   onSiteClick?: (id: string) => void;
   selectedSite?: string | null;
   selectedArea?: string | null;
+}
+
+/** バックエンド判定 status（go/caution/stop）→ 表示用 Status（ok/warn/danger） */
+export function statusOf(status: string | undefined): Status {
+  if (status === 'caution') return 'warn';
+  if (status === 'stop') return 'danger';
+  return 'ok';
+}
+
+function fmt(v: number | null | undefined, unit: string, digits = 1): string {
+  if (v == null || Number.isNaN(v)) return '—';
+  return `${v.toFixed(digits)}${unit}`;
 }
 
 export const MapView: FC<MapViewProps> = ({ sites, onSiteClick, selectedArea }) => {
@@ -100,16 +115,25 @@ export const MapView: FC<MapViewProps> = ({ sites, onSiteClick, selectedArea }) 
         iconAnchor: [16, 32],
       });
       const marker = leaflet.marker([site.lat, site.lng], { icon }).addTo(map);
-      const w = generateWeather(site.id);
-      const m = generateMarine(site.id);
+      const w = site.summary?.latest_weather
+        ? {
+            temp: site.summary.latest_weather.temperature_c,
+            wind: site.summary.latest_weather.wind_speed_ms,
+          }
+        : null;
+      const m = site.summary?.latest_marine;
       marker.bindPopup(`
         <div style="min-width:180px;">
           <div style="font-weight:700;font-size:13px;margin-bottom:6px;">${site.shortName}</div>
           <div style="font-size:12px;color:#4a5568;margin-bottom:4px;">${TYPE_LABEL[site.type]}</div>
           <div style="display:flex;gap:12px;font-size:12px;margin-bottom:6px;">
-            <span>🌡${w.temp}℃</span><span>💨${w.wind}m/s</span>
-            ${m ? `<span>🌊${m.waveHeight}m</span>` : ''}
+            <span>🌡${w ? fmt(w.temp, '℃', 1) : '—'}</span>
+            <span>💨${w ? fmt(w.wind, 'm/s', 1) : '—'}</span>
+            ${m ? `<span>🌊${fmt(m.sig_wave_h_m, 'm', 2)}</span>` : ''}
           </div>
+          ${site.summary && !site.summary.data_complete
+            ? `<div style="font-size:11px;color:#b45309;margin-bottom:4px;">⚠ 判定可能なしきい値が未設定です</div>`
+            : ''}
           <div style="
             display:inline-block;padding:2px 8px;border-radius:100px;font-size:11px;font-weight:600;
             background:${color}18;color:${color};border:1px solid ${color}40;
@@ -125,15 +149,28 @@ export const MapView: FC<MapViewProps> = ({ sites, onSiteClick, selectedArea }) 
 };
 
 export interface SiteStatusCardProps {
-  site: Site;
+  site: Site & { summary?: DashboardSiteSummary };
   onClick: (id: string) => void;
   density?: 'normal' | 'compact';
 }
 
 export const SiteStatusCard: FC<SiteStatusCardProps> = ({ site, onClick, density }) => {
-  const w = generateWeather(site.id);
-  const m = generateMarine(site.id);
-  const decision = getDecision(site);
+  const live = !!site.summary;
+  const w = site.summary?.latest_weather
+    ? {
+        temp: site.summary.latest_weather.temperature_c,
+        wind: site.summary.latest_weather.wind_speed_ms,
+        rain: site.summary.latest_weather.precip_mm,
+      }
+    : !live
+      ? (() => { const g = generateWeather(site.id); return { temp: g.temp, wind: g.wind, rain: g.rain }; })()
+      : null;
+  const m = site.summary?.latest_marine
+    ? { waveHeight: site.summary.latest_marine.sig_wave_h_m }
+    : !live
+      ? (() => { const g = generateMarine(site.id); return g ? { waveHeight: g.waveHeight } : null; })()
+      : null;
+  const decision = { status: site.status, reasons: site.summary ? [site.summary.reason] : [] };
   const waveLimit = site.thresholds.waveHeight;
 
   return (
@@ -156,29 +193,31 @@ export const SiteStatusCard: FC<SiteStatusCardProps> = ({ site, onClick, density
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
           <div>
             <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>気温</div>
-            <div style={{ fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{w.temp}℃</div>
+            <div style={{ fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{w ? fmt(w.temp, '℃', 1) : '—'}</div>
           </div>
           <div>
             <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>風速</div>
             <div style={{
               fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-              color: w.wind > site.thresholds.windSpeed ? 'var(--status-danger)'
-                : w.wind > site.thresholds.windSpeed * 0.8 ? 'var(--status-warn)' : 'inherit',
-            }}>{w.wind}m/s</div>
+              color: w && w.wind != null && w.wind > site.thresholds.windSpeed ? 'var(--status-danger)'
+                : w && w.wind != null && w.wind > site.thresholds.windSpeed * 0.8 ? 'var(--status-warn)' : 'inherit',
+            }}>{w ? fmt(w.wind, 'm/s', 1) : '—'}</div>
           </div>
           {m && waveLimit !== null ? (
             <div>
               <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>波高</div>
               <div style={{
                 fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums',
-                color: m.waveHeight > waveLimit ? 'var(--status-danger)'
-                  : m.waveHeight > waveLimit * 0.8 ? 'var(--status-warn)' : 'inherit',
-              }}>{m.waveHeight}m</div>
+                color: m && m.waveHeight != null && m.waveHeight > waveLimit ? 'var(--status-danger)'
+                  : m && m.waveHeight != null && m.waveHeight > waveLimit * 0.8 ? 'var(--status-warn)' : 'inherit',
+              }}>{m ? fmt(m.waveHeight, 'm', 2) : '—'}</div>
             </div>
           ) : (
             <div>
               <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>降水</div>
-              <div style={{ fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{w.rain}mm</div>
+              <div style={{ fontSize: 15, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                {w ? fmt(w.rain, 'mm', 1) : '—'}
+              </div>
             </div>
           )}
         </div>
@@ -192,7 +231,7 @@ export const SiteStatusCard: FC<SiteStatusCardProps> = ({ site, onClick, density
 };
 
 export interface AlertBannerProps {
-  sites: Site[];
+  sites: Array<Site & { summary?: DashboardSiteSummary }>;
 }
 
 const MAX_CHIPS = 5;
@@ -203,7 +242,7 @@ const AlertRow: FC<{
   color: string;
   bg: string;
   border: string;
-  sites: Site[];
+  sites: Array<Site & { summary?: DashboardSiteSummary }>;
 }> = ({ icon, label, color, bg, border, sites }) => {
   if (sites.length === 0) return null;
   const visible = sites.slice(0, MAX_CHIPS);
@@ -218,7 +257,7 @@ const AlertRow: FC<{
       <span style={{ fontWeight: 700, fontSize: 12, color, flexShrink: 0, minWidth: 60 }}>{label}</span>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flex: 1 }}>
         {visible.map((s) => (
-          <span key={s.id} title={getDecision(s).reasons[0]} style={{
+          <span key={s.id} title={s.summary?.reason ?? getDecision(s).reasons[0]} style={{
             display: 'inline-flex', alignItems: 'center', gap: 4,
             padding: '2px 10px', borderRadius: 100, fontSize: 11, fontWeight: 600,
             background: `${color}18`, color, border: `1px solid ${color}40`,
@@ -269,28 +308,77 @@ export interface DashboardPageProps {
 
 export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => {
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
+  const [summaries, setSummaries] = useState<DashboardSiteSummary[] | null>(null);
   const [riskAi, setRiskAi] = useState<AiAssistResponse | null>(null);
   const [riskLoading, setRiskLoading] = useState(false);
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatAi, setChatAi] = useState<AiAssistResponse | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
 
-  const visibleSites = selectedArea ? SITES.filter((s) => s.area === selectedArea) : SITES;
+  useEffect(() => {
+    if (!backendConnected()) return;
+    let cancelled = false;
+    fetchDashboardSummary()
+      .then((data) => {
+        if (!cancelled) setSummaries(data.sites);
+      })
+      .catch(() => {
+        if (!cancelled) setSummaries(null);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // 実データ接続時は site.status をバックエンド判定で上書きする。モック値を
+  // 判定に使わないための要（この集約レスポンスは生成値を持たない）。
+  const summaryById = useMemo(() => {
+    const map = new Map<string, DashboardSiteSummary>();
+    (summaries ?? []).forEach((s) => map.set(s.site_id, s));
+    return map;
+  }, [summaries]);
+
+  const siteViews: Array<Site & { summary?: DashboardSiteSummary }> = useMemo(
+    () => SITES.map((s) => {
+      const summary = summaryById.get(s.id);
+      return summary ? { ...s, status: statusOf(summary.status), summary } : s;
+    }),
+    [summaryById],
+  );
+
+  const visibleSites = selectedArea
+    ? siteViews.filter((s) => s.area === selectedArea)
+    : siteViews;
   const okCount = visibleSites.filter((s) => s.status === 'ok').length;
   const warnCount = visibleSites.filter((s) => s.status === 'warn').length;
   const dangerCount = visibleSites.filter((s) => s.status === 'danger').length;
   const today = FORECAST_DAYS[0];
 
-  const aiSitePayload = visibleSites.map((site) => ({
-    id: site.id,
-    name: site.shortName,
-    type: site.type,
-    status: getDecision(site).status,
-    reasons: getDecision(site).reasons,
-    weather: generateWeather(site.id),
-    marine: generateMarine(site.id),
-    thresholds: site.thresholds,
-  }));
+  const aiSitePayload = visibleSites.map((site) => {
+    // 実データ接続時は集約サマリー（実測値・実判定）のみ渡し、モック閾値・
+    // 生成気象値を AI へ送らない。未接続時は従来のモック動作（デモ用）。
+    if (site.summary) {
+      return {
+        id: site.id,
+        name: site.shortName,
+        type: site.type,
+        status: site.status,
+        reasons: [site.summary.reason],
+        weather: site.summary.latest_weather,
+        marine: site.summary.latest_marine,
+        decision_work_types: site.summary.work_types,
+        note: 'モック閾値は使用していません。判定はバックエンド集約結果です。',
+      };
+    }
+    return {
+      id: site.id,
+      name: site.shortName,
+      type: site.type,
+      status: getDecision(site).status,
+      reasons: getDecision(site).reasons,
+      weather: generateWeather(site.id),
+      marine: generateMarine(site.id),
+      thresholds: site.thresholds,
+    };
+  });
 
   const renderAiAssist = (result: AiAssistResponse | null) => {
     if (!result) return null;
@@ -354,7 +442,7 @@ export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => 
 
   return (
     <div>
-      <AlertBanner sites={SITES} />
+      <AlertBanner sites={siteViews} />
 
       <div className="grid-4 mb-16">
         <div className="stat-card">
@@ -447,7 +535,12 @@ export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => 
 
       <div className="card mt-16">
         <div className="card-header">
-          <span className="card-title">週間天気予報（東京）</span>
+          <span className="card-title">週間天気予報（サンプル・東京）</span>
+        </div>
+        <div className="card-body" style={{ paddingTop: 0 }}>
+          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+            ※ 固定サンプル表示です。予報API未接続のため施工判断には使用できません。
+          </div>
         </div>
         <div className="card-body">
           <div style={{ display: 'grid', gridTemplateColumns: `repeat(${FORECAST_DAYS.length}, 1fr)`, gap: 8, textAlign: 'center' }}>

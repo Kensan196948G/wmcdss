@@ -30,6 +30,7 @@ import {
   TweakToggle,
 } from './tweaks-panel';
 import type { TweakOption } from './tweaks-panel';
+import { AuthStore } from './auth';
 
 export type PageId =
   | 'dashboard'
@@ -208,6 +209,21 @@ export function AppShell() {
   const [now, setNow] = useState<Date>(new Date());
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // RBAC: バックエンドの JWT ロール（field / hq / admin）でナビを制限する。
+  // ロール未設定（旧トークン・テスト）は互換のため全画面表示。
+  const rbacRole = AuthStore.getUser()?.role;
+  const isAdmin = rbacRole === 'admin';
+  const isHq = rbacRole === 'hq' || isAdmin;
+  const canShow = (itemId: PageId): boolean => {
+    if (rbacRole == null || isAdmin) return true;
+    if (itemId === 'reports') return isHq;
+    if (itemId === 'site-register' || itemId === 'thresholds' || itemId === 'etl'
+      || itemId === 'audit' || itemId === 'ai-settings') {
+      return false; // field は管理画面へアクセス不可（バックエンドでも 403）
+    }
+    return true;
+  };
+
   const openTweaks = () => {
     window.postMessage({ type: '__activate_edit_mode' }, '*');
   };
@@ -227,9 +243,24 @@ export function AppShell() {
   const warnCount = SITES.filter((s) => s.status === 'warn').length;
   const dangerCount = SITES.filter((s) => s.status === 'danger').length;
 
-  const pageProps = { navigate, selectedSite, setSelectedSite, role, density };
+  // 各ページの props 型はレガシー由来で navigate の page 型が string/PageId と
+  // 混在する。型検査ゲート導入のためここで明示的に緩和する（挙動は不変）。
+  const pageProps = {
+    navigate,
+    selectedSite: selectedSite ?? undefined,
+    setSelectedSite,
+    role,
+    density,
+  } as any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
   const renderPage = () => {
+    if (!canShow(page)) {
+      return (
+        <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-muted)' }}>
+          ⛔ この画面を表示する権限がありません（管理者へ連絡してください）。
+        </div>
+      );
+    }
     switch (page) {
       case 'dashboard':
         return <DashboardPage {...pageProps} />;
@@ -291,10 +322,13 @@ export function AppShell() {
           </div>
         </div>
 
-        {NAV_ITEMS.map((g) => (
+        {NAV_ITEMS.map((g) => {
+          const items = g.items.filter((i) => canShow(i.id));
+          if (items.length === 0) return null;
+          return (
           <div className="sidebar-group" key={g.group}>
             <div className="sidebar-group-label">{g.group}</div>
-            {g.items.map((item) => (
+            {items.map((item) => (
               <div
                 key={item.id}
                 className={`sidebar-item ${page === item.id ? 'active' : ''}`}
@@ -305,7 +339,8 @@ export function AppShell() {
               </div>
             ))}
           </div>
-        ))}
+          );
+        })}
 
         <div className="sidebar-role">
           <div style={ROLE_SUB_STYLE}>表示モード</div>
@@ -358,6 +393,11 @@ export function AppShell() {
             ) : null}
           </div>
           <div className="header-right">
+            {rbacRole != null && (
+              <span className={`header-badge ${isAdmin ? STATUS_CLASS.danger : isHq ? STATUS_CLASS.warn : STATUS_CLASS.ok}`}>
+                {isAdmin ? '管理者' : isHq ? '本社' : '現場'} {rbacRole}
+              </span>
+            )}
             <span className={`header-badge ${STATUS_CLASS.ok}`}>
               <span className="badge-dot"></span> 施工可 {okCount}
             </span>

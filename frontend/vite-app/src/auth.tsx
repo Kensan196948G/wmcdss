@@ -28,6 +28,9 @@ export interface AuthUser {
   username: string;
   displayName: string;
   authType: 'local' | 'm365';
+  // RBAC ロール（field / hq / admin）。未設定（旧トークン）は undefined のまま
+  // 互換動作（全画面表示）にする。
+  role?: 'field' | 'hq' | 'admin';
 }
 
 function safeStorage() {
@@ -117,11 +120,13 @@ export const LoginPage: FC<LoginPageProps> = ({ onLogin }) => {
         username: string;
         display_name: string;
         auth_type: string;
+        role?: string;
       };
       const user: AuthUser = {
         username: data.username,
         displayName: data.display_name,
         authType: 'local',
+        role: data.role === 'hq' || data.role === 'admin' ? data.role : 'field',
       };
       AuthStore.save(data.access_token, user);
       onLogin(user);
@@ -156,11 +161,13 @@ export const LoginPage: FC<LoginPageProps> = ({ onLogin }) => {
         username: string;
         display_name: string;
         auth_type: string;
+        role?: string;
       };
       const user: AuthUser = {
         username: data.username,
         displayName: data.display_name,
         authType: 'm365',
+        role: data.role === 'hq' || data.role === 'admin' ? data.role : 'field',
       };
       AuthStore.save(data.access_token, user);
       onLogin(user);

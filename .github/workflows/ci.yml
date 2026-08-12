@@ -101,6 +101,9 @@ jobs:
       - name: Install (clean, lockfile-pinned)
         run: npm ci
 
+      - name: Typecheck (tsc)
+        run: npm run typecheck
+
       - name: Run vitest
         run: npm test
 
@@ -273,3 +276,19 @@ jobs:
       - name: Audit dependencies (high+ severity fails)
         # moderate/low are reported but do not fail; high & critical block.
         run: npm audit --audit-level=high
+
+  secret-scan:
+    name: security / secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    # 秘密値・資格情報がリポジトリへ混入した瞬間にブロックする最終ゲート。
+    # .env 実体や AI settings ファイルは .gitignore 済みだが、事故混入や
+    # 履歴からの漏えいはテストでは検出できないため独立ジョブで監視する。
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -31,11 +31,28 @@ _MAX_ACTOR_LEN = 64
 def actor_from(request: Request) -> str:
     """Resolve the audit `actor` for a mutating request.
 
-    Only `X-Actor` is honoured. Falling back to `X-API-Key` would leak the
-    credential into `audit_log.actor`, which `GET /api/v1/audit` returns to
-    every logged-in user. When no `X-Actor` is supplied, "anonymous" is used
-    and a warning is logged so a sustained absence in production is visible.
+    Priority:
+      1. 有効な JWT の `sub`（ブラウザ利用者）。クライアントが任意に偽れる
+         `X-Actor` より信頼できるため、JWT 経由では常にこちらを採用する。
+      2. `X-Actor`（API キー機械連携用。キー保持者 = 運用側の責務）。
+      3. `"anonymous"`（警告ログ付き）。
+
+    `X-API-Key` そのものを actor に使わない（監査ログへ資格情報を漏らさない）。
+    監査ログは `GET /api/v1/audit` で管理者に返るため、この境界は守る。
     """
+    auth = request.headers.get("Authorization", "")
+    if auth.lower().startswith("bearer "):
+        try:
+            # 遅延 import: security.py は middleware 最内層で hot path を走るため、
+            # モジュール import 時に PyJWT まで引き込まない。
+            from app.core.auth import decode_access_token
+            payload = decode_access_token(auth[7:].strip())
+            if payload:
+                subject = str(payload.get("sub") or "").strip()
+                if subject:
+                    return subject[:_MAX_ACTOR_LEN]
+        except Exception:  # noqa: BLE001
+            pass
     raw = (request.headers.get("X-Actor") or "").strip()
     if not raw:
         log.warning("audit: %s %s missing X-Actor; recording actor=anonymous",
@@ -58,6 +75,11 @@ def _key_matches(presented: str, allowed: list[str]) -> bool:
         if hmac.compare_digest(pb, k.encode("utf-8")):
             return True
     return False
+
+
+def key_matches(presented: str, allowed: list[str]) -> bool:
+    """API キー照合の公開ラッパー（route 層の認可依存から利用）。"""
+    return _key_matches(presented, allowed)
 
 
 # ---------------------------------------------------------------------------
@@ -131,12 +153,28 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         presented = request.headers.get("X-API-Key", "")
-        if not presented or not _key_matches(presented, s.api_keys):
-            log.warning("auth: %s %s rejected (ip=%s)",
-                        request.method, path,
-                        request.client.host if request.client else "?")
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "missing or invalid X-API-Key"},
-            )
-        return await call_next(request)
+        if presented and _key_matches(presented, s.api_keys):
+            return await call_next(request)
+
+        # ブラウザ利用者は X-API-Key を持たない。有効な JWT を第二資格情報として
+        # 受理することで、本番で WebUI の mutation（現場登録・閾値更新・判定記録）
+        # が 401 にならずに動作する。JWT のロール検査は route 層
+        # (app/api/auth.py require_* ) が行うため、ここでは署名検証のみ。
+        auth = request.headers.get("Authorization", "")
+        jwt_ok = False
+        if auth.lower().startswith("bearer "):
+            try:
+                from app.core.auth import decode_access_token
+                jwt_ok = bool(decode_access_token(auth[7:].strip()))
+            except Exception:  # noqa: BLE001
+                jwt_ok = False
+        if jwt_ok:
+            return await call_next(request)
+
+        log.warning("auth: %s %s rejected (ip=%s)",
+                    request.method, path,
+                    request.client.host if request.client else "?")
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "missing or invalid X-API-Key"},
+        )

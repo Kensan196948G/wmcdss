@@ -9,6 +9,11 @@
 import { useEffect, useMemo, useState, type FC } from 'react';
 import { BarChart, ChartColors, LineChart, WindRose } from './charts';
 import {
+  backendConnected,
+  fetchMarineObservations,
+  fetchWeatherObservations,
+} from './api';
+import {
   FORECAST_DAYS,
   SITES,
   WEATHER_ICONS,
@@ -25,28 +30,7 @@ import {
 // Backend response shapes (as documented by the API)
 // ---------------------------------------------------------------------------
 
-interface BackendWeatherObs {
-  id: number;
-  site_id: string;
-  observed_at: string;
-  temperature_c: number | null;
-  humidity_pct: number | null;
-  pressure_hpa: number | null;
-  precip_mm: number | null;
-  wind_speed_ms: number | null;
-  wind_dir_deg: number | null;
-}
-
-interface BackendMarineObs {
-  id: number;
-  site_id: string;
-  observed_at: string;
-  sig_wave_h_m: number | null;
-  wave_period_s: number | null;
-  wave_dir_deg: number | null;
-  tide_level_m: number | null;
-  source?: string | null;
-}
+import type { BackendMarineObs, BackendWeatherObs } from './api';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -93,33 +77,32 @@ function nowJa(): string {
 
 /** Adapt backend weather observation to the local WeatherSample shape. */
 function adaptBackendWeather(obs: BackendWeatherObs): WeatherSample {
-  const mock = generateWeather(obs.site_id);
+  // 実データ接続時は欠測値をモックで埋めない。「—」表示して
+  // 実値と混同させない（誤判定の防止）。
   return {
-    temp:     obs.temperature_c  ?? mock.temp,
-    hum:      obs.humidity_pct   ?? mock.hum,
-    pressure: obs.pressure_hpa   ?? mock.pressure,
-    wind:     obs.wind_speed_ms  ?? mock.wind,
-    windDir:  obs.wind_dir_deg != null ? degToCompass(obs.wind_dir_deg) : mock.windDir,
-    rain:     obs.precip_mm      ?? mock.rain,
+    temp:     obs.temperature_c  ?? null,
+    hum:      obs.humidity_pct   ?? null,
+    pressure: obs.pressure_hpa   ?? null,
+    wind:     obs.wind_speed_ms  ?? null,
+    windDir:  obs.wind_dir_deg != null ? degToCompass(obs.wind_dir_deg) : null,
+    rain:     obs.precip_mm      ?? null,
   };
 }
 
 /** Adapt backend marine observation to the local MarineSample shape. */
 function adaptBackendMarine(obs: BackendMarineObs, siteId: string): MarineSample {
-  const mock = generateMarine(siteId) ?? {
-    waveHeight: 0,
-    wavePeriod: 0,
-    waveDir: 'N' as CompassDir,
-    tide: '—',
-    tideLevel: 0,
-  };
+  void siteId; // モック埋めを廃止したため siteId は参照しない（互換のため残置）
   return {
-    waveHeight: obs.sig_wave_h_m   ?? mock.waveHeight,
-    wavePeriod: obs.wave_period_s  ?? mock.wavePeriod,
-    waveDir:    obs.wave_dir_deg != null ? degToCompass(obs.wave_dir_deg) : mock.waveDir,
-    tide:       mock.tide,
-    tideLevel:  obs.tide_level_m   ?? mock.tideLevel,
+    waveHeight: obs.sig_wave_h_m   ?? null,
+    wavePeriod: obs.wave_period_s  ?? null,
+    waveDir:    obs.wave_dir_deg != null ? degToCompass(obs.wave_dir_deg) : null,
+    tide:       null,
+    tideLevel:  obs.tide_level_m   ?? null,
   };
+}
+
+function fmtVal(v: number | null | undefined, digits = 1, suffix = ''): string {
+  return v == null || Number.isNaN(v) ? '—' : `${v.toFixed(digits)}${suffix}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,11 +138,13 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
   const [backendW, setBackendW] = useState<WeatherSample | null>(null);
   const [obsTime, setObsTime]   = useState<string>('');
   const [isLiveData, setIsLiveData] = useState(false);
+  const [hourlyObs, setHourlyObs] = useState<BackendWeatherObs[] | null>(null);
 
   useEffect(() => {
     setBackendW(null);
     setObsTime('');
     setIsLiveData(false);
+    setHourlyObs(null);
 
     const api = (window as Window & { WMCDSS_API?: { fetchLatestWeather?: (id: string) => Promise<unknown> } }).WMCDSS_API;
     if (!api?.fetchLatestWeather) return;
@@ -178,50 +163,89 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
     return () => { cancelled = true; };
   }, [site.id]);
 
-  const w = backendW ?? generateWeather(site.id);
+  // 実データ接続時はモックにフォールバックしない。取得失敗時は「—」表示。
+  const w = backendW ?? (backendConnected() ? null : generateWeather(site.id));
 
-  const hourlyWind = useMemo(() => generateHourlyWind(), [siteId]);
+  useEffect(() => {
+    if (!backendConnected()) return;
+    let cancelled = false;
+    fetchWeatherObservations(site.id, 48)
+      .then((rows) => { if (!cancelled) setHourlyObs(rows); })
+      .catch(() => { if (!cancelled) setHourlyObs([]); });
+    return () => { cancelled = true; };
+  }, [site.id]);
+
+  const hourlyWind = useMemo(() => {
+    if (hourlyObs) {
+      return hourlyObs
+        .map((o) => ({
+          hour: new Date(o.observed_at).getHours(),
+          speed: o.wind_speed_ms ?? 0,
+        }))
+        .reverse();
+    }
+    return generateHourlyWind();
+  }, [hourlyObs, siteId]);
   const [tab, setTab] = useState<WeatherTab>('current');
 
   const hourlyTemp = useMemo(() => {
+    if (hourlyObs) {
+      return hourlyObs
+        .map((o) => ({
+          hour: new Date(o.observed_at).getHours(),
+          temp: o.temperature_c ?? 0,
+        }))
+        .reverse();
+    }
+    if (w == null) return [];
     const out: { hour: number; temp: number }[] = [];
     for (let h = 0; h < 24; h++) {
-      const base = w.temp - 3 + Math.sin(((h - 6) / 24) * Math.PI * 2) * 4;
+      const base = (w.temp ?? 15) - 3 + Math.sin(((h - 6) / 24) * Math.PI * 2) * 4;
       out.push({ hour: h, temp: +(base + (Math.random() - 0.5)).toFixed(1) });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteId]);
+  }, [hourlyObs, siteId, w]);
 
   const hourlyRain = useMemo(() => {
+    if (hourlyObs) {
+      return hourlyObs
+        .map((o) => ({
+          hour: new Date(o.observed_at).getHours(),
+          rain: o.precip_mm ?? 0,
+        }))
+        .reverse();
+    }
+    if (w == null) return [];
     const out: { hour: number; rain: number }[] = [];
     for (let h = 0; h < 24; h++) {
-      out.push({ hour: h, rain: +Math.max(0, w.rain + (Math.random() - 0.7) * 3).toFixed(1) });
+      out.push({ hour: h, rain: +Math.max(0, (w.rain ?? 0) + (Math.random() - 0.7) * 3).toFixed(1) });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [siteId]);
+  }, [hourlyObs, siteId, w]);
 
   const windLimit = site.thresholds.windSpeed;
   const rainLimit = site.thresholds.rainfall;
   const statCards: StatItem[] = [
-    { label: '気温', value: w.temp, unit: '℃', icon: '🌡' },
-    { label: '湿度', value: w.hum, unit: '%', icon: '💧' },
-    { label: '気圧', value: w.pressure, unit: 'hPa', icon: '📊' },
+    { label: '気温', value: w ? fmtVal(w.temp, 1, '') : '—', unit: '℃', icon: '🌡' },
+    { label: '湿度', value: w ? fmtVal(w.hum, 0, '') : '—', unit: '%', icon: '💧' },
+    { label: '気圧', value: w ? fmtVal(w.pressure, 1, '') : '—', unit: 'hPa', icon: '📊' },
     {
       label: '風速',
-      value: w.wind,
+      value: w ? fmtVal(w.wind, 1, '') : '—',
       unit: 'm/s',
       icon: '💨',
-      alert: w.wind > windLimit ? 'danger' : w.wind > windLimit * 0.8 ? 'warn' : null,
+      alert: w && w.wind != null && w.wind > windLimit ? 'danger'
+        : w && w.wind != null && w.wind > windLimit * 0.8 ? 'warn' : null,
     },
-    { label: '風向', value: w.windDir, unit: '', icon: '🧭' },
+    { label: '風向', value: w?.windDir ?? '—', unit: '', icon: '🧭' },
     {
       label: '降水量',
-      value: w.rain,
+      value: w ? fmtVal(w.rain, 1, '') : '—',
       unit: 'mm/h',
       icon: '🌧',
-      alert: w.rain > rainLimit ? 'danger' : null,
+      alert: w && w.rain != null && w.rain > rainLimit ? 'danger' : null,
     },
   ];
 
@@ -253,10 +277,10 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span
-            className={`badge ${isLiveData ? 'badge-ok' : 'badge-warn'}`}
+            className={`badge ${isLiveData ? 'badge-ok' : backendConnected() ? 'badge-danger' : 'badge-warn'}`}
             style={{ fontSize: 11 }}
           >
-            {isLiveData ? '実データ' : 'サンプルデータ'}
+            {isLiveData ? '実データ' : backendConnected() ? 'データなし' : 'サンプルデータ'}
           </span>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
             観測所: {site.station} ／ 最終取得: {obsTime || nowJa()}
@@ -319,19 +343,25 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
                 <span className="card-title">風配図</span>
               </div>
               <div className="card-body" style={{ display: 'flex', justifyContent: 'center' }}>
-                <WindRose
-                  data={[
-                    { dir: 'N', value: 2.1 },
-                    { dir: 'NE', value: 1.8 },
-                    { dir: 'E', value: 2.5 },
-                    { dir: 'SE', value: 3.2 },
-                    { dir: 'S', value: 4.8 },
-                    { dir: 'SW', value: 5.1 },
-                    { dir: 'W', value: 3.5 },
-                    { dir: 'NW', value: 2.2 },
-                  ]}
-                  size={200}
-                />
+                {backendConnected() ? (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '24px 0' }}>
+                    風配図は観測データの蓄積後に表示されます（現在は固定サンプルを表示しません）。
+                  </div>
+                ) : (
+                  <WindRose
+                    data={[
+                      { dir: 'N', value: 2.1 },
+                      { dir: 'NE', value: 1.8 },
+                      { dir: 'E', value: 2.5 },
+                      { dir: 'SE', value: 3.2 },
+                      { dir: 'S', value: 4.8 },
+                      { dir: 'SW', value: 5.1 },
+                      { dir: 'W', value: 3.5 },
+                      { dir: 'NW', value: 2.2 },
+                    ]}
+                    size={200}
+                  />
+                )}
               </div>
             </div>
             <div className="card">
@@ -377,6 +407,9 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
                     ))}
                   </tbody>
                 </table>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+                  ※ 固定サンプル表示です。予報API未接続のため施工判断には使用できません。
+                </div>
               </div>
             </div>
           </div>
@@ -453,23 +486,33 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
                 </tr>
               </thead>
               <tbody>
-                {hourlyWind.map((h, i) => (
-                  <tr key={i}>
-                    <td>{String(h.hour).padStart(2, '0')}:00</td>
-                    <td>{hourlyTemp[i]?.temp}</td>
-                    <td>{w.hum + Math.round((Math.random() - 0.5) * 8)}</td>
-                    <td
-                      style={{
-                        color: h.speed > windLimit ? 'var(--status-danger)' : 'inherit',
-                      }}
-                    >
-                      {h.speed}
-                    </td>
-                    <td>{w.windDir}</td>
-                    <td>{hourlyRain[i]?.rain}</td>
-                    <td>{(w.pressure + (Math.random() - 0.5) * 2).toFixed(1)}</td>
-                  </tr>
-                ))}
+                {hourlyObs
+                  ? hourlyObs.map((o, i) => (
+                      <tr key={i}>
+                        <td>{formatObsTime(o.observed_at)}</td>
+                        <td>{fmtVal(o.temperature_c, 1)}</td>
+                        <td>{fmtVal(o.humidity_pct, 0)}</td>
+                        <td style={{ color: (o.wind_speed_ms ?? 0) > windLimit ? 'var(--status-danger)' : 'inherit' }}>
+                          {fmtVal(o.wind_speed_ms, 1)}
+                        </td>
+                        <td>{o.wind_dir_deg != null ? degToCompass(o.wind_dir_deg) : '—'}</td>
+                        <td>{fmtVal(o.precip_mm, 1)}</td>
+                        <td>{fmtVal(o.pressure_hpa, 1)}</td>
+                      </tr>
+                    ))
+                  : hourlyWind.map((h, i) => (
+                      <tr key={i}>
+                        <td>{String(h.hour).padStart(2, '0')}:00</td>
+                        <td>{hourlyTemp[i]?.temp}</td>
+                        <td>{w ? fmtVal(w.hum, 0) : '—'}</td>
+                        <td style={{ color: h.speed > windLimit ? 'var(--status-danger)' : 'inherit' }}>
+                          {h.speed}
+                        </td>
+                        <td>{w?.windDir ?? '—'}</td>
+                        <td>{hourlyRain[i]?.rain}</td>
+                        <td>{w ? fmtVal(w.pressure, 1) : '—'}</td>
+                      </tr>
+                    ))}
               </tbody>
             </table>
           </div>
@@ -496,6 +539,7 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
   const [obsTime, setObsTime]   = useState<string>('');
   const [isLiveData, setIsLiveData] = useState(false);
   const [marineSource, setMarineSource] = useState<string>('');
+  const [hourlyObs, setHourlyObs] = useState<BackendMarineObs[] | null>(null);
 
   useEffect(() => {
     if (!site) return;
@@ -503,6 +547,7 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
     setObsTime('');
     setIsLiveData(false);
     setMarineSource('');
+    setHourlyObs(null);
 
     const api = (window as Window & { WMCDSS_API?: { fetchLatestMarine?: (id: string) => Promise<unknown> } }).WMCDSS_API;
     if (!api?.fetchLatestMarine) return;
@@ -522,7 +567,26 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
     return () => { cancelled = true; };
   }, [site?.id]);
 
-  const hourlyWave = useMemo(() => generateHourlyWave(), [siteId]);
+  useEffect(() => {
+    if (!site || !backendConnected()) return;
+    let cancelled = false;
+    fetchMarineObservations(site.id, 48)
+      .then((rows) => { if (!cancelled) setHourlyObs(rows); })
+      .catch(() => { if (!cancelled) setHourlyObs([]); });
+    return () => { cancelled = true; };
+  }, [site?.id]);
+
+  const hourlyWave = useMemo(() => {
+    if (hourlyObs) {
+      return hourlyObs
+        .map((o) => ({
+          hour: new Date(o.observed_at).getHours(),
+          height: o.sig_wave_h_m ?? 0,
+        }))
+        .reverse();
+    }
+    return generateHourlyWave();
+  }, [hourlyObs, siteId]);
 
   if (!site) {
     return (
@@ -532,10 +596,11 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
     );
   }
 
-  const m = backendM ?? generateMarine(site.id);
+  // 実データ接続時はモックにフォールバックしない。
+  const m = backendM ?? (backendConnected() ? null : generateMarine(site.id));
   const isReferenceMarine = marineSource === 'open_meteo_marine_info';
 
-  if (!m) {
+  if (!m && !backendConnected()) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
         海象データのある現場がありません
@@ -546,7 +611,7 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
   // marineSites filter guarantees this is set, but the type contract says
   // `number | null` — narrow explicitly so the comparisons below type-check.
   const waveLimit = site.thresholds.waveHeight;
-  if (waveLimit === null) {
+  if (waveLimit === null && !backendConnected()) {
     return (
       <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
         海象データのある現場がありません
@@ -576,17 +641,17 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <span
-            className={`badge ${isLiveData ? 'badge-ok' : 'badge-warn'}`}
+            className={`badge ${isLiveData ? 'badge-ok' : backendConnected() ? 'badge-danger' : 'badge-warn'}`}
             style={{ fontSize: 11 }}
           >
-            {isLiveData ? '実データ' : 'サンプルデータ'}
+            {isLiveData ? '実データ' : backendConnected() ? 'データなし' : 'サンプルデータ'}
           </span>
           {isReferenceMarine && (
             <span className="badge badge-warn">情報共有用</span>
           )}
           <span className="badge badge-info">観測点: {site.marinePoint}</span>
           <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            観測日時: {obsTime || 'サンプルデータ'}
+            観測日時: {obsTime || (backendConnected() ? 'データなし' : 'サンプルデータ')}
           </span>
         </div>
       </div>
@@ -613,14 +678,14 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
             className="stat-value"
             style={{
               color:
-                m.waveHeight > waveLimit
+                m && m.waveHeight != null && waveLimit != null && m.waveHeight > waveLimit
                   ? 'var(--status-danger)'
-                  : m.waveHeight > waveLimit * 0.8
+                  : m && m.waveHeight != null && waveLimit != null && m.waveHeight > waveLimit * 0.8
                   ? 'var(--status-warn)'
                   : 'var(--blue-600)',
             }}
           >
-            {m.waveHeight}
+            {m ? fmtVal(m.waveHeight, 2) : '—'}
             <span style={{ fontSize: 14, fontWeight: 400, marginLeft: 4 }}>m</span>
           </div>
           <div className="stat-sub">基準値: {waveLimit}m</div>
@@ -628,14 +693,14 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
         <div className="stat-card">
           <div className="stat-label">⏱ 波周期</div>
           <div className="stat-value" style={{ color: 'var(--blue-600)' }}>
-            {m.wavePeriod}
+            {m ? fmtVal(m.wavePeriod, 1) : '—'}
             <span style={{ fontSize: 14, fontWeight: 400, marginLeft: 4 }}>秒</span>
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-label">🧭 卓越波向</div>
           <div className="stat-value" style={{ color: 'var(--blue-600)' }}>
-            {m.waveDir}
+            {m?.waveDir ?? '—'}
           </div>
         </div>
       </div>
@@ -644,13 +709,13 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
         <div className="stat-card">
           <div className="stat-label">🌊 潮汐</div>
           <div className="stat-value" style={{ color: 'var(--blue-600)' }}>
-            {m.tide}
+            {m?.tide ?? '—'}
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-label">📏 潮位</div>
           <div className="stat-value" style={{ color: 'var(--blue-600)' }}>
-            {m.tideLevel}
+            {m ? fmtVal(m.tideLevel, 2) : '—'}
             <span style={{ fontSize: 14, fontWeight: 400, marginLeft: 4 }}>m</span>
           </div>
         </div>
@@ -666,7 +731,7 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
             width={800}
             height={200}
             color="#2874a6"
-            threshold={waveLimit}
+            threshold={waveLimit ?? undefined}
             thresholdLabel={`基準 ${waveLimit}m`}
             yLabel="波高 (m)"
           />
@@ -690,23 +755,41 @@ export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
               </tr>
             </thead>
             <tbody>
-              {hourlyWave.map((h, i) => (
-                <tr key={i}>
-                  <td>{String(h.hour).padStart(2, '0')}:00</td>
-                  <td
-                    style={{
-                      fontWeight: 600,
-                      fontVariantNumeric: 'tabular-nums',
-                      color: h.height > waveLimit ? 'var(--status-danger)' : 'inherit',
-                    }}
-                  >
-                    {h.height}
-                  </td>
-                  <td>{(m.wavePeriod + (Math.random() - 0.5) * 1.5).toFixed(1)}</td>
-                  <td>{m.waveDir}</td>
-                  <td>{(m.tideLevel + Math.sin((i / 6) * Math.PI) * 0.3).toFixed(2)}</td>
-                </tr>
-              ))}
+              {hourlyObs
+                ? hourlyObs.map((o, i) => (
+                    <tr key={i}>
+                      <td>{formatObsTime(o.observed_at)}</td>
+                      <td
+                        style={{
+                          fontWeight: 600,
+                          fontVariantNumeric: 'tabular-nums',
+                          color: waveLimit != null && (o.sig_wave_h_m ?? 0) > waveLimit ? 'var(--status-danger)' : 'inherit',
+                        }}
+                      >
+                        {fmtVal(o.sig_wave_h_m, 2)}
+                      </td>
+                      <td>{fmtVal(o.wave_period_s, 1)}</td>
+                      <td>{o.wave_dir_deg != null ? degToCompass(o.wave_dir_deg) : '—'}</td>
+                      <td>{fmtVal(o.tide_level_m, 2)}</td>
+                    </tr>
+                  ))
+                : hourlyWave.map((h, i) => (
+                    <tr key={i}>
+                      <td>{String(h.hour).padStart(2, '0')}:00</td>
+                      <td
+                        style={{
+                          fontWeight: 600,
+                          fontVariantNumeric: 'tabular-nums',
+                          color: waveLimit != null && h.height > waveLimit ? 'var(--status-danger)' : 'inherit',
+                        }}
+                      >
+                        {h.height}
+                      </td>
+                      <td>{m ? fmtVal(m.wavePeriod, 1) : '—'}</td>
+                      <td>{m?.waveDir ?? '—'}</td>
+                      <td>{m ? fmtVal(m.tideLevel, 2) : '—'}</td>
+                    </tr>
+                  ))}
             </tbody>
           </table>
         </div>

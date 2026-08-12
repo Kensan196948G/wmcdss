@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import UserInfo, get_current_user
+from app.api.auth import UserInfo, require_hq_or_admin_jwt
 from app.db.session import get_db
 from app.models.audit import AuditLog
 from app.models.observations import MarineObservation, WeatherObservation
@@ -268,10 +268,22 @@ def _build_annual(
 # ---------------------------------------------------------------------------
 
 def _to_csv(headers: list[str], rows: list[list[Any]]) -> io.StringIO:
+    def _safe_cell(v: Any) -> Any:
+        """CSV インジェクション対策: 数式として解釈される先頭文字を無害化する。
+
+        Excel / LibreOffice は '=' '+' '-' '@' で始まるセルを数式として評価する
+        ため、監査ログ由来の自由文字列（note 等）がレポート経由でマクロ実行に
+        悪用されうる。全てのセルに適用すると日付の負値表記などが壊れるため、
+        文字列型かつ先頭が数式記号の場合のみ先頭に `'` を付ける。
+        """
+        if isinstance(v, str) and v[:1] in ("=", "+", "-", "@", "\t", "\r"):
+            return "'" + v
+        return v
+
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(headers)
-    writer.writerows(rows)
+    writer.writerow([_safe_cell(h) for h in headers])
+    writer.writerows([[_safe_cell(c) for c in row] for row in rows])
     buf.seek(0)
     return buf
 
@@ -298,7 +310,7 @@ async def generate_report(
     # 認証を DB より先に宣言する。FastAPI は依存を宣言順に解決するため、
     # この順序だと未認証リクエストは DB セッションを取得せずに 401 で終わる。
     # 逆順にすると、認証されないアクセスでもコネクションプールを消費できる。
-    _current_user: UserInfo = Depends(get_current_user),
+    _current_user: UserInfo = Depends(require_hq_or_admin_jwt),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """レポート生成エンドポイント。

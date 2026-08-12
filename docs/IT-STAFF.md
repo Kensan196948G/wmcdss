@@ -436,3 +436,54 @@ docker compose --env-file .env.production -f docker-compose.production.yml up -d
 | [アーキテクチャ](ARCHITECTURE.md) | 設計思想・データフロー |
 | [セキュリティ設計](SECURITY.md) | 認証・セキュリティ対策 |
 | [技術リファレンス](TECHNICAL.md) | API 仕様・開発環境構築 |
+
+---
+
+## 🔐 2026-08-12 追加: ロール管理・リストア・AI予算
+
+### ロール管理（RBAC）
+
+`.env.production` に次を設定します。
+
+```bash
+# "username:role" のカンマ区切り（role: field / hq / admin）
+# M365 認証ではメールアドレス（小文字）で一致判定
+WMCDSS_ROLE_USERS_RAW=kanri@mirai-const.co.jp:admin,honsya@mirai-const.co.jp:hq
+WMCDSS_DEFAULT_ROLE=field
+```
+
+- 未設定ユーザーは `WMCDSS_DEFAULT_ROLE`（既定 field）
+- 現場登録・しきい値変更・ETL実行・監査ログ・AI設定: **admin のみ**
+- レポート出力: **hq 以上**
+- ロール変更は env 編集 → `docker compose ... restart backend` で反映
+- アカウント無効化・一括管理 UI は Phase 1 で実装予定（現状は env が正）
+
+### DB リストア
+
+```bash
+# 最新バックアップを本番 DB へ復元（破壊的操作: 事前にバックアップ退避を確認）
+scripts/wmcdss-db-restore.sh
+
+# 特定世代を指定・または実行せず内容確認
+scripts/wmcdss-db-restore.sh backups/wmcdss_20260812_033000.sql.gz
+scripts/wmcdss-db-restore.sh --dry-run
+```
+
+復元後は `/readyz` 200 と現場一覧・判定 API の smoke 確認を行ってください。
+
+### AI 利用予算
+
+```bash
+# 日次リクエスト上限（超過時 429）と月次トークン警告（0=無制限）
+WMCDSS_AI_MAX_REQUESTS_PER_DAY=100
+WMCDSS_AI_MAX_TOKENS_PER_MONTH=1000000
+```
+
+### 本番導入前チェック（2026-08-12 監査より）
+
+1. TLS 終端（FortiGate / Cloudflare Tunnel / リバースプロキシ）— 平文 HTTP のまま
+   M365 資格情報を送らないこと（HSTS 導入も同時に）
+2. GitHub リポジトリの復旧（現状 404。push/PR/CI 不可）
+3. Open-Meteo の商用ライセンス確認（無料版は非商用限定）
+4. 予報業務許可の要否確認（AI 等で予報を提供する場合）
+5. バックアップの外部退避と復旧ドリル

@@ -27,12 +27,15 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import httpx
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import AfterValidator, BaseModel, Field, field_validator
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # JWT 認証依存関係 — /ai/* は全てログイン済みユーザーのみ許可。
 # app.api.auth → app.core.auth → app.core.config のチェーンは一方向なので循環なし。
-from app.api.auth import UserInfo, get_current_user
+from app.api.auth import UserInfo, get_current_user, require_admin_jwt
+from app.db.session import get_db
+from app.services.audit import write_audit
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +44,96 @@ router = APIRouter(tags=["ai"])
 _DISCLAIMER = (
     "(*) AI による分析は参考情報です。最終判定は必ず担当者が行ってください。"
 )
+
+# ---------------------------------------------------------------------------
+# 利用予算・監査
+# ---------------------------------------------------------------------------
+
+# 日次リクエスト数 / 月次トークン数の in-memory カウンタ。プロセス再起動で
+# リセットされるため厳密な会計ではなく「暴走・誤操作の緊急ブレーキ」として
+# 扱う。厳密な予算管理は DB 永続化カウンタを将来フェーズで導入する。
+_AI_DAY_KEY = ""
+_AI_DAY_COUNT = 0
+_AI_MONTH_KEY = ""
+_AI_MONTH_TOKENS = 0
+_LAST_USAGE_TOKENS = 0
+
+
+def _reset_budget_counters_for_tests() -> None:
+    """テスト用: カウンタを初期状態へ戻す。"""
+    global _AI_DAY_KEY, _AI_DAY_COUNT, _AI_MONTH_KEY, _AI_MONTH_TOKENS
+    _AI_DAY_KEY = ""
+    _AI_DAY_COUNT = 0
+    _AI_MONTH_KEY = ""
+    _AI_MONTH_TOKENS = 0
+
+
+def _check_ai_budget() -> None:
+    """日次リクエスト上限を超えていれば 429 を投げる。"""
+    global _AI_DAY_KEY, _AI_DAY_COUNT
+    from app.core.config import get_settings as _get_settings
+    limit = _get_settings().ai_max_requests_per_day
+    if limit <= 0:
+        return
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    if _AI_DAY_KEY != today:
+        _AI_DAY_KEY = today
+        _AI_DAY_COUNT = 0
+    if _AI_DAY_COUNT >= limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"AI リクエストの日次上限 ({limit} 件) に達しました。管理者に連絡してください。",
+        )
+
+
+def _record_ai_usage(tokens: int = 0) -> None:
+    """呼び出し後にカウンタを増やす。"""
+    global _AI_DAY_KEY, _AI_DAY_COUNT, _AI_MONTH_KEY, _AI_MONTH_TOKENS
+    from app.core.config import get_settings as _get_settings
+    s = _get_settings()
+    today = time.strftime("%Y-%m-%d", time.gmtime())
+    month = time.strftime("%Y-%m", time.gmtime())
+    if _AI_DAY_KEY != today:
+        _AI_DAY_KEY = today
+        _AI_DAY_COUNT = 0
+    if _AI_MONTH_KEY != month:
+        _AI_MONTH_KEY = month
+        _AI_MONTH_TOKENS = 0
+    _AI_DAY_COUNT += 1
+    _AI_MONTH_TOKENS += tokens
+    if s.ai_max_tokens_per_month > 0 and _AI_MONTH_TOKENS > s.ai_max_tokens_per_month:
+        log.warning(
+            "AI 月次トークン上限超過: %d / %d（プロセス内カウンタ。課金請求額と要照合）",
+            _AI_MONTH_TOKENS, s.ai_max_tokens_per_month,
+        )
+
+
+async def _audit_ai_request(
+    db: AsyncSession | None,
+    user: UserInfo,
+    endpoint: str,
+    *,
+    model: str = "",
+    analysis_type: str = "rule_based",
+    usage_tokens: int = 0,
+) -> None:
+    """AI 呼び出しを監査ログへ記録する（ベストエフォート）。"""
+    if db is None:
+        return
+    try:
+        await write_audit(
+            db, actor=user.username, action="ai.request",
+            target_type="ai", target_id=endpoint,
+            detail={
+                "endpoint": endpoint,
+                "model": model,
+                "analysis_type": analysis_type,
+                "usage_tokens": usage_tokens,
+                "role": user.role,
+            },
+        )
+    except Exception:  # noqa: BLE001
+        log.warning("ai audit write failed endpoint=%s", endpoint, exc_info=True)
 
 # ---------------------------------------------------------------------------
 # Supported models
@@ -544,11 +637,12 @@ async def _call_claude(
     api_key: str,
     model: str = "claude-sonnet-4-6",
     max_tokens: int = 500,
-) -> str:
-    """Call Anthropic Claude API and return the response text.
+) -> tuple[str, int]:
+    """Call Anthropic Claude API and return (response text, usage tokens).
 
-    Returns empty string on any error so the caller can fall back gracefully.
+    Returns ("", 0) on any error so the caller can fall back gracefully.
     """
+    global _LAST_USAGE_TOKENS
     # 全ての課金リクエストがこの関数を通る。リクエストモデル側の宣言的な上限を
     # 付け忘れたエンドポイントが将来追加されても、ここで必ず止まる。
     # 通常運用では到達しない（到達したら上限設定の不備を意味する）。
@@ -559,7 +653,7 @@ async def _call_claude(
             len(prompt),
             MAX_PROMPT_CHARS,
         )
-        return ""
+        return "", 0
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
@@ -577,7 +671,13 @@ async def _call_claude(
                 },
             )
             if resp.status_code == 200:
-                return str(resp.json()["content"][0]["text"])
+                payload = resp.json()
+                usage = payload.get("usage") or {}
+                _LAST_USAGE_TOKENS = int(
+                    usage.get("total_tokens")
+                    or usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                )
+                return str(payload["content"][0]["text"]), _LAST_USAGE_TOKENS
             log.warning(
                 "Claude API call returned %s: %s",
                 resp.status_code,
@@ -585,7 +685,7 @@ async def _call_claude(
             )
     except Exception:  # noqa: BLE001
         log.warning("Claude API call failed; falling back to rule-based analysis")
-    return ""
+    return "", 0
 
 
 def _clean_lines(text: str, limit: int = 6) -> list[str]:
@@ -614,7 +714,7 @@ async def _assist_with_claude(
     if not api_key:
         return fallback
 
-    ai_text = await _call_claude(prompt, api_key, _get_model(), max_tokens=max_tokens)
+    ai_text, _tokens = await _call_claude(prompt, api_key, _get_model(), max_tokens=max_tokens)
     if not ai_text:
         return fallback
 
@@ -763,7 +863,7 @@ def _fallback_chat(body: AiChatRequest) -> AiAssistResponse:
 
 @router.get("/ai/settings", response_model=AiSettingsResponse)
 async def get_ai_settings(
-    _current_user: UserInfo = Depends(get_current_user),
+    _current_user: UserInfo = Depends(require_admin_jwt),
 ) -> AiSettingsResponse:
     """Return current AI settings (API key is masked to last 4 chars)."""
     api_key = _get_api_key()
@@ -779,7 +879,7 @@ async def get_ai_settings(
 @router.post("/ai/settings", response_model=AiSettingsSaveResponse)
 async def save_ai_settings(
     body: AiSettingsSaveRequest,
-    _current_user: UserInfo = Depends(get_current_user),
+    _current_user: UserInfo = Depends(require_admin_jwt),
 ) -> AiSettingsSaveResponse:
     """Save API key and model.  Pass empty string for api_key to delete the stored key."""
     global _ai_settings
@@ -803,7 +903,7 @@ async def save_ai_settings(
 @router.post("/ai/test", response_model=AiTestResponse)
 async def test_ai_connection(
     body: AiTestRequest,
-    _current_user: UserInfo = Depends(get_current_user),
+    _current_user: UserInfo = Depends(require_admin_jwt),
 ) -> AiTestResponse:
     """Send a minimal test request to the Anthropic API to verify the key."""
     start = time.monotonic()
@@ -847,6 +947,7 @@ async def test_ai_connection(
 async def analyze(
     body: AiAnalyzeRequest,
     _current_user: UserInfo = Depends(get_current_user),
+    db: AsyncSession | None = Depends(get_db),
 ) -> AiAnalyzeResponse:
     """AI-assisted construction judgment analysis.
 
@@ -854,8 +955,10 @@ async def analyze(
     the analysis is delegated to Claude AI.  Otherwise a deterministic
     rule-based analysis is used.
     """
+    _check_ai_budget()
     api_key = _get_api_key()
     model = _get_model()
+    analysis_type = "rule_based"
 
     # --- Rule-based analysis (always computed as baseline / fallback) ---
     if body.work_type == "concrete":
@@ -887,12 +990,18 @@ async def analyze(
                 f"50文字以内で追加の専門的アドバイスがあれば加えてください。"
             )
 
-        ai_text = await _call_claude(prompt, api_key, model)
+        ai_text, _usage = await _call_claude(prompt, api_key, model)
         if ai_text:
             result["summary"] = ai_text.strip()
             result["analysis_type"] = "claude_ai"
+            analysis_type = "claude_ai"
 
     result["disclaimer"] = _DISCLAIMER
+    _record_ai_usage(_LAST_USAGE_TOKENS)
+    await _audit_ai_request(
+        db, _current_user, "/ai/analyze",
+        model=model, analysis_type=analysis_type, usage_tokens=_LAST_USAGE_TOKENS,
+    )
     return AiAnalyzeResponse(**result)
 
 
@@ -900,7 +1009,9 @@ async def analyze(
 async def etl_diagnose(
     body: AiEtlDiagnoseRequest,
     _current_user: UserInfo = Depends(get_current_user),
+    db: AsyncSession | None = Depends(get_db),
 ) -> AiAssistResponse:
+    _check_ai_budget()
     fallback = _fallback_etl_diagnosis(body.jobs)
     prompt = (
         "以下のデータ取得ジョブ状態を日本語で診断してください。\n"
@@ -908,14 +1019,23 @@ async def etl_diagnose(
         "Open-Meteo Marine APIは情報共有用であり、施工判断の根拠にはしない旨を必要に応じて明記してください。\n"
         f"ジョブ状態: {body.jobs}"
     )
-    return await _assist_with_claude(prompt, fallback)
+    result = await _assist_with_claude(prompt, fallback)
+    _record_ai_usage(_LAST_USAGE_TOKENS)
+    await _audit_ai_request(
+        db, _current_user, "/ai/etl-diagnose",
+        model=_get_model(), analysis_type=result.analysis_type,
+        usage_tokens=_LAST_USAGE_TOKENS,
+    )
+    return result
 
 
 @router.post("/ai/risk-summary", response_model=AiAssistResponse)
 async def risk_summary(
     body: AiRiskSummaryRequest,
     _current_user: UserInfo = Depends(get_current_user),
+    db: AsyncSession | None = Depends(get_db),
 ) -> AiAssistResponse:
+    _check_ai_budget()
     fallback = _fallback_risk_summary(body.sites)
     prompt = (
         "以下の現場一覧から、今後数時間で注意すべき現場リスクを日本語で要約してください。\n"
@@ -923,14 +1043,23 @@ async def risk_summary(
         "現場担当者がすぐ確認すべき順に短く書いてください。\n"
         f"現場一覧: {body.sites}"
     )
-    return await _assist_with_claude(prompt, fallback)
+    result = await _assist_with_claude(prompt, fallback)
+    _record_ai_usage(_LAST_USAGE_TOKENS)
+    await _audit_ai_request(
+        db, _current_user, "/ai/risk-summary",
+        model=_get_model(), analysis_type=result.analysis_type,
+        usage_tokens=_LAST_USAGE_TOKENS,
+    )
+    return result
 
 
 @router.post("/ai/report-comment", response_model=AiAssistResponse)
 async def report_comment(
     body: AiReportCommentRequest,
     _current_user: UserInfo = Depends(get_current_user),
+    db: AsyncSession | None = Depends(get_db),
 ) -> AiAssistResponse:
+    _check_ai_budget()
     fallback = _fallback_report_comment(body)
     prompt = (
         "施工支援システムのレポート総括コメントを日本語で作成してください。\n"
@@ -938,14 +1067,23 @@ async def report_comment(
         "AIは補助コメントであり、正式報告前に担当者確認が必要です。\n"
         f"レポート条件: {body.model_dump()}"
     )
-    return await _assist_with_claude(prompt, fallback)
+    result = await _assist_with_claude(prompt, fallback)
+    _record_ai_usage(_LAST_USAGE_TOKENS)
+    await _audit_ai_request(
+        db, _current_user, "/ai/report-comment",
+        model=_get_model(), analysis_type=result.analysis_type,
+        usage_tokens=_LAST_USAGE_TOKENS,
+    )
+    return result
 
 
 @router.post("/ai/anomaly-detect", response_model=AiAssistResponse)
 async def anomaly_detect(
     body: AiAnomalyDetectRequest,
     _current_user: UserInfo = Depends(get_current_user),
+    db: AsyncSession | None = Depends(get_db),
 ) -> AiAssistResponse:
+    _check_ai_budget()
     fallback = _fallback_anomaly_detection(body.observations)
     prompt = (
         "以下の観測値について、急変・欠損・外部APIの違和感を日本語で確認してください。\n"
@@ -953,14 +1091,23 @@ async def anomaly_detect(
         f"取得元注記: {body.source_note}\n"
         f"観測値: {body.observations}"
     )
-    return await _assist_with_claude(prompt, fallback)
+    result = await _assist_with_claude(prompt, fallback)
+    _record_ai_usage(_LAST_USAGE_TOKENS)
+    await _audit_ai_request(
+        db, _current_user, "/ai/anomaly-detect",
+        model=_get_model(), analysis_type=result.analysis_type,
+        usage_tokens=_LAST_USAGE_TOKENS,
+    )
+    return result
 
 
 @router.post("/ai/chat", response_model=AiAssistResponse)
 async def ai_chat(
     body: AiChatRequest,
     _current_user: UserInfo = Depends(get_current_user),
+    db: AsyncSession | None = Depends(get_db),
 ) -> AiAssistResponse:
+    _check_ai_budget()
     fallback = _fallback_chat(body)
     prompt = (
         "あなたは海洋土木向け気象・海象施工支援システムの補助AIです。\n"
@@ -970,4 +1117,11 @@ async def ai_chat(
         f"質問: {body.question}\n"
         f"画面コンテキスト: {body.context}"
     )
-    return await _assist_with_claude(prompt, fallback, max_tokens=900)
+    result = await _assist_with_claude(prompt, fallback, max_tokens=900)
+    _record_ai_usage(_LAST_USAGE_TOKENS)
+    await _audit_ai_request(
+        db, _current_user, "/ai/chat",
+        model=_get_model(), analysis_type=result.analysis_type,
+        usage_tokens=_LAST_USAGE_TOKENS,
+    )
+    return result

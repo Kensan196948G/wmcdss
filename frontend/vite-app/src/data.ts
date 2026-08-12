@@ -54,20 +54,20 @@ export interface Site {
 }
 
 export interface WeatherSample {
-  temp: number;
-  hum: number;
-  wind: number;
-  windDir: CompassDir;
-  rain: number;
-  pressure: number;
+  temp: number | null;
+  hum: number | null;
+  wind: number | null;
+  windDir: CompassDir | null;
+  rain: number | null;
+  pressure: number | null;
 }
 
 export interface MarineSample {
-  waveHeight: number;
-  wavePeriod: number;
-  waveDir: CompassDir;
-  tide: string;
-  tideLevel: number;
+  waveHeight: number | null;
+  wavePeriod: number | null;
+  waveDir: CompassDir | null;
+  tide: string | null;
+  tideLevel: number | null;
 }
 
 export interface ForecastDay {
@@ -2722,35 +2722,39 @@ export function getDecision(site: Site): DecisionResult {
   const reasons: string[] = [];
   let status: Status = "ok";
 
-  if (w.wind > site.thresholds.windSpeed) {
+  const wind = w.wind ?? 0;
+  const rain = w.rain ?? 0;
+  const temp = w.temp ?? 15;
+  if (wind > site.thresholds.windSpeed) {
     status = "danger";
     reasons.push(
-      `風速 ${w.wind}m/s が基準値 ${site.thresholds.windSpeed}m/s を超過`,
+      `風速 ${wind}m/s が基準値 ${site.thresholds.windSpeed}m/s を超過`,
     );
-  } else if (w.wind > site.thresholds.windSpeed * 0.8) {
+  } else if (wind > site.thresholds.windSpeed * 0.8) {
     if (status === "ok") status = "warn";
-    reasons.push(`風速 ${w.wind}m/s が基準値に接近中`);
+    reasons.push(`風速 ${wind}m/s が基準値に接近中`);
   }
-  if (w.rain > site.thresholds.rainfall) {
+  if (rain > site.thresholds.rainfall) {
     status = "danger";
     reasons.push(
-      `降水量 ${w.rain}mm が基準値 ${site.thresholds.rainfall}mm を超過`,
+      `降水量 ${rain}mm が基準値 ${site.thresholds.rainfall}mm を超過`,
     );
   }
-  if (w.temp < site.thresholds.tempLow) {
+  if (temp < site.thresholds.tempLow) {
     if (status === "ok") status = "warn";
-    reasons.push(`気温 ${w.temp}℃ が下限 ${site.thresholds.tempLow}℃ を下回る`);
+    reasons.push(`気温 ${temp}℃ が下限 ${site.thresholds.tempLow}℃ を下回る`);
   }
   // Wave checks only apply when site has a marine threshold AND has marine data.
   // The original .jsx relied on `undefined > undefined === false`; here we gate explicitly.
   const waveLimit = site.thresholds.waveHeight;
   if (m && waveLimit !== null) {
-    if (m.waveHeight > waveLimit) {
+    const wave = m.waveHeight ?? 0;
+    if (wave > waveLimit) {
       status = "danger";
-      reasons.push(`有義波高 ${m.waveHeight}m が基準値 ${waveLimit}m を超過`);
-    } else if (m.waveHeight > waveLimit * 0.8) {
+      reasons.push(`有義波高 ${wave}m が基準値 ${waveLimit}m を超過`);
+    } else if (wave > waveLimit * 0.8) {
       if (status === "ok") status = "warn";
-      reasons.push(`有義波高 ${m.waveHeight}m が基準値に接近中`);
+      reasons.push(`有義波高 ${wave}m が基準値に接近中`);
     }
   }
   if (reasons.length === 0)

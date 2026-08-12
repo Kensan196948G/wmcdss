@@ -9,8 +9,12 @@
 // This is the first caller that *consumes* charts.tsx via ESM named import,
 // validating the dual-surface contract beyond the type-only App.jsx reference.
 
-import { useMemo, useState, useCallback, type FC } from 'react';
+import { useEffect, useMemo, useState, useCallback, type FC } from 'react';
 import { LineChart } from './charts';
+import {
+  backendConnected,
+  requestDecisionFromBackend,
+} from './api';
 
 function nowJSTLabel(): string {
   return new Date().toLocaleString('ja-JP', {
@@ -51,6 +55,113 @@ interface AiAssistResponse {
   recommendations: string[];
   analysis_type: string;
   disclaimer: string;
+}
+
+// ---------------------------------------------------------------------------
+// 実データ判定（バックエンド /decisions）用のヘルパー
+// ---------------------------------------------------------------------------
+
+interface SnapshotRule {
+  work_type: string;
+  metric: string;
+  op: string;
+  value: number;
+  severity: 'warn' | 'stop';
+  note?: string | null;
+  observed?: number | null;
+}
+
+interface BackendDecision {
+  status: 'go' | 'caution' | 'stop';
+  reason: string;
+  inputs: Record<string, number | null>;
+  thresholds_snapshot: {
+    rules?: SnapshotRule[];
+    unevaluated?: SnapshotRule[];
+  };
+}
+
+const METRIC_LABELS: Record<string, string> = {
+  wind_speed_ms: '風速',
+  wind_gust_ms: '最大瞬間風速',
+  precip_mm_1h: '降水量',
+  temperature_c: '気温',
+  humidity_pct: '湿度',
+  sig_wave_h_m: '有義波高',
+  wave_period_s: '波周期',
+};
+
+const METRIC_UNITS: Record<string, string> = {
+  wind_speed_ms: 'm/s',
+  wind_gust_ms: 'm/s',
+  precip_mm_1h: 'mm/h',
+  temperature_c: '℃',
+  humidity_pct: '%',
+  sig_wave_h_m: 'm',
+  wave_period_s: '秒',
+};
+
+function decisionStatusToCheck(status: 'go' | 'caution' | 'stop'): Status {
+  return status === 'stop' ? 'danger' : status === 'caution' ? 'warn' : 'ok';
+}
+
+function snapshotChecks(
+  snapshot: BackendDecision['thresholds_snapshot'],
+): CheckItemProps[] {
+  const out: CheckItemProps[] = [];
+  const seen = new Set<string>();
+  for (const rule of snapshot.rules ?? []) {
+    const key = `${rule.metric}:${rule.severity}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({
+      label: `${METRIC_LABELS[rule.metric] ?? rule.metric}`,
+      value: rule.observed ?? '欠測',
+      unit: METRIC_UNITS[rule.metric] ?? '',
+      threshold: rule.value,
+      status: rule.severity === 'stop' ? 'danger' : 'warn',
+      thresholdUnit: METRIC_UNITS[rule.metric] ?? '',
+    });
+  }
+  for (const rule of snapshot.unevaluated ?? []) {
+    out.push({
+      label: `${METRIC_LABELS[rule.metric] ?? rule.metric}（欠測）`,
+      value: '—',
+      unit: METRIC_UNITS[rule.metric] ?? '',
+      threshold: rule.value,
+      status: 'warn',
+    });
+  }
+  return out;
+}
+
+function inputsToWeather(
+  inputs: Record<string, number | null>,
+): { temp: number | null; hum: number | null; wind: number | null; rain: number | null } {
+  return {
+    temp: inputs.temperature_c ?? null,
+    hum: inputs.humidity_pct ?? null,
+    wind: inputs.wind_speed_ms ?? null,
+    rain: inputs.precip_mm_1h ?? null,
+  };
+}
+
+function inputsToMarine(
+  inputs: Record<string, number | null>,
+): {
+  waveHeight: number | null;
+  wavePeriod: number | null;
+  waveDir: string | null;
+  tide: string | null;
+  tideLevel: number | null;
+} {
+  return {
+    waveHeight: inputs.sig_wave_h_m ?? null,
+    wavePeriod: inputs.wave_period_s ?? null,
+    waveDir: null,
+    tide: null,
+    tideLevel: null,
+  };
 }
 
 async function postAiAssist(path: string, payload: unknown): Promise<AiAssistResponse> {
@@ -95,7 +206,7 @@ const AiAssistPanel: FC<{ title: string; result: AiAssistResponse | null }> = ({
 
 export interface CheckItemProps {
   label: string;
-  value: number;
+  value: number | string;
   unit: string;
   threshold: number;
   thresholdUnit?: string;
@@ -194,11 +305,47 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
   const [aiAudience, setAiAudience] = useState<'field' | 'manager'>('field');
   const [windowAiResult, setWindowAiResult] = useState<AiAssistResponse | null>(null);
   const [windowAiLoading, setWindowAiLoading] = useState(false);
+  const [backendDecision, setBackendDecision] = useState<BackendDecision | null>(null);
+  const [decisionLoading, setDecisionLoading] = useState(false);
   const site: Site = SITES.find((s) => s.id === siteId) || SITES[0];
-  const w = generateWeather(site.id);
+  const live = backendDecision != null;
+  const w = live
+    ? inputsToWeather(backendDecision.inputs)
+    : (generateWeather(site.id) as unknown as {
+        temp: number; hum: number; wind: number; rain: number;
+      });
+  // チェック表・養生メモ用の非 null ビュー（実データ欠測時は安全側の代替値）
+  const wv = {
+    temp: w.temp ?? 15,
+    hum: w.hum ?? 60,
+    wind: w.wind ?? 0,
+    rain: w.rain ?? 0,
+  };
   // getDecision is kept for parity with the legacy page (used elsewhere in props
   // chains); the local concreteChecks below produce the displayed status.
   void getDecision(site);
+
+  const loadDecision = useCallback(async () => {
+    if (!backendConnected()) return;
+    setDecisionLoading(true);
+    try {
+      const raw = (await requestDecisionFromBackend({
+        siteId: site.id,
+        workType: 'concrete',
+      })) as BackendDecision;
+      setBackendDecision(raw);
+    } catch {
+      setBackendDecision(null);
+    } finally {
+      setDecisionLoading(false);
+    }
+  }, [site.id]);
+
+  useEffect(() => {
+    if (backendConnected()) {
+      void loadDecision();
+    }
+  }, [loadDecision]);
 
   const handleAiAnalyze = useCallback(async () => {
     setAiLoading(true);
@@ -228,7 +375,8 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
     }
   }, [aiAudience, site.id, site.thresholds, w.temp, w.hum, w.wind, w.rain]);
 
-  const getCheckStatus = (val: number, thresh: number, invert = false): CheckStatus => {
+  const getCheckStatus = (val: number | null, thresh: number, invert = false): CheckStatus => {
+    if (val == null) return 'warn';
     if (invert) return val < thresh ? 'danger' : val < thresh * 1.2 ? 'warn' : 'ok';
     return val > thresh ? 'danger' : val > thresh * 0.8 ? 'warn' : 'ok';
   };
@@ -253,56 +401,60 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
     }
   };
 
-  const concreteChecks: CheckItemProps[] = [
-    {
-      label: '降水量',
-      value: w.rain,
-      unit: 'mm/h',
-      threshold: site.thresholds.rainfall,
-      status: getCheckStatus(w.rain, site.thresholds.rainfall),
-    },
-    {
-      label: '風速',
-      value: w.wind,
-      unit: 'm/s',
-      threshold: site.thresholds.windSpeed,
-      status: getCheckStatus(w.wind, site.thresholds.windSpeed),
-    },
-    {
-      label: '気温（下限）',
-      value: w.temp,
-      unit: '℃',
-      threshold: site.thresholds.tempLow,
-      status:
-        w.temp < site.thresholds.tempLow
-          ? 'danger'
-          : w.temp < site.thresholds.tempLow + 2
-          ? 'warn'
-          : 'ok',
-    },
-    {
-      label: '気温（上限）',
-      value: w.temp,
-      unit: '℃',
-      threshold: site.thresholds.tempHigh,
-      status:
-        w.temp > site.thresholds.tempHigh
-          ? 'danger'
-          : w.temp > site.thresholds.tempHigh - 3
-          ? 'warn'
-          : 'ok',
-    },
-    {
-      label: '湿度',
-      value: w.hum,
-      unit: '%',
-      threshold: 85,
-      thresholdUnit: '% 以下',
-      status: w.hum > 85 ? 'warn' : 'ok',
-    },
-  ];
+  const concreteChecks: CheckItemProps[] = live
+    ? snapshotChecks(backendDecision.thresholds_snapshot)
+    : [
+        {
+          label: '降水量',
+          value: wv.rain,
+          unit: 'mm/h',
+          threshold: site.thresholds.rainfall,
+          status: getCheckStatus(wv.rain, site.thresholds.rainfall),
+        },
+        {
+          label: '風速',
+          value: wv.wind,
+          unit: 'm/s',
+          threshold: site.thresholds.windSpeed,
+          status: getCheckStatus(wv.wind, site.thresholds.windSpeed),
+        },
+        {
+          label: '気温（下限）',
+          value: wv.temp,
+          unit: '℃',
+          threshold: site.thresholds.tempLow,
+          status:
+            wv.temp < site.thresholds.tempLow
+              ? 'danger'
+              : wv.temp < site.thresholds.tempLow + 2
+              ? 'warn'
+              : 'ok',
+        },
+        {
+          label: '気温（上限）',
+          value: wv.temp,
+          unit: '℃',
+          threshold: site.thresholds.tempHigh,
+          status:
+            wv.temp > site.thresholds.tempHigh
+              ? 'danger'
+              : wv.temp > site.thresholds.tempHigh - 3
+              ? 'warn'
+              : 'ok',
+        },
+        {
+          label: '湿度',
+          value: wv.hum,
+          unit: '%',
+          threshold: 85,
+          thresholdUnit: '% 以下',
+          status: wv.hum > 85 ? 'warn' : 'ok',
+        },
+      ];
 
-  const overallStatus: CheckStatus = concreteChecks.some((c) => c.status === 'danger')
+  const overallStatus: CheckStatus = live
+    ? decisionStatusToCheck(backendDecision.status)
+    : concreteChecks.some((c) => c.status === 'danger')
     ? 'danger'
     : concreteChecks.some((c) => c.status === 'warn')
     ? 'warn'
@@ -358,7 +510,9 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
           <button className="btn btn-sm" onClick={handleWorkWindowAi} disabled={windowAiLoading}>
             {windowAiLoading ? '提案中...' : 'AI時間帯提案'}
           </button>
-          <button className="btn btn-sm btn-primary">🔄 再判定</button>
+          <button className="btn btn-sm btn-primary" onClick={() => { void loadDecision(); }} disabled={decisionLoading}>
+            {decisionLoading ? '判定中...' : '🔄 再判定'}
+          </button>
         </div>
       </div>
       <AiAssistPanel title="作業計画 AI時間帯提案" result={windowAiResult} />
@@ -373,11 +527,19 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
               コンクリート打設判定：
               {overallStatus === 'ok' ? '施工可' : overallStatus === 'warn' ? '注意' : '中止推奨'}
             </div>
-            <div className="decision-sub">{site.shortName} ／ {nowJSTLabel()}</div>
+            <div className="decision-sub">
+              {site.shortName} ／ {nowJSTLabel()}
+              {live && <span className="badge badge-info" style={{ marginLeft: 8 }}>実データ判定</span>}
+              {live && backendConnected() && (
+                <span className="badge badge-warn" style={{ marginLeft: 4 }}>バックエンド接続</span>
+              )}
+            </div>
           </div>
         </div>
         <div className="decision-body">
-          <div className={`reason-text ${overallStatus}`}>{recommendations[overallStatus]}</div>
+          <div className={`reason-text ${overallStatus}`} style={{ whiteSpace: 'pre-wrap' }}>
+            {live ? backendDecision.reason : recommendations[overallStatus]}
+          </div>
         </div>
       </div>
 
@@ -496,19 +658,19 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
             <div style={{ fontSize: 13, lineHeight: 1.8, color: 'var(--text-secondary)' }}>
               <div style={{ marginBottom: 8 }}>
                 <span style={{ fontWeight: 600, color: 'var(--text)' }}>推奨養生期間：</span>
-                {w.temp >= 15 ? '5日以上' : w.temp >= 10 ? '7日以上' : '9日以上'}
+                {wv.temp >= 15 ? '5日以上' : wv.temp >= 10 ? '7日以上' : '9日以上'}
               </div>
               <div style={{ marginBottom: 8 }}>
                 <span style={{ fontWeight: 600, color: 'var(--text)' }}>暑中対策：</span>
-                {w.temp >= 30 ? '必要（散水養生・遮光シート推奨）' : '不要'}
+                {wv.temp >= 30 ? '必要（散水養生・遮光シート推奨）' : '不要'}
               </div>
               <div style={{ marginBottom: 8 }}>
                 <span style={{ fontWeight: 600, color: 'var(--text)' }}>寒中対策：</span>
-                {w.temp < 5 ? '必要（保温養生・給熱推奨）' : '不要'}
+                {wv.temp < 5 ? '必要（保温養生・給熱推奨）' : '不要'}
               </div>
               <div>
                 <span style={{ fontWeight: 600, color: 'var(--text)' }}>練混ぜ水温度：</span>
-                {w.temp < 10 ? '40℃以下で加温推奨' : '常温で可'}
+                {wv.temp < 10 ? '40℃以下で加温推奨' : '常温で可'}
               </div>
             </div>
           </div>
@@ -524,16 +686,17 @@ export interface MarineWorkPageProps {
 
 interface WorkType {
   type: string;
+  backendKey: string;
   waveLimit: number;
   windLimit: number;
 }
 
 const WORK_TYPES: WorkType[] = [
-  { type: 'クレーン船作業', waveLimit: 0.8, windLimit: 10 },
-  { type: '潜水作業', waveLimit: 0.5, windLimit: 8 },
-  { type: '台船据付', waveLimit: 1.0, windLimit: 12 },
-  { type: '資材運搬船', waveLimit: 1.5, windLimit: 15 },
-  { type: '測量船作業', waveLimit: 0.7, windLimit: 8 },
+  { type: 'クレーン船作業', backendKey: 'crane', waveLimit: 0.8, windLimit: 10 },
+  { type: '潜水作業', backendKey: 'marine_dive', waveLimit: 0.5, windLimit: 8 },
+  { type: '台船据付', backendKey: 'marine_lift', waveLimit: 1.0, windLimit: 12 },
+  { type: '資材運搬船', backendKey: 'marine_transport', waveLimit: 1.5, windLimit: 15 },
+  { type: '測量船作業', backendKey: 'marine_lift', waveLimit: 0.7, windLimit: 8 },
 ];
 
 export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
@@ -548,9 +711,68 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
   const [aiAudience, setAiAudience] = useState<'field' | 'manager'>('field');
   const [windowAiResult, setWindowAiResult] = useState<AiAssistResponse | null>(null);
   const [windowAiLoading, setWindowAiLoading] = useState(false);
+  const [backendDecisions, setBackendDecisions] = useState<BackendDecision[] | null>(null);
+  const [decisionLoading, setDecisionLoading] = useState(false);
   const site = marineSites.find((s) => s.id === siteId) || marineSites[0];
-  const w = site ? generateWeather(site.id) : null;
-  const m = site ? generateMarine(site.id) : null;
+
+  const loadDecisions = useCallback(async () => {
+    if (!site || !backendConnected()) return;
+    setDecisionLoading(true);
+    try {
+      const results = await Promise.all(
+        WORK_TYPES.map(async (wt) => {
+          try {
+            return (await requestDecisionFromBackend({
+              siteId: site.id,
+              workType: wt.backendKey,
+            })) as BackendDecision;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      setBackendDecisions(results.filter((r): r is BackendDecision => r != null));
+    } catch {
+      setBackendDecisions(null);
+    } finally {
+      setDecisionLoading(false);
+    }
+  }, [site?.id]);
+
+  useEffect(() => {
+    if (backendConnected()) {
+      void loadDecisions();
+    }
+  }, [loadDecisions]);
+
+  const live = backendDecisions != null && backendDecisions.length > 0;
+  const worstDecision = live
+    ? backendDecisions.reduce<BackendDecision | null>((acc, d) => {
+        const rank: Record<string, number> = { go: 0, caution: 1, stop: 2 };
+        if (!acc || rank[d.status] > rank[acc.status]) return d;
+        return acc;
+      }, null)
+    : null;
+  const w = live && worstDecision
+    ? inputsToWeather(worstDecision.inputs)
+    : site
+      ? generateWeather(site.id)
+      : null;
+  const m = live && worstDecision
+    ? inputsToMarine(worstDecision.inputs)
+    : site
+      ? (generateMarine(site.id) as unknown as {
+          waveHeight: number; wavePeriod: number; waveDir: string; tide: string; tideLevel: number;
+        } | null)
+      : null;
+  // チェック表・作業種別表用の非 null ビュー（欠測時は安全側の代替値）
+  const mv = {
+    waveHeight: m?.waveHeight ?? 0,
+    wavePeriod: m?.wavePeriod ?? 0,
+    waveDir: m?.waveDir ?? '—',
+    tide: m?.tide ?? '—',
+    tideLevel: m?.tideLevel ?? 0,
+  };
 
   const hourlyWave = useMemo(() => generateHourlyWave(), [siteId]);
 
@@ -630,44 +852,48 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
     );
   }
 
-  const marineChecks: CheckItemProps[] = [
-    {
-      label: '有義波高',
-      value: m.waveHeight,
-      unit: 'm',
-      threshold: waveLimit,
-      status: m.waveHeight > waveLimit ? 'danger' : m.waveHeight > waveLimit * 0.8 ? 'warn' : 'ok',
-    },
-    {
-      label: '風速',
-      value: w.wind,
-      unit: 'm/s',
-      threshold: site.thresholds.windSpeed,
-      status:
-        w.wind > site.thresholds.windSpeed
-          ? 'danger'
-          : w.wind > site.thresholds.windSpeed * 0.8
-          ? 'warn'
-          : 'ok',
-    },
-    {
-      label: '波周期',
-      value: m.wavePeriod,
-      unit: '秒',
-      threshold: 8,
-      thresholdUnit: '秒 以下',
-      status: m.wavePeriod > 8 ? 'warn' : 'ok',
-    },
-    {
-      label: '降水量',
-      value: w.rain,
-      unit: 'mm/h',
-      threshold: site.thresholds.rainfall,
-      status: w.rain > site.thresholds.rainfall ? 'danger' : 'ok',
-    },
-  ];
+  const marineChecks: CheckItemProps[] = live && worstDecision
+    ? snapshotChecks(worstDecision.thresholds_snapshot)
+    : [
+        {
+          label: '有義波高',
+          value: mv.waveHeight,
+          unit: 'm',
+          threshold: waveLimit,
+          status: mv.waveHeight > waveLimit ? 'danger' : mv.waveHeight > waveLimit * 0.8 ? 'warn' : 'ok',
+        },
+        {
+          label: '風速',
+          value: w.wind ?? 0,
+          unit: 'm/s',
+          threshold: site.thresholds.windSpeed,
+          status:
+            (w.wind ?? 0) > site.thresholds.windSpeed
+              ? 'danger'
+              : (w.wind ?? 0) > site.thresholds.windSpeed * 0.8
+              ? 'warn'
+              : 'ok',
+        },
+        {
+          label: '波周期',
+          value: mv.wavePeriod,
+          unit: '秒',
+          threshold: 8,
+          thresholdUnit: '秒 以下',
+          status: mv.wavePeriod > 8 ? 'warn' : 'ok',
+        },
+        {
+          label: '降水量',
+          value: w.rain ?? 0,
+          unit: 'mm/h',
+          threshold: site.thresholds.rainfall,
+          status: (w.rain ?? 0) > site.thresholds.rainfall ? 'danger' : 'ok',
+        },
+      ];
 
-  const overallStatus: CheckStatus = marineChecks.some((c) => c.status === 'danger')
+  const overallStatus: CheckStatus = live && worstDecision
+    ? decisionStatusToCheck(worstDecision.status)
+    : marineChecks.some((c) => c.status === 'danger')
     ? 'danger'
     : marineChecks.some((c) => c.status === 'warn')
     ? 'warn'
@@ -722,7 +948,13 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
           <button className="btn btn-sm" onClick={handleWorkWindowAi} disabled={windowAiLoading}>
             {windowAiLoading ? '提案中...' : 'AI時間帯提案'}
           </button>
-          <button className="btn btn-sm btn-primary">🔄 再判定</button>
+          <button
+            className="btn btn-sm btn-primary"
+            onClick={() => { void loadDecisions(); }}
+            disabled={decisionLoading}
+          >
+            {decisionLoading ? '判定中...' : '🔄 再判定'}
+          </button>
         </div>
       </div>
       <AiAssistPanel title="作業計画 AI時間帯提案" result={windowAiResult} />
@@ -739,11 +971,14 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
             </div>
             <div className="decision-sub">
               {site.shortName} ／ 観測点: {site.marinePoint} ／ {nowJSTLabel()}
+              {live && <span className="badge badge-info" style={{ marginLeft: 8 }}>実データ判定</span>}
             </div>
           </div>
         </div>
         <div className="decision-body">
-          <div className={`reason-text ${overallStatus}`}>{recommendations[overallStatus]}</div>
+          <div className={`reason-text ${overallStatus}`} style={{ whiteSpace: 'pre-wrap' }}>
+            {live && worstDecision ? worstDecision.reason : recommendations[overallStatus]}
+          </div>
         </div>
       </div>
 
@@ -854,16 +1089,18 @@ export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
             </thead>
             <tbody>
               {WORK_TYPES.map((work, i) => {
+                const waveH = mv.waveHeight;
+                const windS = w.wind ?? 0;
                 const wSt: CheckStatus =
-                  m.waveHeight > work.waveLimit
+                  waveH > work.waveLimit
                     ? 'danger'
-                    : m.waveHeight > work.waveLimit * 0.8
+                    : waveH > work.waveLimit * 0.8
                     ? 'warn'
                     : 'ok';
                 const windSt: CheckStatus =
-                  w.wind > work.windLimit
+                  windS > work.windLimit
                     ? 'danger'
-                    : w.wind > work.windLimit * 0.8
+                    : windS > work.windLimit * 0.8
                     ? 'warn'
                     : 'ok';
                 const st: CheckStatus =
