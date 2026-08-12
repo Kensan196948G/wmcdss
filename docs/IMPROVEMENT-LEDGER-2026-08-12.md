@@ -26,13 +26,14 @@
 | I17 | 運用 | バックアップ外部退避（scp/rclone）、`wmcdss-healthcheck.sh`（/readyz+バックアップ鮮度）、RTO/RPO・監視・簡易Runbook（docs/OPERATIONS） | shell syntax + 異常系終了コード確認 |
 | I18 | 判断資料 | デプロイ先比較（社内 vs Cloudflare+Neon）と GitHub 復旧選択肢を文書化 | docs/DEPLOYMENT-OPTIONS / GITHUB-RECOVERY |
 | I19 | 通知 | 直近24時間の警戒・中止判定ダイジェスト（Webhook/SMTP・未設定時no-op・日次タイマー・ETL job 4） | backend テスト（digest/送信経路/ジョブ） |
+| I20 | 統合 | GitHub wmcdss private 再作成・履歴 push・PR #1。CWW-D 統合を承認、NOWPHASコレクタ・鮮度ガード・評価文書を移植（CWW-D backend 471 passed） | GitHub / CWW-D 検証 |
 
 ## 残課題（優先順）
 
 | ID | 内容 | 理由 | 計画 |
 |---|---|---|---|
-| R1 | GitHub リポジトリ404（push/PR/CI 不能） | リポジトリが存在しない（要ユーザー判断） | 選択肢を docs/GITHUB-RECOVERY-2026-08-12.md に整理。再作成は承認後1コマンド |
-| R2 | 本番デプロイ先未確定（社内サーバー or Cloudflare/Neon） | 一意特定できない | docs/DEPLOYMENT-OPTIONS-2026-08-12.md 参照。後継 CWW-D への統合を推奨 |
+| ~~R1~~ | ~~GitHub リポジトリ404~~ | **解消**（2026-08-12 ユーザー承認で private 再作成・push 完了） | PR #1 |
+| ~~R2~~ | ~~本番デプロイ先未確定~~ | **解消**（CWW-D 統合を選択、Cloudflare+Neon 継続） | CWW-D PR |
 | R3 | JMA波浪データ源の破損（URL404・観測局更新停止） | 外部要因。NOWPHAS 統合が Phase 3 | Phase 3 で NOWPHAS/有償 Open-Meteo へ |
 | R4 | Open-Meteo 無料版は非商用限定 | ライセンス | 有償契約 or JMA/NOWPHAS 切替 |
 | R5 | 予報業務許可の要否未確認 | 法令 | 法務確認（Phase 3） |
