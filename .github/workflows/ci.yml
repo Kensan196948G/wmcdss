@@ -297,4 +297,4 @@ jobs:
           gitleaks version
 
       - name: Run gitleaks scan (full history)
-        run: gitleaks git --no-banner --redact --verbose
+        run: gitleaks git --no-banner --redact --verbose --config .gitleaks.toml
