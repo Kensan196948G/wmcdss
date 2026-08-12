@@ -4,6 +4,11 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
+最終更新（2026-08-13 CI 実証・マージ）: **2026-08-13**（PR #1 全10チェック成功 → **squash merge 完了**
+（`e200207`）／ backend smoke・E2E・gitleaks（フルヒストリ no leaks）を含む CI 全 green ／
+Dependabot の更新 PR が自動起票された状態 ／ CWW-D 統合 PR #141（NOWPHAS）は全5チェック成功・
+**マージ判定待ち（Y / N）**）
+
 最終更新（2026-08-12 ユーザー判断・統合）: **2026-08-12**（**GitHub リポジトリ再作成・履歴保全完了**
 — Kensan196948G/wmcdss private 新規作成、main + feat/2026-08-12-production-assessment を push、
 PR #1 作成・CI 実行中 ／ **デプロイ先・開発方針: CWW-D（Civil-Weather-Water-Decision）へ統合**を承認
