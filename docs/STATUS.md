@@ -4,6 +4,11 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
+最終更新（2026-08-13 CWW-D 統合完了）: **2026-08-13**（CWW-D PR #141（NOWPHAS統合）**マージ済み**
+（`5e8ab27`）→ main CI の flaky（テスト壁時計依存）を PR #143 で修正・**マージ済み**（`9b6ef71`）
+→ **CWW-D main CI 全5ジョブ成功を確認** ／ Phase 2 バックログは CWW-D Issue #142 に登録 ／
+WMCDSS 側は GitHub private 再作成・PR #1/#8 マージ済みで履歴保全は完了）
+
 最終更新（2026-08-13 CI 実証・マージ）: **2026-08-13**（PR #1 全10チェック成功 → **squash merge 完了**
 （`e200207`）／ backend smoke・E2E・gitleaks（フルヒストリ no leaks）を含む CI 全 green ／
 Dependabot の更新 PR が自動起票された状態 ／ CWW-D 統合 PR #141（NOWPHAS）は全5チェック成功・
