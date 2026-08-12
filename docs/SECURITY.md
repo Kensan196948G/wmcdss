@@ -5,12 +5,19 @@
 | 想定脅威 | 緩和策 |
 |---|---|
 | 観測値・閾値の改竄 | mutation エンドポイントは `X-API-Key` 必須 |
+| 業務データ（現場・判定基準・観測値）の無認証参照 | 全業務APIで JWT 必須（2026-08-12 実装。APIキーは機械連携の書き込み用） |
+| 権限逸脱（協力会社による管理操作） | RBAC: `role` クレーム（field/hq/admin）+ route 依存による 403 |
+| 操作者の不明化 | `actor_from()` は JWT sub を最優先。X-Actor は API キー連携時のみ |
 | 認証失敗の網羅試行 | `hmac.compare_digest` で timing oracle を遮断 |
 | ブラウザからの認証エラー読み取り不能 | CORS が auth より先に実行されるよう middleware 登録順を制御 |
 | 操作者の不明化 | mutation 成功時に `audit_log(actor, action, detail)` を必ず記録 |
 | ローカル開発時の摩擦 | `api_keys = []` で認証無効化を可能（本番では必ず設定） |
 
 ## 2. API Key 認証の実装ポイント
+
+> **2026-08-12 追記**: 読み取り系（GET）も `get_current_user_or_anon` /
+> `require_*` 依存で保護する。本番（api_keys 設定済み）では Bearer JWT または
+> X-API-Key が無い GET は 401。開発モード（api_keys 空）のみ無認証を許容する。
 
 `backend/app/core/security.py`
 

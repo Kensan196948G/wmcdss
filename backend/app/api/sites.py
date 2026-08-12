@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import UserInfo, get_current_user_or_anon, require_admin_or_api_key
 from app.core.security import actor_from
 from app.db.session import get_db
 from app.models.site import Site
@@ -12,7 +13,10 @@ router = APIRouter(prefix="/sites", tags=["sites"])
 
 
 @router.get("", response_model=list[SiteOut])
-async def list_sites(db: AsyncSession = Depends(get_db)):
+async def list_sites(
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
+    db: AsyncSession = Depends(get_db),
+):
     rows = (await db.execute(select(Site).order_by(Site.code))).scalars().all()
     return rows
 
@@ -21,6 +25,7 @@ async def list_sites(db: AsyncSession = Depends(get_db)):
 async def create_site(
     payload: SiteCreate,
     request: Request,
+    _admin: UserInfo = Depends(require_admin_or_api_key),
     db: AsyncSession = Depends(get_db),
 ):
     if (await db.execute(select(Site).where(Site.code == payload.code))).scalar_one_or_none():
@@ -40,7 +45,11 @@ async def create_site(
 
 
 @router.get("/{site_id}", response_model=SiteOut)
-async def get_site(site_id: str, db: AsyncSession = Depends(get_db)):
+async def get_site(
+    site_id: str,
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
+    db: AsyncSession = Depends(get_db),
+):
     site = (await db.execute(select(Site).where(Site.id == site_id))).scalar_one_or_none()
     if not site:
         raise HTTPException(404, "site not found")

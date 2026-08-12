@@ -49,12 +49,20 @@ def hash_password(plain: str) -> str:
 # しているため alg=none による署名回避も従来どおり成立しない。
 # ---------------------------------------------------------------------------
 
-def create_access_token(subject: str, auth_type: str, extra: dict[str, Any] | None = None) -> str:
+def create_access_token(
+    subject: str,
+    auth_type: str,
+    extra: dict[str, Any] | None = None,
+    role: str | None = None,
+) -> str:
     s = get_settings()
     expire = datetime.now(timezone.utc) + timedelta(minutes=s.jwt_expire_minutes)
     payload: dict[str, Any] = {
         "sub": subject,
         "auth_type": auth_type,
+        # ロールは JWT クレームに含める。`role` を明示指定しなければ設定
+        # (WMCDSS_ROLE_USERS / WMCDSS_DEFAULT_ROLE) から解決する。
+        "role": role or s.role_for(subject),
         "exp": expire,
     }
     if extra:

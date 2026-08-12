@@ -57,6 +57,14 @@ Two ingesters are installed side-by-side:
 | `wmcdss-jma-fetch`        | `app.jobs.ingest_jma`        | every 10 min | AMeDAS (land)    |
 | `wmcdss-jma-fetch-marine` | `app.jobs.ingest_jma_marine` | hourly       | JMA wave nowcast |
 
+2026-08-12 追加: JMA 波浪ナウキャストの提供方式変更に伴い、公的データ
+NOWPHAS（国土交通省）取り込みタイマーを追加した。
+
+| Unit                      | Job module                   | Cadence      | Upstream         |
+| ------------------------- | ---------------------------- | ------------ | ---------------- |
+| `wmcdss-nowphas-fetch`    | `app.jobs.ingest_nowphas`    | every 10 min | NOWPHAS (MLIT)   |
+| `wmcdss-notify-digest`    | `app.jobs.notify_digest`     | daily 07:30  | 内部判定ダイジェスト |
+
 The split mirrors the upstream contract — AMeDAS is per-station 10-min cadence,
 wave is gridded hourly. Diverging the timers (instead of one combined job)
 keeps each ingester's failure mode independent in `audit_log`.
@@ -70,9 +78,13 @@ keeps each ingester's failure mode independent in `audit_log`.
 mkdir -p ~/.config/systemd/user
 cp wmcdss-jma-fetch.service        wmcdss-jma-fetch.timer        ~/.config/systemd/user/
 cp wmcdss-jma-fetch-marine.service wmcdss-jma-fetch-marine.timer ~/.config/systemd/user/
+cp wmcdss-nowphas-fetch.service    wmcdss-nowphas-fetch.timer    ~/.config/systemd/user/
+cp wmcdss-notify-digest.service    wmcdss-notify-digest.timer    ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now wmcdss-jma-fetch.timer
 systemctl --user enable --now wmcdss-jma-fetch-marine.timer
+systemctl --user enable --now wmcdss-nowphas-fetch.timer
+systemctl --user enable --now wmcdss-notify-digest.timer
 loginctl enable-linger "$USER"   # keep the timers running after logout
 ```
 

@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import UserInfo, get_current_user
+from app.api.auth import UserInfo, get_current_user_or_anon, require_admin_jwt
 from app.db.session import get_db
 from app.models.audit import AuditLog
 from app.models.observations import MarineObservation, WeatherObservation
@@ -39,6 +39,18 @@ _JOB_META: dict[int, dict[str, str]] = {
         "schedule": "10分毎確認（参考情報・施工判断には使用しない）",
         "module": "app.jobs.ingest_jma_marine",
     },
+    3: {
+        "name": "NOWPHAS海象データ取得",
+        "source": "国土交通省 全国港湾海洋波浪情報網（NOWPHAS・公的データ）",
+        "schedule": "10分毎確認（リアルタイム更新・施工判断に使用）",
+        "module": "app.jobs.ingest_nowphas",
+    },
+    4: {
+        "name": "判定ダイジェスト通知",
+        "source": "内部（直近24時間の警戒・中止判定）",
+        "schedule": "日次",
+        "module": "app.jobs.notify_digest",
+    },
 }
 
 
@@ -49,7 +61,7 @@ _JOB_META: dict[int, dict[str, str]] = {
 @router.post("/run/{job_id}")
 async def run_etl_job(
     job_id: int,
-    current_user: UserInfo = Depends(get_current_user),
+    current_user: UserInfo = Depends(require_admin_jwt),
 ) -> dict[str, Any]:
     """ETL ジョブを手動で開始する。
 
@@ -88,7 +100,10 @@ async def run_etl_job(
 # ---------------------------------------------------------------------------
 
 @router.get("/status")
-async def etl_status(db: AsyncSession = Depends(get_db)) -> dict[str, Any]:
+async def etl_status(
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
     """全 ETL ジョブのステータスを返す。
 
     最新の観測レコードのタイムスタンプからジョブの最終実行を推定する。

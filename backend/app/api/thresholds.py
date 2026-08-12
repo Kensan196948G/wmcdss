@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select, and_, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import UserInfo, get_current_user_or_anon, require_admin_or_api_key
 from app.core.security import actor_from
 from app.db.session import get_db
 from app.models.threshold import Threshold
@@ -27,6 +28,7 @@ router = APIRouter(prefix="/thresholds", tags=["thresholds"])
 async def list_thresholds(
     site_id: uuid.UUID | None = Query(default=None),
     work_type: str | None = Query(default=None),
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
     db: AsyncSession = Depends(get_db),
 ):
     conds = []
@@ -45,7 +47,11 @@ async def list_thresholds(
 
 
 @router.get("/{threshold_id}", response_model=ThresholdOut)
-async def get_threshold(threshold_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_threshold(
+    threshold_id: uuid.UUID,
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
+    db: AsyncSession = Depends(get_db),
+):
     row = (await db.execute(select(Threshold).where(Threshold.id == threshold_id))).scalar_one_or_none()
     if not row:
         raise HTTPException(404, "threshold not found")
@@ -56,6 +62,7 @@ async def get_threshold(threshold_id: uuid.UUID, db: AsyncSession = Depends(get_
 async def create_threshold(
     payload: ThresholdCreate,
     request: Request,
+    _admin: UserInfo = Depends(require_admin_or_api_key),
     db: AsyncSession = Depends(get_db),
 ):
     row = Threshold(**payload.model_dump())
@@ -77,6 +84,7 @@ async def update_threshold(
     threshold_id: uuid.UUID,
     payload: ThresholdUpdate,
     request: Request,
+    _admin: UserInfo = Depends(require_admin_or_api_key),
     db: AsyncSession = Depends(get_db),
 ):
     row = (await db.execute(select(Threshold).where(Threshold.id == threshold_id))).scalar_one_or_none()
@@ -102,6 +110,7 @@ async def update_threshold(
 async def delete_threshold(
     threshold_id: uuid.UUID,
     request: Request,
+    _admin: UserInfo = Depends(require_admin_or_api_key),
     db: AsyncSession = Depends(get_db),
 ):
     row = (await db.execute(select(Threshold).where(Threshold.id == threshold_id))).scalar_one_or_none()

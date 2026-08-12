@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import UserInfo, get_current_user_or_anon, require_machine_client
 from app.core.security import actor_from
 from app.db.session import get_db
 from app.models.observations import WeatherObservation, MarineObservation
@@ -58,6 +59,7 @@ async def _ingest(
 async def ingest_weather(
     payload: list[WeatherObservationIn],
     request: Request,
+    _machine: None = Depends(require_machine_client),
     db: AsyncSession = Depends(get_db),
 ):
     rows = [p.model_dump() for p in payload]
@@ -81,6 +83,7 @@ async def list_weather(
     t0: datetime | None = Query(default=None, description="UTC start; defaults to now-24h"),
     t1: datetime | None = Query(default=None, description="UTC end; defaults to now"),
     limit: int = Query(default=200, le=2000),
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
     db: AsyncSession = Depends(get_db),
 ):
     t1 = t1 or datetime.now(timezone.utc)
@@ -97,7 +100,11 @@ async def list_weather(
 
 
 @router.get("/weather/latest", response_model=WeatherObservationOut)
-async def latest_weather(site_id: uuid.UUID = Query(...), db: AsyncSession = Depends(get_db)):
+async def latest_weather(
+    site_id: uuid.UUID = Query(...),
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
+    db: AsyncSession = Depends(get_db),
+):
     stmt = (
         select(WeatherObservation)
         .where(WeatherObservation.site_id == site_id)
@@ -116,6 +123,7 @@ async def latest_weather(site_id: uuid.UUID = Query(...), db: AsyncSession = Dep
 async def ingest_marine(
     payload: list[MarineObservationIn],
     request: Request,
+    _machine: None = Depends(require_machine_client),
     db: AsyncSession = Depends(get_db),
 ):
     rows = [p.model_dump() for p in payload]
@@ -139,6 +147,7 @@ async def list_marine(
     t0: datetime | None = Query(default=None),
     t1: datetime | None = Query(default=None),
     limit: int = Query(default=200, le=2000),
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
     db: AsyncSession = Depends(get_db),
 ):
     t1 = t1 or datetime.now(timezone.utc)
@@ -155,7 +164,11 @@ async def list_marine(
 
 
 @router.get("/marine/latest", response_model=MarineObservationOut)
-async def latest_marine(site_id: uuid.UUID = Query(...), db: AsyncSession = Depends(get_db)):
+async def latest_marine(
+    site_id: uuid.UUID = Query(...),
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
+    db: AsyncSession = Depends(get_db),
+):
     stmt = (
         select(MarineObservation)
         .where(MarineObservation.site_id == site_id)

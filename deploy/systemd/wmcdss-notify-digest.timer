@@ -1,0 +1,13 @@
+[Unit]
+Description=WMCDSS - run daily decision digest notification
+Documentation=man:systemd.timer(5)
+
+[Timer]
+# 朝礼前に届くよう 07:30 JST に発火（サーバー TZ が Asia/Tokyo 前提）
+OnCalendar=*-*-* 07:30:00
+Persistent=true
+AccuracySec=60s
+Unit=wmcdss-notify-digest.service
+
+[Install]
+WantedBy=timers.target

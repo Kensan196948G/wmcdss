@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.audit import router
-from app.api.auth import UserInfo, get_current_user
+from app.api.auth import UserInfo, require_admin_jwt
 from app.db.session import get_db
 from app.models.audit import AuditLog
 
@@ -70,9 +70,10 @@ def _make_app(fake_db: _FakeDB) -> FastAPI:
     app = _make_guarded_app(fake_db)
 
     async def _current_user() -> UserInfo:
-        return UserInfo(username="tester", display_name="tester", auth_type="local")
+        # 監査ログは admin 専用（RBAC）。挙動テストでは admin として通す。
+        return UserInfo(username="tester", display_name="tester", auth_type="local", role="admin")
 
-    app.dependency_overrides[get_current_user] = _current_user
+    app.dependency_overrides[require_admin_jwt] = _current_user
     return app
 
 

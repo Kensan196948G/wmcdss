@@ -183,7 +183,7 @@ services:
       [
         "sh",
         "-c",
-        "while true; do python -m app.jobs.ingest_jma_marine || true; sleep $${WMCDSS_JMA_MARINE_INTERVAL_SECONDS:-600}; done",
+        "while true; do python -m app.jobs.ingest_jma_marine || true; python -m app.jobs.ingest_nowphas || true; sleep $${WMCDSS_JMA_MARINE_INTERVAL_SECONDS:-600}; done",
       ]
     healthcheck:
       disable: true

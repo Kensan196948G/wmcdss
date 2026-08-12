@@ -13,6 +13,13 @@ WMCDSS は **2種類の認証方式** をサポートする:
 | **一般ログイン** | ローカル管理者アカウント | JWT (HS256) |
 | **Microsoft 365 ログイン** | `@mirai-const.co.jp` 社員 | M365 ROPC + JWT |
 
+> **2026-08-12 改訂（RBAC）**: JWT に `role` クレーム（field / hq / admin）を
+> 含める。ロールは `WMCDSS_ROLE_USERS_RAW`（username:role のカンマ区切り）と
+> `WMCDSS_DEFAULT_ROLE` で解決する。管理操作（現場登録・しきい値変更・ETL実行・
+> 監査ログ・AI設定）は admin、レポートは hq 以上、観測投入は API キー専用。
+> API キー middleware は POST/PATCH/PUT/DELETE を保護し、全業務 API は
+> route 依存の JWT 検証で読み取りも保護する（2 層認証）。
+
 ---
 
 ## アーキテクチャ
@@ -45,8 +52,8 @@ WMCDSS は **2種類の認証方式** をサポートする:
 │  GET  /api/v1/auth/me                                │
 │    → JWT 検証 → ユーザー情報返却                     │
 │                                                      │
-│  JWTAuthMiddleware (既存 APIKeyMiddleware と共存)     │
-│    → Bearer トークン検証 → 未認証なら 401            │
+│  JWT 検証は route 依存 (app/api/auth.py get_current_user)  │
+│    → 全業務APIで JWT 必須（2026-08-12 改訂）          │
 └──────────────────────────────────────────────────────┘
                        ↕
 ┌──────────────────────────────────────────────────────┐
