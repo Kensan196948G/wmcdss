@@ -7,6 +7,8 @@
 #   scripts/wmcdss-db-backup.sh --compose dev      # 開発 compose を対象
 #   scripts/wmcdss-db-backup.sh --keep 14          # 保持世代数を 14 に変更
 #   scripts/wmcdss-db-backup.sh --db-user X --db-name Y   # DB 資格情報を明示
+#   scripts/wmcdss-db-backup.sh --remote user@host:/backup/wmcdss   # scp 退避
+#   scripts/wmcdss-db-backup.sh --rclone-remote b2:wmcdss-backup    # rclone 退避
 #   scripts/wmcdss-db-backup.sh --dry-run          # 実行せずに動作だけ表示
 #
 # cron 例 (毎日 03:30, IT-STAFF.md 推奨に合わせた世代管理 30 日):
@@ -29,6 +31,8 @@ KEEP_GENERATIONS=30
 DRY_RUN=0
 DB_USER=""
 DB_NAME=""
+REMOTE_DIR=""
+RCLONE_REMOTE=""
 
 # --- 引数解析 -------------------------------------------------------------
 usage() {
@@ -61,6 +65,16 @@ while [[ $# -gt 0 ]]; do
     --db-name)
       [[ $# -ge 2 ]] || usage
       DB_NAME="$2"
+      shift 2
+      ;;
+    --remote)
+      [[ $# -ge 2 ]] || usage
+      REMOTE_DIR="$2"
+      shift 2
+      ;;
+    --rclone-remote)
+      [[ $# -ge 2 ]] || usage
+      RCLONE_REMOTE="$2"
       shift 2
       ;;
     --dry-run)
@@ -122,6 +136,29 @@ if [[ $DRY_RUN -eq 0 ]]; then
     exit 1
   fi
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] gzip integrity OK"
+fi
+
+# --- 外部退避 ---------------------------------------------------------------
+# ローカル保存は「サーバー障害でバックアップごと消失」するため、退避先が
+# 指定された場合は作成直後の gzip 検証を通過したファイルのみを転送する。
+if [[ $DRY_RUN -eq 0 && -n "$REMOTE_DIR" ]]; then
+  if command -v scp >/dev/null 2>&1; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] offsite copy (scp): $out_file -> $REMOTE_DIR"
+    scp -q "$out_file" "$REMOTE_DIR" || { echo "ERROR: scp failed" >&2; exit 1; }
+  else
+    echo "ERROR: --remote には scp が必要です（未インストール）" >&2
+    exit 1
+  fi
+fi
+
+if [[ $DRY_RUN -eq 0 && -n "$RCLONE_REMOTE" ]]; then
+  if command -v rclone >/dev/null 2>&1; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] offsite copy (rclone): $out_file -> $RCLONE_REMOTE"
+    rclone copy "$out_file" "$RCLONE_REMOTE" || { echo "ERROR: rclone copy failed" >&2; exit 1; }
+  else
+    echo "ERROR: --rclone-remote には rclone が必要です（未インストール）" >&2
+    exit 1
+  fi
 fi
 
 # --- 世代管理 -------------------------------------------------------------

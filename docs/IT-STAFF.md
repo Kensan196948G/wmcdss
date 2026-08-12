@@ -479,6 +479,40 @@ WMCDSS_AI_MAX_REQUESTS_PER_DAY=100
 WMCDSS_AI_MAX_TOKENS_PER_MONTH=1000000
 ```
 
+### NOWPHAS 海象データ（2026-08-12 追加）
+
+JMA 波浪ナウキャストは提供方式変更のため従来 URL が 404 です。公的データ
+`NOWPHAS`（国土交通省 全国港湾海洋波浪情報網）から `app.jobs.ingest_nowphas`
+でリアルタイム波高・周期・波向・潮位を取り込みます（10分毎・最近傍観測局、
+`source="nowphas"` は施工判断の入力として使用）。
+
+- 手動実行: `docker compose exec backend python -m app.jobs.ingest_nowphas`
+- 手動トリガ: `POST /api/v1/etl/run/3`（要 admin JWT）
+- 確認: `GET /api/v1/etl/status` の job 3
+
+### 監視・外部退避（2026-08-12 追加）
+
+```bash
+# 死活 + バックアップ鮮度（36時間）の簡易監視
+scripts/wmcdss-healthcheck.sh
+
+# 日次バックアップ + 外部退避（scp / rclone）
+scripts/wmcdss-db-backup.sh --remote ops@backup-host:/backup/wmcdss
+scripts/wmcdss-db-backup.sh --rclone-remote b2:wmcdss-backup
+```
+
+目標値: RPO 24時間 / RTO 4時間（詳細: docs/OPERATIONS-2026-08-12.md）
+
+### 判定ダイジェスト通知（2026-08-12 追加）
+
+直近24時間の「中止推奨・注意」判定を日次（07:30）で通知します。
+`.env.production` の `WMCDSS_NOTIFY_*` に Webhook URL または SMTP を設定。
+未設定なら送信しません。手動実行:
+
+```bash
+docker compose exec backend python -m app.jobs.notify_digest
+```
+
 ### 本番導入前チェック（2026-08-12 監査より）
 
 1. TLS 終端（FortiGate / Cloudflare Tunnel / リバースプロキシ）— 平文 HTTP のまま

@@ -1,0 +1,13 @@
+[Unit]
+Description=WMCDSS - run NOWPHAS marine observation ingester every 10 min
+Documentation=man:systemd.timer(5)
+
+[Timer]
+# NOWPHAS は 10 分間隔の実況更新。AMeDAS とずらし、上流公開直後を狙う。
+OnCalendar=*:0/10:20
+AccuracySec=15s
+Persistent=true
+Unit=wmcdss-nowphas-fetch.service
+
+[Install]
+WantedBy=timers.target

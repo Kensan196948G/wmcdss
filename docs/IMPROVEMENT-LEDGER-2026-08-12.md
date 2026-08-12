@@ -22,13 +22,17 @@
 | I13 | CI | typecheck ジョブ追加・gitleaks シークレットスキャンジョブ追加 | ワークフローreview（GitHub復旧後に実効） |
 | I14 | 設定 | レート制限の既定値を 60 req/min に（env省略時の総当たり防止） | backend テスト |
 | I15 | 文書 | 評価文書5点・改善台帳・テスト証跡を追加。README/AUTH-DESIGN/SECURITY の乖離修正 | docs/ |
+| I16 | 海象 | NOWPHAS（国交省）取り込みサービス・ジョブ・systemdタイマー・ETL job 3 を実装。最近傍観測局で波高/周期/波向/潮位を10分毎取得、`source="nowphas"` は判定入力として使用可 | 実測: 121局取得・東京湾→京浜港(横浜) 潮位1.16m ／ テスト8件 |
+| I17 | 運用 | バックアップ外部退避（scp/rclone）、`wmcdss-healthcheck.sh`（/readyz+バックアップ鮮度）、RTO/RPO・監視・簡易Runbook（docs/OPERATIONS） | shell syntax + 異常系終了コード確認 |
+| I18 | 判断資料 | デプロイ先比較（社内 vs Cloudflare+Neon）と GitHub 復旧選択肢を文書化 | docs/DEPLOYMENT-OPTIONS / GITHUB-RECOVERY |
+| I19 | 通知 | 直近24時間の警戒・中止判定ダイジェスト（Webhook/SMTP・未設定時no-op・日次タイマー・ETL job 4） | backend テスト（digest/送信経路/ジョブ） |
 
 ## 残課題（優先順）
 
 | ID | 内容 | 理由 | 計画 |
 |---|---|---|---|
-| R1 | GitHub リポジトリ404（push/PR/CI 不能） | リポジトリが存在しない（要ユーザー判断） | リポジトリ再作成 or URL 変更 or 可視性変更 |
-| R2 | 本番デプロイ先未確定（社内サーバー or Cloudflare/Neon） | 一意特定できない | ユーザー決定後にデプロイ・smoke |
+| R1 | GitHub リポジトリ404（push/PR/CI 不能） | リポジトリが存在しない（要ユーザー判断） | 選択肢を docs/GITHUB-RECOVERY-2026-08-12.md に整理。再作成は承認後1コマンド |
+| R2 | 本番デプロイ先未確定（社内サーバー or Cloudflare/Neon） | 一意特定できない | docs/DEPLOYMENT-OPTIONS-2026-08-12.md 参照。後継 CWW-D への統合を推奨 |
 | R3 | JMA波浪データ源の破損（URL404・観測局更新停止） | 外部要因。NOWPHAS 統合が Phase 3 | Phase 3 で NOWPHAS/有償 Open-Meteo へ |
 | R4 | Open-Meteo 無料版は非商用限定 | ライセンス | 有償契約 or JMA/NOWPHAS 切替 |
 | R5 | 予報業務許可の要否未確認 | 法令 | 法務確認（Phase 3） |

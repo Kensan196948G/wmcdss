@@ -39,6 +39,18 @@ _JOB_META: dict[int, dict[str, str]] = {
         "schedule": "10分毎確認（参考情報・施工判断には使用しない）",
         "module": "app.jobs.ingest_jma_marine",
     },
+    3: {
+        "name": "NOWPHAS海象データ取得",
+        "source": "国土交通省 全国港湾海洋波浪情報網（NOWPHAS・公的データ）",
+        "schedule": "10分毎確認（リアルタイム更新・施工判断に使用）",
+        "module": "app.jobs.ingest_nowphas",
+    },
+    4: {
+        "name": "判定ダイジェスト通知",
+        "source": "内部（直近24時間の警戒・中止判定）",
+        "schedule": "日次",
+        "module": "app.jobs.notify_digest",
+    },
 }
 
 

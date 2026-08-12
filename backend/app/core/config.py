@@ -86,6 +86,21 @@ class Settings(BaseSettings):
     ai_max_requests_per_day: int = 0
     ai_max_tokens_per_month: int = 0
 
+    # -------------------------------------------------------------------------
+    # 通知（警戒・中止ダイジェスト）。未設定なら送信しない（no-op）。
+    # -------------------------------------------------------------------------
+    notify_webhook_url: str = ""
+    notify_smtp_host: str = ""
+    notify_smtp_port: int = 587
+    notify_smtp_user: str = ""
+    notify_smtp_password: str = ""
+    notify_from: str = "wmcdss@example.invalid"
+    notify_to_raw: str = ""
+
+    @property
+    def notify_to(self) -> list[str]:
+        return _csv(self.notify_to_raw)
+
     @property
     def auth_required_methods_list(self) -> list[str]:
         """認証を要求する HTTP メソッド。大文字へ正規化する。
