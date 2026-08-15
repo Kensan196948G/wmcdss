@@ -1,0 +1,45 @@
+# WMCDSS MVP Cloudflare Tunnel (wmcdss-mvp.mirai-dx-platform.com)
+#
+# インストール: sudo cp wmcdss-mvp-tunnel.service /etc/systemd/system/ && sudo systemctl enable --now wmcdss-mvp-tunnel
+# 前提: ~/.cloudflared/wmcdss-mvp-config.yml と tunnel credentials が存在すること
+#   (cloudflared tunnel create wmcdss-mvp で作成)
+#
+# 代替（docker 常駐・この環境で実運用中の方式）:
+#   docker compose -f docker-compose.tunnel.yml up -d  (restart: unless-stopped)
+#   - 参照: /tmp 配置ではなく本番管理用に deploy/cloudflared/ へ配置推奨
+#
+# 2026-08-15 実測: https://wmcdss-mvp.mirai-dx-platform.com 200 /
+#   http -> 301 https / API・判定・監査フロー動作確認済み。
+
+[Unit]
+Description=WMCDSS MVP Cloudflare Tunnel (wmcdss-mvp.mirai-dx-platform.com)
+Documentation=https://github.com/Kensan196948G/wmcdss
+After=network-online.target docker.service
+Wants=network-online.target docker.service
+
+[Service]
+Type=simple
+User=kensan
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/bin/cloudflared tunnel --config /home/kensan/.cloudflared/wmcdss-mvp-config.yml run wmcdss-mvp
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=full
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectClock=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+SystemCallArchitectures=native
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

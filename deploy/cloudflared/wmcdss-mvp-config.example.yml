@@ -1,0 +1,22 @@
+# Cloudflare Tunnel 設定テンプレート（wmcdss-mvp.mirai-dx-platform.com / WMCDSS MVP）
+#
+# このファイルは Docker コンテナ用のテンプレート。
+# credentials-file はコンテナ内マウント先 (/etc/cloudflared/creds.json) を指す。
+#
+# 実環境の正本: ~/.cloudflared/wmcdss-mvp-config.yml（ホスト実行用）
+# Docker 実行用: コピーして credentials-file を /etc/cloudflared/creds.json に
+# 書き換えたものを ~/.cloudflared/wmcdss-mvp-docker-config.yml として配置。
+#
+# WMCDSS MVP は frontend(nginx) が /api /readyz /healthz を backend へ
+# プロキシする構成のため、全経路を frontend(127.0.0.1:19080) へ流す。
+# 本番(wmcdss.mirai-dx-platform.com)とはトンネル・ポート・DBを完全分離する。
+
+tunnel: TUNNEL_ID_PLACEHOLDER
+credentials-file: /etc/cloudflared/creds.json
+
+ingress:
+  - hostname: wmcdss-mvp.mirai-dx-platform.com
+    service: http://localhost:19080
+
+  # cloudflared の ingress は最後に catch-all が必須
+  - service: http_status:404
