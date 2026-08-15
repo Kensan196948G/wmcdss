@@ -1,0 +1,17 @@
+[Unit]
+Description=WMCDSS - NOWPHAS marine observation ingester (one-shot)
+Documentation=https://nowphas.mlit.go.jp/
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# チェックアウト位置は wmcdss.service と同じ 1 箇所から取る（fail-closed）。
+EnvironmentFile=%h/.config/wmcdss/deploy.env
+ExecStart=/usr/bin/docker compose --env-file ${WMCDSS_HOME}/.env.production -f ${WMCDSS_HOME}/docker-compose.production.yml exec -T backend python -m app.jobs.ingest_nowphas
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target

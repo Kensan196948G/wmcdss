@@ -10,7 +10,7 @@ from app.core.ratelimit import RateLimitMiddleware
 from app.core.monitoring import MetricsMiddleware
 from app.core.startup import enforce_security_posture
 from app.api import health, sites, decisions, thresholds, observations, audit, metrics, auth
-from app.api import analysis, reports, etl, ai
+from app.api import analysis, reports, etl, ai, dashboard
 
 log = logging.getLogger(__name__)
 
@@ -61,6 +61,7 @@ app.include_router(thresholds.router, prefix="/api/v1")
 app.include_router(observations.router, prefix="/api/v1")
 app.include_router(audit.router, prefix="/api/v1")
 app.include_router(analysis.router, prefix="/api/v1")
+app.include_router(dashboard.router, prefix="/api/v1")
 app.include_router(reports.router, prefix="/api/v1")
 app.include_router(etl.router, prefix="/api/v1")
 app.include_router(ai.router, prefix="/api/v1")

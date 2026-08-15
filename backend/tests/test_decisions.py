@@ -631,3 +631,72 @@ def test_naive_window_is_interpreted_as_utc_at_the_jst_boundary():
     # JST 解釈なら冬季基準 (>=8.0) が発火して caution になる。
     assert body["status"] == "go"
     assert [x["value"] for x in body["thresholds_snapshot"]["out_of_effect"]] == [8.0]
+
+
+# ---------------------------------------------------------------------------
+# 鮮度ガードと generated_by
+# ---------------------------------------------------------------------------
+
+def test_stale_weather_observation_is_treated_as_missing():
+    """判定対象時間帯の終端より 60 分以上古い気象観測値は欠測扱い（fail-closed）。
+
+    ETL 停止中に古い値で「go」と断定しないための安全弁。観測値が鮮度上限を
+    超えると未評価になり、reason にも値が載らない。
+    """
+    stale = _fake_weather(wind_speed_ms=50.0)
+    stale.observed_at = datetime(2026, 5, 27, 5, 0, tzinfo=timezone.utc)  # window_end より 13h 前
+    returns = [
+        _FakeResult(rows=[_fake_threshold("wind_speed_ms", ">=", 10.0, "warn")]),
+        _FakeResult(rows=[stale]),
+        _FakeResult(),
+    ]
+    c = TestClient(_make_app(_FakeDB(returns)))
+    r = c.post("/decisions", json=_payload())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "caution"
+    assert body["thresholds_snapshot"]["evaluated"] == 0
+    assert "wind_speed_ms=50.0" not in body["reason"]
+
+
+def test_fresh_weather_observation_is_used():
+    """鮮度上限内（window_end - 10 分）の観測値はそのまま判定に使われる。"""
+    fresh = _fake_weather(wind_speed_ms=15.0)
+    fresh.observed_at = datetime(2026, 5, 27, 17, 50, tzinfo=timezone.utc)
+    returns = [
+        _FakeResult(rows=[_fake_threshold("wind_speed_ms", ">=", 10.0, "warn")]),
+        _FakeResult(rows=[fresh]),
+        _FakeResult(),
+    ]
+    c = TestClient(_make_app(_FakeDB(returns)))
+    r = c.post("/decisions", json=_payload())
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "caution"
+    assert "wind_speed_ms=15.0" in body["reason"]
+    assert body["thresholds_snapshot"]["evaluated"] == 1
+
+
+def test_create_decision_records_generated_by_jwt_user():
+    """判定の generated_by に JWT の sub（責任主体）が記録される。"""
+    from app.core.auth import create_access_token
+
+    token = create_access_token(
+        subject="taro@example.com", auth_type="m365", role="field"
+    )
+    returns = [
+        _FakeResult(rows=[_fake_threshold("wind_speed_ms", ">=", 10.0, "warn")]),
+        _FakeResult(rows=[_fake_weather(wind_speed_ms=5.0)]),
+        _FakeResult(),
+    ]
+    db = _CapturingDB(returns)
+    c = TestClient(_make_app(db))
+    r = c.post(
+        "/decisions",
+        json=_payload(),
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    decisions = [o for o in db.added if hasattr(o, "generated_by")]
+    assert len(decisions) == 1
+    assert decisions[0].generated_by == "taro@example.com"

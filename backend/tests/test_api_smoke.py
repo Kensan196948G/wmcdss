@@ -28,7 +28,9 @@ def _bearer() -> dict[str, str]:
     """
     from app.core.auth import create_access_token
 
-    token = create_access_token(subject="pytest", auth_type="local")
+    # role=admin を明示: 監査ログ・閾値 CRUD 等の管理経路を smoke で通すため。
+    # 実ユーザーのロールは WMCDSS_ROLE_USERS から付与される（RBAC 設計）。
+    token = create_access_token(subject="pytest", auth_type="local", role="admin")
     return {"Authorization": f"Bearer {token}"}
 
 

@@ -1,0 +1,15 @@
+[Unit]
+Description=WMCDSS - daily decision digest notification (one-shot)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/wmcdss/deploy.env
+ExecStart=/usr/bin/docker compose --env-file ${WMCDSS_HOME}/.env.production -f ${WMCDSS_HOME}/docker-compose.production.yml exec -T backend python -m app.jobs.notify_digest
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target

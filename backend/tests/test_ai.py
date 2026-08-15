@@ -94,6 +94,7 @@ async def test_etl_diagnose_falls_back_without_api_key(monkeypatch):
             ],
         ),
         _user(),
+        db=None,
     )
 
     assert result.analysis_type == "rule_based"
@@ -118,6 +119,7 @@ async def test_risk_summary_uses_claude_when_configured(monkeypatch):
             ],
         ),
         _user(),
+        db=None,
     )
 
     assert result.analysis_type == "claude_ai"
@@ -196,7 +198,7 @@ async def test_call_claude_refuses_oversized_prompt_without_billing(monkeypatch)
 
     monkeypatch.setattr(ai_mod.httpx, "AsyncClient", _explode)
 
-    result = await ai_mod._call_claude(
+    result, _usage = await ai_mod._call_claude(
         "x" * (ai_mod.MAX_PROMPT_CHARS + 1),
         api_key="sk-ant-test",
     )
@@ -209,7 +211,7 @@ async def test_call_claude_allows_normal_prompt(monkeypatch):
     response = httpx.Response(200, json={"content": [{"type": "text", "text": "OK"}]})
     calls = _patch_anthropic_client(monkeypatch, response)
 
-    result = await ai_mod._call_claude("通常の長さのプロンプト", api_key="sk-ant-test")
+    result, _usage = await ai_mod._call_claude("通常の長さのプロンプト", api_key="sk-ant-test")
 
     assert result == "OK"
     assert len(calls) == 1

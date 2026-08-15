@@ -101,6 +101,9 @@ jobs:
       - name: Install (clean, lockfile-pinned)
         run: npm ci
 
+      - name: Typecheck (tsc)
+        run: npm run typecheck
+
       - name: Run vitest
         run: npm test
 
@@ -273,3 +276,25 @@ jobs:
       - name: Audit dependencies (high+ severity fails)
         # moderate/low are reported but do not fail; high & critical block.
         run: npm audit --audit-level=high
+
+  secret-scan:
+    name: security / secret scan (gitleaks)
+    runs-on: ubuntu-latest
+    # 秘密値・資格情報がリポジトリへ混入した瞬間にブロックする最終ゲート。
+    # .env 実体や AI settings ファイルは .gitignore 済みだが、事故混入や
+    # 履歴からの漏えいはテストでは検出できないため独立ジョブで監視する。
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # gitleaks-action@v2 は Node 20 前提で、runner の Node 24 強制化で
+      # 実行時クラッシュするため（2026-08-12 実測）、公式バイナリを直接実行する。
+      - name: Install gitleaks binary
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.24.3/gitleaks_8.24.3_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+
+      - name: Run gitleaks scan (full history)
+        run: gitleaks git --no-banner --redact --verbose --config .gitleaks.toml

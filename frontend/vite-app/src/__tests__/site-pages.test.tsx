@@ -352,11 +352,13 @@ describe("site-pages.tsx — window side effects", () => {
 describe("SiteRegisterPage — WMCDSS_API.fetchJSON integration (lines 249-262, 265)", () => {
   afterEach(() => {
     delete (window as unknown as Record<string, unknown>).WMCDSS_API;
+    delete (window as unknown as Record<string, unknown>).BACKEND_STATUS;
   });
 
   it("calls WMCDSS_API.fetchJSON when available (lines 249-262 true branch)", async () => {
     const fetchJSON = vi.fn().mockResolvedValue({ ok: true });
     (window as unknown as Record<string, unknown>).WMCDSS_API = { fetchJSON };
+    (window as unknown as Record<string, unknown>).BACKEND_STATUS = { ok: true, sites: 1 };
     const navigate = vi.fn();
     const { container } = render(<SiteRegisterPage navigate={navigate} />);
     const saveBtn = Array.from(container.querySelectorAll("button")).find(
@@ -368,9 +370,10 @@ describe("SiteRegisterPage — WMCDSS_API.fetchJSON integration (lines 249-262, 
     expect(fetchJSON).toHaveBeenCalledWith("/sites", expect.objectContaining({ method: "POST" }));
   });
 
-  it("catches fetchJSON rejection and still shows confirmation (line 265 catch branch)", async () => {
+  it("shows save error instead of fake confirmation when backend rejects (production-safe)", async () => {
     const fetchJSON = vi.fn().mockRejectedValue(new Error("backend unavailable"));
     (window as unknown as Record<string, unknown>).WMCDSS_API = { fetchJSON };
+    (window as unknown as Record<string, unknown>).BACKEND_STATUS = { ok: true, sites: 1 };
     const navigate = vi.fn();
     const { container } = render(<SiteRegisterPage navigate={navigate} />);
     const saveBtn = Array.from(container.querySelectorAll("button")).find(
@@ -379,6 +382,7 @@ describe("SiteRegisterPage — WMCDSS_API.fetchJSON integration (lines 249-262, 
     await act(async () => {
       fireEvent.click(saveBtn!);
     });
-    expect(container.textContent).toContain("現場を登録しました");
+    expect(container.textContent).toContain("現場の登録に失敗しました");
+    expect(navigate).not.toHaveBeenCalled();
   });
 });

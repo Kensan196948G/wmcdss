@@ -198,6 +198,7 @@ describe("LoginPage", () => {
       username: "admin",
       displayName: "Admin User",
       authType: "local",
+      role: "field",
     });
     expect(AuthStore.getToken()).toBe("jwt-abc");
   });

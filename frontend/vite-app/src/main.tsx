@@ -13,8 +13,15 @@ if (!rootEl) throw new Error('#root element missing');
 
 const root = createRoot(rootEl);
 
-function BackendStatusStrip() {
-  const status = window.BACKEND_STATUS;
+type BackendStatus = {
+  ok: boolean;
+  reason?: string;
+  sites?: number;
+  base?: string;
+  error?: string;
+};
+
+function BackendStatusStrip({ status }: { status: BackendStatus | null }) {
   if (!status) {
     return null;
   }
@@ -77,6 +84,29 @@ function App() {
     }
     return null;
   });
+  const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(
+    () => window.BACKEND_STATUS ?? null,
+  );
+
+  // ログイン後にだけバックエンドを初期化する。GET /sites 等は本番では JWT を
+  // 要求するため、未認証のまま preflight すると「未接続」と誤判定される。
+  // ログアウト時（user が null）は初期化しない。
+  useEffect(() => {
+    if (!user) return;
+    const pending = WMCDSS_API?.initFromBackend?.();
+    if (pending && typeof pending.catch === 'function') {
+      pending
+        .then(() => {
+          // initFromBackend は window.BACKEND_STATUS を更新するが、それ自体では
+          // React の再レンダリングを誘発しない。状態をコピーして表示へ反映する。
+          setBackendStatus(window.BACKEND_STATUS ?? null);
+        })
+        .catch((e: unknown) => {
+          console.warn('[wmcdss] initFromBackend failed:', e);
+          setBackendStatus(window.BACKEND_STATUS ?? null);
+        });
+    }
+  }, [user]);
 
   // API が 401 を返したら（＝トークンが失効・改竄されている）ログイン画面へ戻す。
   //
@@ -92,9 +122,9 @@ function App() {
 
   if (!user) {
     return (
-      <LoginPage
-        onLogin={(loggedInUser) => {
-          setUser(loggedInUser);
+    <LoginPage
+      onLogin={(loggedInUser) => {
+        setUser(loggedInUser);
         }}
       />
     );
@@ -102,20 +132,14 @@ function App() {
 
   return (
     <>
-      <BackendStatusStrip />
+      <BackendStatusStrip status={backendStatus} />
       <AppShell />
     </>
   );
 }
 
-WMCDSS_API.initFromBackend()
-  .catch((e: unknown) => {
-    console.warn('[wmcdss] initFromBackend failed:', e);
-  })
-  .finally(() => {
-    root.render(
-      <StrictMode>
-        <App />
-      </StrictMode>,
-    );
-  });
+root.render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+);

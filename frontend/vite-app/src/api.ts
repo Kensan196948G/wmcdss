@@ -52,7 +52,7 @@ export interface AdaptedSite {
 }
 
 export interface DecisionRequest {
-  siteId: number;
+  siteId: number | string;
   workType?: string;
   windowStart?: string;
   windowEnd?: string;
@@ -64,6 +64,66 @@ export interface AiAssistResponse {
   recommendations: string[];
   analysis_type: string;
   disclaimer: string;
+}
+
+export interface DashboardSiteSummary {
+  site_id: string;
+  code: string;
+  name: string;
+  kind: 'land' | 'marine' | 'both';
+  status: 'go' | 'caution' | 'stop';
+  reason: string;
+  work_types: { work_type: string; status: string; reason: string; evaluated: number }[];
+  weather_observed_at: string | null;
+  marine_observed_at: string | null;
+  weather_fresh: boolean;
+  marine_fresh: boolean;
+  data_complete: boolean;
+  latest_weather: {
+    temperature_c: number | null;
+    humidity_pct: number | null;
+    precip_mm: number | null;
+    wind_speed_ms: number | null;
+    wind_gust_ms: number | null;
+  } | null;
+  latest_marine: {
+    sig_wave_h_m: number | null;
+    wave_period_s: number | null;
+  } | null;
+}
+
+export interface DashboardSummaryResponse {
+  generated_at: string;
+  count: number;
+  sites: DashboardSiteSummary[];
+}
+
+export interface BackendWeatherObs {
+  id: number;
+  site_id: string;
+  observed_at: string;
+  temperature_c: number | null;
+  humidity_pct: number | null;
+  pressure_hpa: number | null;
+  precip_mm: number | null;
+  wind_speed_ms: number | null;
+  wind_gust_ms: number | null;
+  wind_dir_deg: number | null;
+  sunshine_h: number | null;
+  source?: string | null;
+}
+
+export interface BackendMarineObs {
+  id: number;
+  site_id: string;
+  observed_at: string;
+  sig_wave_h_m: number | null;
+  wave_period_s: number | null;
+  wave_dir_deg: number | null;
+  tide_level_m: number | null;
+  current_speed_ms: number | null;
+  current_dir_deg: number | null;
+  source?: string | null;
 }
 
 const DEFAULT_THRESHOLDS: SiteThresholds = {
@@ -78,7 +138,6 @@ declare global {
   interface Window {
     WMCDSS_API_BASE?: string;
     WMCDSS_API?: WmcdssApi;
-    SITES?: unknown[];
     MOCK_SITES?: unknown[];
     BACKEND_STATUS?: { ok: boolean; reason?: string; sites?: number; base?: string; error?: string };
   }
@@ -98,6 +157,14 @@ export const WMCDSS_API_BASE: string = (() => {
 
 if (typeof window !== 'undefined') {
   window.WMCDSS_API_BASE = WMCDSS_API_BASE;
+}
+
+export function backendConnected(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    window.BACKEND_STATUS !== undefined &&
+    window.BACKEND_STATUS.ok === true
+  );
 }
 
 export class APIError extends Error {
@@ -181,6 +248,26 @@ export async function fetchLatestWeather(siteId: number | string): Promise<unkno
     if (err instanceof APIError && err.status === 404) return null;
     throw err;
   }
+}
+
+export async function fetchDashboardSummary(): Promise<DashboardSummaryResponse> {
+  return fetchJSON<DashboardSummaryResponse>('/dashboard');
+}
+
+export async function fetchWeatherObservations(
+  siteId: number | string,
+  limit = 48,
+): Promise<BackendWeatherObs[]> {
+  const qs = new URLSearchParams({ site_id: String(siteId), limit: String(limit) });
+  return fetchJSON<BackendWeatherObs[]>(`/observations/weather?${qs.toString()}`);
+}
+
+export async function fetchMarineObservations(
+  siteId: number | string,
+  limit = 48,
+): Promise<BackendMarineObs[]> {
+  const qs = new URLSearchParams({ site_id: String(siteId), limit: String(limit) });
+  return fetchJSON<BackendMarineObs[]>(`/observations/marine?${qs.toString()}`);
 }
 
 export async function fetchLatestMarine(siteId: number | string): Promise<unknown | null> {
@@ -289,9 +376,11 @@ export async function initFromBackend(): Promise<boolean> {
       return false;
     }
     const adapted = backendSites.map((bs, idx) =>
-      adaptSite(bs, (mockSites[idx] as Partial<AdaptedSite>) || undefined),
+      adaptSite(bs, (mockSites[idx] as unknown as Partial<AdaptedSite>) || undefined),
     );
-    window.SITES = adapted;
+    // AdaptedSite は backend 由来（id: number）で data.ts の Site（id: string）と
+    // 型が異なる。実行時互換のためここで変換する（既存の dual-surface 契約）。
+    window.SITES = adapted as unknown as import('./data').Site[];
     window.BACKEND_STATUS = { ok: true, base: WMCDSS_API_BASE, sites: adapted.length };
     console.info(`[wmcdss] loaded ${adapted.length} sites from ${WMCDSS_API_BASE}`);
     return true;
@@ -310,6 +399,9 @@ export interface WmcdssApi {
   fetchSitesFromBackend: typeof fetchSitesFromBackend;
   fetchLatestWeather: typeof fetchLatestWeather;
   fetchLatestMarine: typeof fetchLatestMarine;
+  fetchDashboardSummary: typeof fetchDashboardSummary;
+  fetchWeatherObservations: typeof fetchWeatherObservations;
+  fetchMarineObservations: typeof fetchMarineObservations;
   fetchThresholdsForSite: typeof fetchThresholdsForSite;
   fetchAuditLog: typeof fetchAuditLog;
   requestDecisionFromBackend: typeof requestDecisionFromBackend;
@@ -329,6 +421,9 @@ export const WMCDSS_API: WmcdssApi = {
   fetchSitesFromBackend,
   fetchLatestWeather,
   fetchLatestMarine,
+  fetchDashboardSummary,
+  fetchWeatherObservations,
+  fetchMarineObservations,
   fetchThresholdsForSite,
   fetchAuditLog,
   requestDecisionFromBackend,

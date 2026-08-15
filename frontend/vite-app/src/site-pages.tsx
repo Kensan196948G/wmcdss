@@ -23,8 +23,13 @@
 //   Loop 19/20/21/22 ports already executed it; this file picks up land sites
 //   safely without divergent fallback logic.
 
-import { useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { ChartColors, LineChart } from './charts';
+import {
+  backendConnected,
+  fetchDashboardSummary,
+  type DashboardSiteSummary,
+} from './api';
 
 function nowJSTLabel(): string {
   return new Date().toLocaleString('ja-JP', {
@@ -42,6 +47,7 @@ import {
   generateWeather,
   getDecision,
   type SiteKind,
+  type Site,
   type Status,
 } from './data';
 
@@ -115,8 +121,35 @@ interface SiteListPageProps {
 export function SiteListPage({ navigate }: SiteListPageProps) {
   const [filter, setFilter] = useState<SiteListFilter>('all');
   const [search, setSearch] = useState('');
+  const [summaries, setSummaries] = useState<DashboardSiteSummary[] | null>(null);
 
-  const filtered = SITES.filter((s) => {
+  useEffect(() => {
+    if (!backendConnected()) return;
+    let cancelled = false;
+    fetchDashboardSummary()
+      .then((data) => { if (!cancelled) setSummaries(data.sites); })
+      .catch(() => { if (!cancelled) setSummaries(null); });
+    return () => { cancelled = true; };
+  }, []);
+
+  const summaryById = useMemo(() => {
+    const map = new Map<string, DashboardSiteSummary>();
+    (summaries ?? []).forEach((s) => map.set(s.site_id, s));
+    return map;
+  }, [summaries]);
+
+  const siteViews: Array<Site & { summary?: DashboardSiteSummary }> = useMemo(
+    () => SITES.map((s) => {
+      const summary = summaryById.get(s.id);
+      if (!summary) return s;
+      const status: Status = summary.status === 'stop' ? 'danger'
+        : summary.status === 'caution' ? 'warn' : 'ok';
+      return { ...s, status, summary };
+    }),
+    [summaryById],
+  );
+
+  const filtered = siteViews.filter((s) => {
     if (filter !== 'all' && s.status !== filter) return false;
     if (search && !s.name.includes(search) && !s.shortName.includes(search)) return false;
     return true;
@@ -167,8 +200,21 @@ export function SiteListPage({ navigate }: SiteListPageProps) {
           </thead>
           <tbody>
             {filtered.map((site) => {
-              const w = generateWeather(site.id);
-              const m = generateMarine(site.id);
+              const live = site.summary != null;
+              const w = site.summary?.latest_weather
+                ? {
+                    temp: site.summary.latest_weather.temperature_c,
+                    wind: site.summary.latest_weather.wind_speed_ms,
+                    rain: site.summary.latest_weather.precip_mm,
+                  }
+                : live
+                  ? null
+                  : (() => { const g = generateWeather(site.id); return { temp: g.temp, wind: g.wind, rain: g.rain }; })();
+              const m = site.summary?.latest_marine
+                ? { waveHeight: site.summary.latest_marine.sig_wave_h_m }
+                : live
+                  ? null
+                  : (() => { const g = generateMarine(site.id); return g ? { waveHeight: g.waveHeight } : null; })();
               const waveLimit = site.thresholds.waveHeight;
               const windWarn = site.thresholds.windSpeed * 0.8;
               const waveWarn = waveLimit !== null ? waveLimit * 0.8 : null;
@@ -191,32 +237,34 @@ export function SiteListPage({ navigate }: SiteListPageProps) {
                   <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
                     {site.contractor}
                   </td>
-                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>{w.temp}℃</td>
-                  <td
-                    style={{
-                      fontVariantNumeric: 'tabular-nums',
-                      color:
-                        w.wind > site.thresholds.windSpeed
-                          ? 'var(--status-danger)'
-                          : w.wind > windWarn
-                          ? 'var(--status-warn)'
-                          : 'inherit',
-                    }}
-                  >
-                    {w.wind} m/s
+                  <td style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    {w ? `${w.temp?.toFixed(1) ?? '—'}℃` : '—'}
                   </td>
                   <td
                     style={{
                       fontVariantNumeric: 'tabular-nums',
                       color:
-                        m && waveLimit !== null && waveWarn !== null && m.waveHeight > waveLimit
+                        w && w.wind != null && w.wind > site.thresholds.windSpeed
                           ? 'var(--status-danger)'
-                          : m && waveWarn !== null && m.waveHeight > waveWarn
+                          : w && w.wind != null && w.wind > windWarn
                           ? 'var(--status-warn)'
                           : 'inherit',
                     }}
                   >
-                    {m ? `${m.waveHeight} m` : '—'}
+                    {w && w.wind != null ? `${w.wind.toFixed(1)} m/s` : '—'}
+                  </td>
+                  <td
+                    style={{
+                      fontVariantNumeric: 'tabular-nums',
+                      color:
+                        m && m.waveHeight != null && waveLimit !== null && waveWarn !== null && m.waveHeight > waveLimit
+                          ? 'var(--status-danger)'
+                          : m && m.waveHeight != null && waveWarn !== null && m.waveHeight > waveWarn
+                          ? 'var(--status-warn)'
+                          : 'inherit',
+                    }}
+                  >
+                    {m && m.waveHeight != null ? `${m.waveHeight.toFixed(2)} m` : '—'}
                   </td>
                 </tr>
               );
@@ -237,15 +285,17 @@ interface SiteRegisterPageProps {
 export function SiteRegisterPage({ navigate }: SiteRegisterPageProps) {
   const [form, setForm] = useState<RegisterForm>(INITIAL_FORM);
   const [saved, setSaved] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const update = <K extends keyof RegisterForm>(key: K, val: RegisterForm[K]) => {
     setForm((prev) => ({ ...prev, [key]: val }));
   };
 
   const handleSave = async () => {
+    setSaveError(null);
     try {
       const api = (window as Window & { WMCDSS_API?: { fetchJSON?: Function } }).WMCDSS_API;
-      if (api?.fetchJSON) {
+      if (backendConnected() && api?.fetchJSON) {
         await api.fetchJSON('/sites', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -259,9 +309,18 @@ export function SiteRegisterPage({ navigate }: SiteRegisterPageProps) {
             address: null,
           }),
         });
+      } else if (backendConnected()) {
+        setSaveError('バックエンド接続中ですが API が利用できません。管理者に連絡してください。');
+        return;
       }
-    } catch {
-      // バックエンド未接続時はフォールバック（モック動作）
+    } catch (err) {
+      // 実データ接続時は「登録できた」と偽らない。エラーを表示して止める。
+      if (backendConnected()) {
+        const message = err instanceof Error ? err.message : String(err);
+        setSaveError(`現場の登録に失敗しました: ${message}`);
+        return;
+      }
+      // バックエンド未接続時のみフォールバック（デモ動作）
     }
     setSaved(true);
     setTimeout(() => navigate('sites'), 1200);
@@ -293,6 +352,23 @@ export function SiteRegisterPage({ navigate }: SiteRegisterPageProps) {
           }}
         >
           ✓ 現場を登録しました。現場一覧へ移動します…
+        </div>
+      )}
+
+      {saveError && (
+        <div
+          style={{
+            background: 'var(--status-danger-bg)',
+            border: '1px solid var(--status-danger-border)',
+            borderRadius: 'var(--radius-md)',
+            padding: '12px 16px',
+            marginBottom: 16,
+            fontSize: 13,
+            color: 'var(--status-danger)',
+            fontWeight: 600,
+          }}
+        >
+          ⚠️ {saveError}
         </div>
       )}
 
@@ -488,12 +564,55 @@ interface SiteDetailPageProps {
 
 export function SiteDetailPage({ navigate, selectedSite }: SiteDetailPageProps) {
   const site = SITES.find((s) => s.id === selectedSite) ?? SITES[0];
-  const w = generateWeather(site.id);
-  const m = generateMarine(site.id);
-  const decision = getDecision(site);
+  const [summary, setSummary] = useState<DashboardSiteSummary | null>(null);
   const [, /* tab */ _setTab] = useState<DetailTab>('overview');
-  const hourlyWind = useMemo(() => generateHourlyWind(), []);
   void _setTab;
+
+  useEffect(() => {
+    if (!backendConnected()) return;
+    let cancelled = false;
+    fetchDashboardSummary()
+      .then((data) => {
+        if (!cancelled) {
+          setSummary(data.sites.find((s) => s.site_id === site.id) ?? null);
+        }
+      })
+      .catch(() => { if (!cancelled) setSummary(null); });
+    return () => { cancelled = true; };
+  }, [site.id]);
+
+  const live = summary != null;
+  const w = summary?.latest_weather
+    ? {
+        temp: summary.latest_weather.temperature_c,
+        hum: summary.latest_weather.humidity_pct,
+        pressure: null as number | null,
+        wind: summary.latest_weather.wind_speed_ms,
+        windDir: '—',
+        rain: summary.latest_weather.precip_mm,
+      }
+    : !live
+      ? generateWeather(site.id)
+      : null;
+  const m = summary?.latest_marine
+    ? {
+        waveHeight: summary.latest_marine.sig_wave_h_m,
+        wavePeriod: summary.latest_marine.wave_period_s,
+        waveDir: '—',
+        tide: '—',
+        tideLevel: null as number | null,
+      }
+    : !live
+      ? generateMarine(site.id)
+      : null;
+  const decision = summary
+    ? {
+        status: (summary.status === 'stop' ? 'danger'
+          : summary.status === 'caution' ? 'warn' : 'ok') as Status,
+        reasons: [summary.reason],
+      }
+    : getDecision(site);
+  const hourlyWind = useMemo(() => generateHourlyWind(), []);
 
   const waveLimit = site.thresholds.waveHeight;
   const windDanger = site.thresholds.windSpeed;
@@ -612,19 +731,20 @@ export function SiteDetailPage({ navigate, selectedSite }: SiteDetailPageProps) 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
               {(
                 [
-                  ['気温', `${w.temp}℃`, null],
-                  ['湿度', `${w.hum}%`, null],
-                  ['気圧', `${w.pressure}hPa`, null],
+                  ['気温', w && w.temp != null ? `${w.temp}℃` : '—', null],
+                  ['湿度', w && w.hum != null ? `${w.hum}%` : '—', null],
+                  ['気圧', w && w.pressure != null ? `${w.pressure}hPa` : '—', null],
                   [
                     '風速',
-                    `${w.wind}m/s`,
-                    w.wind > windDanger ? 'danger' : w.wind > windWarn ? 'warn' : null,
+                    w && w.wind != null ? `${w.wind}m/s` : '—',
+                    w && w.wind != null && w.wind > windDanger ? 'danger'
+                      : w && w.wind != null && w.wind > windWarn ? 'warn' : null,
                   ],
-                  ['風向', w.windDir, null],
+                  ['風向', w?.windDir ?? '—', null],
                   [
                     '降水量',
-                    `${w.rain}mm/h`,
-                    w.rain > site.thresholds.rainfall ? 'danger' : null,
+                    w && w.rain != null ? `${w.rain}mm/h` : '—',
+                    w && w.rain != null && w.rain > site.thresholds.rainfall ? 'danger' : null,
                   ],
                 ] as Array<[string, string, 'danger' | 'warn' | null]>
               ).map(([label, val, alert], i) => (
@@ -664,17 +784,17 @@ export function SiteDetailPage({ navigate, selectedSite }: SiteDetailPageProps) 
                   [
                     [
                       '有義波高',
-                      `${m.waveHeight}m`,
-                      m.waveHeight > waveLimit
+                      m.waveHeight != null ? `${m.waveHeight}m` : '—',
+                      m.waveHeight != null && m.waveHeight > waveLimit
                         ? 'danger'
-                        : m.waveHeight > waveLimit * 0.8
+                        : m.waveHeight != null && m.waveHeight > waveLimit * 0.8
                         ? 'warn'
                         : null,
                     ],
-                    ['周期', `${m.wavePeriod}s`, null],
+                    ['周期', m.wavePeriod != null ? `${m.wavePeriod}s` : '—', null],
                     ['波向', m.waveDir, null],
                     ['潮汐', m.tide, null],
-                    ['潮位', `${m.tideLevel}m`, null],
+                    ['潮位', m.tideLevel != null ? `${m.tideLevel}m` : '—', null],
                   ] as Array<[string, string, 'danger' | 'warn' | null]>
                 ).map(([label, val, alert], i) => (
                   <div key={i}>

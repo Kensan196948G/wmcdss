@@ -14,7 +14,7 @@ import {
   TYPE_LABEL,
   type SiteThresholds,
 } from "./data";
-import type { AiAssistResponse } from "./api";
+import { backendConnected, type AiAssistResponse } from "./api";
 import { authHeader } from "./auth-token";
 
 type Role = "field" | "manager";
@@ -166,6 +166,184 @@ const AiAssistCard: FC<{ title: string; result: AiAssistResponse | null }> = ({
   );
 };
 
+// ---------------------------------------------------------------------------
+// 閾値管理（バックエンド実データ版）
+// ---------------------------------------------------------------------------
+
+interface BackendThresholdRow {
+  id: string;
+  site_id: string | null;
+  work_type: string;
+  metric: string;
+  op: string;
+  value: number;
+  severity: "warn" | "stop";
+  active_from: string | null;
+  active_to: string | null;
+  note: string | null;
+}
+
+const METRIC_JA: Record<string, string> = {
+  wind_speed_ms: "風速",
+  wind_gust_ms: "最大瞬間風速",
+  precip_mm_1h: "降水量",
+  temperature_c: "気温",
+  humidity_pct: "湿度",
+  sig_wave_h_m: "有義波高",
+  wave_period_s: "波周期",
+};
+
+const WORK_TYPE_JA: Record<string, string> = {
+  concrete: "コンクリート",
+  crane: "クレーン",
+  marine_lift: "海上揚重",
+  marine_dive: "潜水",
+  marine_transport: "海上輸送",
+};
+
+export const BackendThresholdsTable: FC = () => {
+  const [rows, setRows] = useState<BackendThresholdRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Record<string, Partial<BackendThresholdRow>>>({});
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const api = (window as Window & { WMCDSS_API?: { fetchJSON?: Function } }).WMCDSS_API;
+      const data = (await api?.fetchJSON?.("/thresholds")) as BackendThresholdRow[];
+      if (Array.isArray(data)) setRows(data);
+    } catch (err) {
+      setError(`しきい値の取得に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const save = async (row: BackendThresholdRow) => {
+    const patch = editing[row.id] ?? {};
+    setError(null);
+    try {
+      const api = (window as Window & { WMCDSS_API?: { fetchJSON?: Function } }).WMCDSS_API;
+      await api?.fetchJSON?.(`/thresholds/${row.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      setEditing((prev) => { const next = { ...prev }; delete next[row.id]; return next; });
+      await load();
+    } catch (err) {
+      setError(`保存に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const remove = async (id: string) => {
+    setError(null);
+    try {
+      const api = (window as Window & { WMCDSS_API?: { fetchJSON?: Function } }).WMCDSS_API;
+      await api?.fetchJSON?.(`/thresholds/${id}`, { method: "DELETE" });
+      await load();
+    } catch (err) {
+      setError(`削除に失敗しました: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
+  const setField = (id: string, key: keyof BackendThresholdRow, value: string | number) => {
+    setEditing((prev) => ({
+      ...prev,
+      [id]: { ...(prev[id] ?? {}), [key]: key === "value" ? Number(value) : value },
+    }));
+  };
+
+  if (rows === null && !error) {
+    return <div style={{ padding: 24, textAlign: "center", color: "var(--text-muted)" }}>読み込み中...</div>;
+  }
+
+  return (
+    <div>
+      {error && (
+        <div style={{ marginBottom: 12, padding: "10px 14px", borderRadius: 6, background: "var(--status-danger-bg)", color: "var(--status-danger)", fontSize: 13 }}>
+          ⚠️ {error}
+        </div>
+      )}
+      <div className="card">
+        <table className="data-table">
+          <thead>
+            <tr>
+              <th>対象</th>
+              <th>工種</th>
+              <th>項目</th>
+              <th>演算子</th>
+              <th>基準値</th>
+              <th>深刻度</th>
+              <th>有効期間</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(rows ?? []).map((row) => {
+              const draft = editing[row.id] ?? {};
+              return (
+                <tr key={row.id}>
+                  <td>{row.site_id ? "現場個別" : "全社共通"}</td>
+                  <td>{WORK_TYPE_JA[row.work_type] ?? row.work_type}</td>
+                  <td>{METRIC_JA[row.metric] ?? row.metric}</td>
+                  <td>
+                    <select
+                      className="form-select"
+                      style={{ width: 72, padding: "3px 6px" }}
+                      value={draft.op ?? row.op}
+                      onChange={(e) => setField(row.id, "op", e.target.value)}
+                    >
+                      {["<", "<=", ">", ">=", "==", "!="].map((op) => (
+                        <option key={op} value={op}>{op}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td>
+                    <input
+                      className="form-input"
+                      type="number"
+                      step="0.1"
+                      style={{ width: 90, padding: "4px 8px" }}
+                      value={draft.value ?? row.value}
+                      onChange={(e) => setField(row.id, "value", e.target.value)}
+                    />
+                  </td>
+                  <td>
+                    <select
+                      className="form-select"
+                      style={{ width: 90, padding: "3px 6px" }}
+                      value={draft.severity ?? row.severity}
+                      onChange={(e) => setField(row.id, "severity", e.target.value)}
+                    >
+                      <option value="warn">注意</option>
+                      <option value="stop">中止</option>
+                    </select>
+                  </td>
+                  <td style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                    {row.active_from ?? "—"} 〜 {row.active_to ?? "—"}
+                  </td>
+                  <td style={{ display: "flex", gap: 6 }}>
+                    <button className="btn btn-sm btn-primary" onClick={() => void save(row)}>
+                      保存
+                    </button>
+                    <button className="btn btn-sm" onClick={() => void remove(row.id)}>
+                      削除
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div style={{ marginTop: 12, fontSize: 12, color: "var(--text-muted)" }}>
+        変更は監査ログ（audit_log）へ記録されます。新規追加・有効期間の編集は API または次期 UI で対応します。
+      </div>
+    </div>
+  );
+};
+
 // ---------- Thresholds ----------
 export const ThresholdsPage: FC = () => {
   const [editing, setEditing] = useState<string | null>(null);
@@ -213,6 +391,19 @@ export const ThresholdsPage: FC = () => {
       setThresholdAiLoading(false);
     }
   };
+
+  if (backendConnected()) {
+    return (
+      <div>
+        <div className="flex-between mb-16">
+          <div style={{ fontSize: 13, color: "var(--text-secondary)" }}>
+            各現場・全社共通の施工中止基準値を管理します。変更履歴は監査ログに記録されます。
+          </div>
+        </div>
+        <BackendThresholdsTable />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -415,11 +606,6 @@ const ETL_JOB_META: Record<
     source: "Open-Meteo Marine API（情報共有用）",
     dataItems: "波高・波周期・波向・潮位相当・流向流速",
     url: "https://open-meteo.com/en/docs/marine-weather-api",
-  },
-  3: {
-    source: "気象庁 潮位観測",
-    dataItems: "潮位",
-    url: "https://www.jma.go.jp/bosai/amedas/",
   },
 };
 
@@ -931,7 +1117,7 @@ export const ReportsPage: FC = () => {
     const configuredApiBase = (window as Window & { WMCDSS_API_BASE?: string })
       .WMCDSS_API_BASE;
 
-    if (!configuredApiBase) {
+    if (!configuredApiBase || !backendConnected()) {
       setTimeout(() => {
         setGenerating(false);
         setDone(true);
@@ -1237,15 +1423,16 @@ export const AuditPage: FC = () => {
 
   useEffect(() => {
     const api = (
-      window as Window & { WMCDSS_API?: { fetchAuditLog: Function } }
+      window as Window & { WMCDSS_API?: { fetchAuditLog: (...args: unknown[]) => Promise<unknown> } }
     ).WMCDSS_API;
     if (!api?.fetchAuditLog) return;
     let cancelled = false;
     (async () => {
       try {
-        const result: BackendAuditEntry[] = await api.fetchAuditLog({
+        const raw = await api.fetchAuditLog({
           limit: 100,
         });
+        const result = (raw ?? []) as BackendAuditEntry[];
         if (cancelled || !Array.isArray(result)) return;
         const converted = result.map((entry) => ({
           id: entry.id,
@@ -1260,7 +1447,12 @@ export const AuditPage: FC = () => {
         setBackendLogs(converted);
         setIsRealData(true);
       } catch {
-        // fall through to AUDIT_LOG fallback
+        // 実データ接続中はモック監査ログへフォールバックしない。
+        // 権限不足（403）でも偽の監査エントリを表示してはならない。
+        if (!cancelled && backendConnected()) {
+          setBackendLogs([]);
+          setIsRealData(true);
+        }
       }
     })();
     return () => {
@@ -1268,7 +1460,7 @@ export const AuditPage: FC = () => {
     };
   }, []);
 
-  const displayLogs = backendLogs ?? AUDIT_LOG;
+  const displayLogs = backendLogs ?? (backendConnected() ? [] : AUDIT_LOG);
 
   const actions = useMemo(
     () => Array.from(new Set(displayLogs.map((l) => l.action))),

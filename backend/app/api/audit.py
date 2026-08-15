@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import UserInfo, get_current_user
+from app.api.auth import UserInfo, require_admin_jwt
 from app.db.session import get_db
 from app.models.audit import AuditLog
 from app.schemas.audit import AuditOut
@@ -36,7 +36,7 @@ async def list_audit(
     # 認証を DB より先に宣言する。FastAPI は依存を宣言順に解決するため、
     # この順序だと未認証リクエストは DB セッションを取得せずに 401 で終わる。
     # 逆順にすると、認証されないアクセスでもコネクションプールを消費できる。
-    _current_user: UserInfo = Depends(get_current_user),
+    _current_user: UserInfo = Depends(require_admin_jwt),
     db: AsyncSession = Depends(get_db),
 ):
     t1 = t1 or datetime.now(timezone.utc)

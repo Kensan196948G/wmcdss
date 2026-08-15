@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import extract, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import UserInfo, get_current_user_or_anon
 from app.db.session import get_db
 from app.models.observations import MarineObservation, WeatherObservation
 
@@ -67,6 +68,7 @@ def _weibull_quantile(k: float, lam: float, T: float) -> float:
 async def historical_statistics(
     site_id: uuid.UUID = Query(..., description="対象サイトID"),
     year: int = Query(default=None, description="集計対象年（省略時: 現在年）"),
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """月次集計統計エンドポイント。
@@ -158,6 +160,7 @@ _RETURN_PERIODS = [2, 5, 10, 20, 50, 100]
 async def wave_return_period(
     site_id: uuid.UUID = Query(..., description="対象サイトID"),
     method: str = Query(default="gumbel", description="統計手法: gumbel | weibull"),
+    _current_user: UserInfo = Depends(get_current_user_or_anon),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """50年確率波推算エンドポイント。

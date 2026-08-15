@@ -1,0 +1,18 @@
+{
+  "name": "WMCDSS 気象海象 施工判断支援システム",
+  "short_name": "WMCDSS",
+  "description": "現場のお天気・海のコンディションから施工可否を自動判定する判断支援システム",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f0f4f8",
+  "theme_color": "#1a5f8a",
+  "lang": "ja",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

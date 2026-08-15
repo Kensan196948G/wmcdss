@@ -37,6 +37,7 @@ class MarineObservation(Base):
     tide_level_m:     Mapped[float | None] = mapped_column(Float)
     current_speed_ms: Mapped[float | None] = mapped_column(Float)
     current_dir_deg:  Mapped[float | None] = mapped_column(Float)
+    station_code:     Mapped[str | None] = mapped_column(String)
     fetched_at:       Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     data_version:     Mapped[int] = mapped_column(Integer, default=1)
     source:           Mapped[str] = mapped_column(String, default="jma_wave")

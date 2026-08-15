@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.auth import UserInfo, require_any_user_or_api_key
 from app.core.security import actor_from
 from app.db.session import get_db
 from app.models.observations import WeatherObservation, MarineObservation
@@ -14,6 +15,12 @@ from app.services.audit import write_audit
 from app.services.decision import ThresholdRule, as_utc, evaluate, is_rule_in_effect
 
 router = APIRouter(prefix="/decisions", tags=["decisions"])
+
+# 判定入力として許容する観測値の鮮度。ETL が停止しているのに「古い値で
+# go」と断定しないため、これを超えた観測値は欠測扱い（fail-closed）にする。
+# dashboard.py の集約エンドポイントと同じ閾値に揃える。
+_WEATHER_FRESH = timedelta(minutes=60)
+_MARINE_FRESH = timedelta(hours=3)
 
 
 async def _load_thresholds(
@@ -95,6 +102,14 @@ async def _latest_inputs(db: AsyncSession, site_id, t0, t1) -> dict[str, float |
     w = (await db.execute(wq)).scalars().first()
     m = (await db.execute(mq)).scalars().first()
 
+    # 鮮度ガード: 判定対象時間帯の終端より古すぎる観測値は欠測として扱う。
+    # observed_at が無い行（テスト用フェイク等）は実 DB では起こらないため
+    # 判定にそのまま用いる（既存フェイク互換）。
+    if w is not None and w.observed_at is not None and w.observed_at < t1 - _WEATHER_FRESH:
+        w = None
+    if m is not None and m.observed_at is not None and m.observed_at < t1 - _MARINE_FRESH:
+        m = None
+
     return {
         "temperature_c":  w.temperature_c  if w else None,
         "humidity_pct":   w.humidity_pct   if w else None,
@@ -110,6 +125,7 @@ async def _latest_inputs(db: AsyncSession, site_id, t0, t1) -> dict[str, float |
 async def create_decision(
     req: DecisionRequest,
     request: Request,
+    _current_user: UserInfo = Depends(require_any_user_or_api_key),
     db: AsyncSession = Depends(get_db),
 ):
     # 施工時間帯を API 境界で 1 回だけ UTC-aware へ正規化し、以降は正規化後の値
@@ -151,6 +167,7 @@ async def create_decision(
             "out_of_effect": res.out_of_effect_rules,
             "evaluated": res.evaluated_count,
         },
+        generated_by=_current_user.username if _current_user else "system",
     )
     db.add(decision)
     await db.flush()

@@ -1,0 +1,10 @@
+title = "WMCDSS gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "E2E test fixture: synthetic JWT/user payload (no real credentials)"
+paths = [
+  '''frontend/vite-app/e2e/auth-state\.json''',
+]
