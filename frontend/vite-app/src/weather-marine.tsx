@@ -106,6 +106,43 @@ function fmtVal(v: number | null | undefined, digits = 1, suffix = ''): string {
   return v == null || Number.isNaN(v) ? '—' : `${v.toFixed(digits)}${suffix}`;
 }
 
+/** 16方位 → WindRose 用 8方位へ丸める。 */
+function degTo8Compass(deg: number): 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW' {
+  const dirs: ('N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW')[] = [
+    'N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW',
+  ];
+  // 0°=N から時計回り45°刻み。22.5°オフセットで方位境界を丸める。
+  const idx = Math.round(((deg % 360) + 360) % 360 / 45) % 8;
+  return dirs[idx];
+}
+
+/**
+ * 観測データ（hourlyObs）から風配図を集計する。
+ * 各観測点の風向を8方位へ丸め、その方位の平均風速を value とする。
+ * データが無い場合は null（表示側でプレースホルダー）。
+ */
+export function buildWindRoseFromObs(
+  obs: BackendWeatherObs[] | null,
+): { dir: 'N' | 'NE' | 'E' | 'SE' | 'S' | 'SW' | 'W' | 'NW'; value: number }[] | null {
+  if (!obs || obs.length === 0) return null;
+  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const;
+  const buckets: { sum: number; count: number }[] = dirs.map(() => ({ sum: 0, count: 0 }));
+  let usable = 0;
+  for (const o of obs) {
+    if (o.wind_dir_deg == null || o.wind_speed_ms == null) continue;
+    const idx = dirs.indexOf(degTo8Compass(o.wind_dir_deg));
+    if (idx < 0) continue;
+    buckets[idx].sum += o.wind_speed_ms;
+    buckets[idx].count += 1;
+    usable += 1;
+  }
+  if (usable === 0) return null;
+  return dirs.map((dir, i) => ({
+    dir,
+    value: buckets[i].count > 0 ? +(buckets[i].sum / buckets[i].count).toFixed(1) : 0,
+  }));
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -250,6 +287,9 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
     return generateHourlyWind();
   }, [hourlyObs, siteId]);
   const [tab, setTab] = useState<WeatherTab>('current');
+
+  // 風配図: 観測データ（hourlyObs）由来で集計。無ければ null。
+  const windRoseData = useMemo(() => buildWindRoseFromObs(hourlyObs), [hourlyObs]);
 
   const hourlyTemp = useMemo(() => {
     if (hourlyObs) {
@@ -406,24 +446,12 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
                 <span className="card-title">風配図</span>
               </div>
               <div className="card-body" style={{ display: 'flex', justifyContent: 'center' }}>
-                {backendConnected() ? (
+                {windRoseData ? (
+                  <WindRose data={windRoseData} size={200} />
+                ) : (
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', padding: '24px 0' }}>
                     風配図は観測データの蓄積後に表示されます（現在は固定サンプルを表示しません）。
                   </div>
-                ) : (
-                  <WindRose
-                    data={[
-                      { dir: 'N', value: 2.1 },
-                      { dir: 'NE', value: 1.8 },
-                      { dir: 'E', value: 2.5 },
-                      { dir: 'SE', value: 3.2 },
-                      { dir: 'S', value: 4.8 },
-                      { dir: 'SW', value: 5.1 },
-                      { dir: 'W', value: 3.5 },
-                      { dir: 'NW', value: 2.2 },
-                    ]}
-                    size={200}
-                  />
                 )}
               </div>
             </div>
