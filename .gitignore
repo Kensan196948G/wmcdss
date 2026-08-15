@@ -30,6 +30,10 @@ CLAUDE.md
 .DS_Store
 *.swp
 
+# Agent tool state (local session/worktree data, not project artifacts)
+.omo/
+.opencode/
+
 # Build / dist
 dist/
 build/
