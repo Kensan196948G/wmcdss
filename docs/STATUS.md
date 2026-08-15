@@ -4,6 +4,8 @@
 > `git remote` 未設定環境のため、ここを Single Source of Truth とし、remote 構成後は
 > GitHub Projects に転写します。
 
+最終更新（2026-08-15 CI 修復・Ruleset 修正）: **2026-08-15**（**main CI red を解消** — `frontend / dependency audit (npm audit)` が nanoid@3.3.17（<3.3.18, high）で失敗していたのを `package.json` overrides で 3.3.18 に固定（PR #11 squash merge、`4188bdf`）→ **main CI 全10ジョブ green を確認** ／ 併せて **GitHub Ruleset `central-auto-merge` の required check 名バグ（`security / secret scan (gitleaks)\n` 末尾改行）を修正** — これにより全 PR の auto-merge が永久 BLOCKED になる問題を解消 ／ ローカル実測: docker compose 全スタック起動（db + migrate + backend + frontend）・seed デモデータ（sites 7件・thresholds）・backend smoke 10件・frontend 587 / backend 374 / E2E 38 全パス ／ Dependabot PR #2（frontend-minor-patch）マージ済み・#4（ruff）/ #6（jsdom）更新後 auto-merge 進行・#3/#5/#7（vite 8 / vitest 4 等 major bump）は CI fail のためバックログ）
+
 最終更新（2026-08-13 CWW-D 統合完了）: **2026-08-13**（CWW-D PR #141（NOWPHAS統合）**マージ済み**
 （`5e8ab27`）→ main CI の flaky（テスト壁時計依存）を PR #143 で修正・**マージ済み**（`9b6ef71`）
 → **CWW-D main CI 全5ジョブ成功を確認** ／ Phase 2 バックログは CWW-D Issue #142 に登録 ／
