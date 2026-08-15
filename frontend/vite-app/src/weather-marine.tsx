@@ -138,13 +138,19 @@ interface StatItem {
 // ---------------------------------------------------------------------------
 
 export function useLiveSites(): Site[] {
-  // window.SITES は initFromBackend() 成功後に backend 版（AdaptedSite, id: number）
-  // へ置き換わる。それ以外（初期値・テストの vi.doMock）は data.ts の
-  // mock Site（id: string）なので、モジュール import の SITES を使う。
+  // window.SITES は initFromBackend() 成功後に backend 版（AdaptedSite）へ
+  // 置き換わる。backend サイトの id は UUID（string）または数値。
+  // 一方 data.ts の mock Site id は "site-01" のような非 UUID 文字列なので、
+  // UUID 形式（または数値）で backend 版を判定する。
   const isBackendSite = (s: unknown): s is Site => {
     if (s == null || typeof s !== 'object') return false;
     const id = (s as { id?: unknown }).id;
-    return typeof id === 'number';
+    if (typeof id === 'number') return true;
+    // UUID v4 形式: 8-4-4-4-12 の16進。mock id（site-01 等）とは区別される。
+    return (
+      typeof id === 'string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)
+    );
   };
 
   const [sites, setSites] = useState<Site[]>(() => {

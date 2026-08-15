@@ -12,7 +12,7 @@
 import { authHeader, notifyUnauthorized } from './auth-token';
 
 export interface BackendSite {
-  id: number;
+  id: number | string;
   code: string;
   name: string;
   kind: 'land' | 'marine' | 'both';
@@ -31,7 +31,7 @@ export interface SiteThresholds {
 }
 
 export interface AdaptedSite {
-  id: number;
+  id: number | string;
   code: string;
   name: string;
   shortName: string;
