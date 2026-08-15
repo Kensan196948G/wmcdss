@@ -122,7 +122,7 @@ async def test_risk_summary_uses_claude_when_configured(monkeypatch):
         db=None,
     )
 
-    assert result.analysis_type == "claude_ai"
+    assert result.analysis_type == "llm_ai"
     assert result.summary == "全体要約"
     assert result.bullets == ["強風注意", "波高確認", "排水確認"]
     assert calls[0]["kwargs"]["json"]["max_tokens"] == 700
@@ -198,7 +198,7 @@ async def test_call_claude_refuses_oversized_prompt_without_billing(monkeypatch)
 
     monkeypatch.setattr(ai_mod.httpx, "AsyncClient", _explode)
 
-    result, _usage = await ai_mod._call_claude(
+    result, _usage = await ai_mod._call_llm(
         "x" * (ai_mod.MAX_PROMPT_CHARS + 1),
         api_key="sk-ant-test",
     )
@@ -211,7 +211,98 @@ async def test_call_claude_allows_normal_prompt(monkeypatch):
     response = httpx.Response(200, json={"content": [{"type": "text", "text": "OK"}]})
     calls = _patch_anthropic_client(monkeypatch, response)
 
-    result, _usage = await ai_mod._call_claude("通常の長さのプロンプト", api_key="sk-ant-test")
+    result, _usage = await ai_mod._call_llm("通常の長さのプロンプト", api_key="sk-ant-test")
 
     assert result == "OK"
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# DeepSeek provider (OpenAI-compatible /chat/completions)
+# ---------------------------------------------------------------------------
+
+def test_provider_for_deepseek_model():
+    assert ai_mod._provider_for("deepseek-chat") == "deepseek"
+    assert ai_mod._provider_for("deepseek-reasoner") == "deepseek"
+    assert ai_mod._provider_for("claude-sonnet-4-6") == "anthropic"
+    assert ai_mod._provider_for("") == "anthropic"
+
+
+@pytest.mark.asyncio
+async def test_call_llm_deepseek_uses_openai_compatible_endpoint(monkeypatch):
+    """DeepSeek モデルは OpenAI 互換 /chat/completions を叩くこと。"""
+    response = httpx.Response(
+        200,
+        json={
+            "choices": [{"message": {"content": "DeepSeek応答"}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        },
+    )
+    calls = _patch_anthropic_client(monkeypatch, response)  # 同じ Fake が使える
+
+    result, usage = await ai_mod._call_llm(
+        "プロンプト", api_key="sk-deepseek-test", model="deepseek-chat"
+    )
+
+    assert result == "DeepSeek応答"
+    assert usage == 15
+    url = calls[0]["args"][0] if calls[0]["args"] else None
+    # httpx は url を位置引数で受ける。文字列 or URL のどちらでも検証
+    assert url is not None
+    headers = calls[0]["kwargs"]["headers"]
+    assert headers["Authorization"] == "Bearer sk-deepseek-test"
+    assert calls[0]["kwargs"]["json"]["model"] == "deepseek-chat"
+    assert calls[0]["kwargs"]["json"]["messages"][0]["content"] == "プロンプト"
+
+
+@pytest.mark.asyncio
+async def test_call_llm_deepseek_empty_choices_falls_back(monkeypatch):
+    """DeepSeek が choices 空を返したら空文字（rule_based へフォールバック）。
+
+    choices が無い応答は正常完了ではないため、usage も 0 にリセットし
+    予算カウンタを汚さない契約にしている。
+    """
+    response = httpx.Response(200, json={"choices": [], "usage": {"total_tokens": 3}})
+    _patch_anthropic_client(monkeypatch, response)
+
+    result, usage = await ai_mod._call_llm("x", api_key="sk-deepseek-test", model="deepseek-chat")
+
+    assert result == ""
+    assert usage == 0
+
+
+@pytest.mark.asyncio
+async def test_ai_test_deepseek_ok(monkeypatch):
+    """/ai/test が DeepSeek モデルで OpenAI 互換エンドポイントを叩くこと。"""
+    response = httpx.Response(
+        200,
+        json={"choices": [{"message": {"content": "OK"}}], "usage": {"total_tokens": 3}},
+    )
+    calls = _patch_anthropic_client(monkeypatch, response)
+
+    result = await ai_mod.test_ai_connection(
+        ai_mod.AiTestRequest(api_key="sk-deepseek-test", model="deepseek-chat"),
+        _user(),
+    )
+
+    assert result.ok is True
+    assert "DeepSeek" in result.message
+    headers = calls[0]["kwargs"]["headers"]
+    assert headers["Authorization"] == "Bearer sk-deepseek-test"
+    assert calls[0]["kwargs"]["json"]["model"] == "deepseek-chat"
+
+
+@pytest.mark.asyncio
+async def test_ai_test_deepseek_401_message(monkeypatch):
+    """DeepSeek 401 でプロバイダー名を含む日本語エラーを返すこと。"""
+    response = httpx.Response(401, json={"error": {"message": "invalid api key"}})
+    _patch_anthropic_client(monkeypatch, response)
+
+    result = await ai_mod.test_ai_connection(
+        ai_mod.AiTestRequest(api_key="sk-bad", model="deepseek-chat"),
+        _user(),
+    )
+
+    assert result.ok is False
+    assert "DeepSeek" in result.message
+    assert "401" in result.message

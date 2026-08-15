@@ -98,7 +98,7 @@ function buildAiReportText(
     `テンプレート: ${form.template}`,
     `期間: ${form.dateFrom} - ${form.dateTo}`,
     `作成日時: ${new Date().toLocaleString("ja-JP")}`,
-    `分析種別: ${result.analysis_type === "claude_ai" ? "Claude AI" : "ルールベース"}`,
+    `分析種別: ${result.analysis_type === "llm_ai" || result.analysis_type === "claude_ai" ? "LLM AI" : "ルールベース"}`,
     "",
     "総括",
     result.summary,
@@ -138,7 +138,7 @@ const AiAssistCard: FC<{ title: string; result: AiAssistResponse | null }> = ({
         <span className="card-title">
           {title}
           <span className="badge badge-info" style={{ marginLeft: 8 }}>
-            {result.analysis_type === "claude_ai" ? "Claude AI" : "ルールベース"}
+            {result.analysis_type === "llm_ai" || result.analysis_type === "claude_ai" ? "LLM AI" : "ルールベース"}
           </span>
         </span>
       </div>
@@ -1933,6 +1933,7 @@ interface AiSettingsState {
   configured: boolean;
   key_preview: string | null;
   model: string;
+  provider: string;
   source: string;
   supported_models: { id: string; label: string }[];
 }
@@ -1941,6 +1942,8 @@ const DEFAULT_SUPPORTED_MODELS: { id: string; label: string }[] = [
   { id: "claude-opus-4-8", label: "claude-opus-4-8　最高精度・低速" },
   { id: "claude-sonnet-4-6", label: "claude-sonnet-4-6　推奨・バランス型 ★" },
   { id: "claude-haiku-4-5", label: "claude-haiku-4-5　高速・軽量" },
+  { id: "deepseek-chat", label: "deepseek-chat　DeepSeek V3（汎用・低コスト）" },
+  { id: "deepseek-reasoner", label: "deepseek-reasoner　DeepSeek R1（推論特化）" },
 ];
 
 export const AiSettingsPage: FC = () => {
@@ -2078,10 +2081,10 @@ export const AiSettingsPage: FC = () => {
 
   return (
     <div style={{ maxWidth: 720 }}>
-      {/* Anthropic Claude API 設定 */}
+      {/* LLM (Claude / DeepSeek) API 設定 */}
       <div className="card mb-16">
         <div className="card-header">
-          <span className="card-title">Anthropic Claude API 設定</span>
+          <span className="card-title">LLM API 設定（Claude / DeepSeek）</span>
         </div>
         <div className="card-body">
           {loading ? (
@@ -2124,7 +2127,7 @@ export const AiSettingsPage: FC = () => {
                   <input
                     className="form-input"
                     type={showKey ? "text" : "password"}
-                    placeholder="sk-ant-..."
+                    placeholder="sk-ant-... または sk-..."
                     value={apiKey}
                     onChange={(e) => setApiKey(e.target.value)}
                     style={{ flex: 1 }}
@@ -2229,7 +2232,7 @@ export const AiSettingsPage: FC = () => {
                 分析エンジン:{" "}
               </span>
               <span style={{ fontWeight: 500 }}>
-                {settings?.configured ? "Claude AI" : "ルールベース"}
+                {settings?.configured ? (settings?.provider === "deepseek" ? "DeepSeek AI" : "Claude AI") : "ルールベース"}
               </span>
             </div>
             <div>
