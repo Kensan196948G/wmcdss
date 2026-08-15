@@ -22,8 +22,9 @@ import {
   generateMarine,
   generateWeather,
   type CompassDir,
-  type WeatherSample,
   type MarineSample,
+  type Site,
+  type WeatherSample,
 } from './data';
 
 // ---------------------------------------------------------------------------
@@ -127,12 +128,68 @@ interface StatItem {
 }
 
 // ---------------------------------------------------------------------------
+// Live SITES accessor
+//
+// data.ts の `export const SITES` はモジュールロード時の固定値であり、
+// initFromBackend() が window.SITES を backend 版（UUID id）へ置き換えても
+// 静的 import 側は更新されない。気象/海象の観測 API は UUID を要求するため、
+// このフックで window.SITES（backend 版）を参照し、置き換え完了イベントで
+// 再レンダリングする。
+// ---------------------------------------------------------------------------
+
+export function useLiveSites(): Site[] {
+  // window.SITES は initFromBackend() 成功後に backend 版（AdaptedSite, id: number）
+  // へ置き換わる。それ以外（初期値・テストの vi.doMock）は data.ts の
+  // mock Site（id: string）なので、モジュール import の SITES を使う。
+  const isBackendSite = (s: unknown): s is Site => {
+    if (s == null || typeof s !== 'object') return false;
+    const id = (s as { id?: unknown }).id;
+    return typeof id === 'number';
+  };
+
+  const [sites, setSites] = useState<Site[]>(() => {
+    const live = (window as Window & { SITES?: unknown }).SITES;
+    if (Array.isArray(live) && live.length > 0 && isBackendSite(live[0])) {
+      return live as Site[];
+    }
+    return SITES;
+  });
+
+  useEffect(() => {
+    const onUpdated = () => {
+      const live = (window as Window & { SITES?: unknown }).SITES;
+      if (Array.isArray(live) && live.length > 0 && isBackendSite(live[0])) {
+        setSites(live as Site[]);
+      }
+    };
+    window.addEventListener('wmcdss:sites-updated', onUpdated);
+    return () => window.removeEventListener('wmcdss:sites-updated', onUpdated);
+  }, []);
+
+  return sites;
+}
+
+// ---------------------------------------------------------------------------
 // WeatherPage
 // ---------------------------------------------------------------------------
 
 export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
-  const [siteId, setSiteId] = useState<string>(selectedSite || SITES[0].id);
-  const site = SITES.find((s) => s.id === siteId) || SITES[0];
+  const liveSites = useLiveSites();
+  const [siteId, setSiteId] = useState<string>(
+    () => selectedSite || (liveSites[0]?.id ?? SITES[0].id),
+  );
+  const site = liveSites.find((s) => s.id === siteId) || liveSites[0] || SITES[0];
+
+  // liveSites が backend 版（UUID）へ置き換わったら、選択中 id が mock id の
+  // ままだと API が 422 になるため、backend 版の先頭サイトへ追従させる。
+  // ユーザーが明示的に選択済み（selectedSite が UUID）の場合はそれを維持する。
+  useEffect(() => {
+    if (liveSites.length === 0) return;
+    const exists = liveSites.some((s) => s.id === siteId);
+    if (!exists) {
+      setSiteId(liveSites[0].id);
+    }
+  }, [liveSites, siteId]);
 
   // Backend data state
   const [backendW, setBackendW] = useState<WeatherSample | null>(null);
@@ -268,7 +325,7 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
             value={siteId}
             onChange={(e) => setSiteId(e.target.value)}
           >
-            {SITES.map((s) => (
+            {liveSites.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.shortName}
               </option>
@@ -527,12 +584,22 @@ export const WeatherPage: FC<PageProps> = ({ selectedSite }) => {
 // ---------------------------------------------------------------------------
 
 export const MarinePage: FC<PageProps> = ({ selectedSite }) => {
-  const marineSites = useMemo(() => SITES.filter((s) => s.type !== 'land'), []);
+  const liveSites = useLiveSites();
+  const marineSites = useMemo(() => liveSites.filter((s) => s.type !== 'land'), [liveSites]);
   const fallbackId = marineSites[0]?.id ?? '';
   const initialId =
     selectedSite && marineSites.find((s) => s.id === selectedSite) ? selectedSite : fallbackId;
   const [siteId, setSiteId] = useState<string>(initialId);
   const site = marineSites.find((s) => s.id === siteId) || marineSites[0];
+
+  // liveSites が backend 版（UUID）へ置き換わったら選択 id を追従させる。
+  useEffect(() => {
+    if (marineSites.length === 0) return;
+    const exists = marineSites.some((s) => s.id === siteId);
+    if (!exists) {
+      setSiteId(marineSites[0].id);
+    }
+  }, [marineSites, siteId]);
 
   // Backend data state
   const [backendM, setBackendM] = useState<MarineSample | null>(null);

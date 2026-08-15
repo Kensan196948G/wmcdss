@@ -35,6 +35,7 @@ import {
   type Site,
   type Status,
 } from './data';
+import { useLiveSites } from './weather-marine';
 
 type CheckStatus = Status;
 
@@ -299,7 +300,8 @@ export interface ConcretePageProps {
 }
 
 export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
-  const [siteId, setSiteId] = useState<string>(selectedSite || SITES[0].id);
+  const liveSites = useLiveSites();
+  const [siteId, setSiteId] = useState<string>((selectedSite || liveSites[0]?.id) ?? SITES[0].id);
   const [aiResult, setAiResult] = useState<AiResult | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
   const [aiAudience, setAiAudience] = useState<'field' | 'manager'>('field');
@@ -307,7 +309,12 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
   const [windowAiLoading, setWindowAiLoading] = useState(false);
   const [backendDecision, setBackendDecision] = useState<BackendDecision | null>(null);
   const [decisionLoading, setDecisionLoading] = useState(false);
-  const site: Site = SITES.find((s) => s.id === siteId) || SITES[0];
+  const site: Site = liveSites.find((s) => s.id === siteId) || liveSites[0] || SITES[0];
+  useEffect(() => {
+    if (liveSites.length === 0) return;
+    const exists = liveSites.some((s) => s.id === siteId);
+    if (!exists) setSiteId(liveSites[0].id);
+  }, [liveSites, siteId]);
   const live = backendDecision != null;
   const w = live
     ? inputsToWeather(backendDecision.inputs)
@@ -481,7 +488,7 @@ export const ConcretePage: FC<ConcretePageProps> = ({ selectedSite }) => {
             value={siteId}
             onChange={(e) => setSiteId(e.target.value)}
           >
-            {SITES.map((s) => (
+            {liveSites.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.shortName}
               </option>
@@ -700,7 +707,8 @@ const WORK_TYPES: WorkType[] = [
 ];
 
 export const MarineWorkPage: FC<MarineWorkPageProps> = ({ selectedSite }) => {
-  const marineSites = SITES.filter((s) => s.type !== 'land');
+  const liveSites = useLiveSites();
+  const marineSites = liveSites.filter((s) => s.type !== 'land');
   const [siteId, setSiteId] = useState<string>(
     selectedSite && marineSites.find((s) => s.id === selectedSite)
       ? selectedSite

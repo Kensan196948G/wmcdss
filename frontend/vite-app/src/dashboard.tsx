@@ -4,6 +4,7 @@ import {
   generateMarine, generateWeather, getDecision,
   type Site, type Status,
 } from './data';
+import { useLiveSites } from './weather-marine';
 import {
   requestAiChat,
   requestAiRiskSummary,
@@ -307,6 +308,7 @@ export interface DashboardPageProps {
 }
 
 export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => {
+  const liveSites = useLiveSites();
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
   const [summaries, setSummaries] = useState<DashboardSiteSummary[] | null>(null);
   const [riskAi, setRiskAi] = useState<AiAssistResponse | null>(null);
@@ -337,11 +339,11 @@ export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => 
   }, [summaries]);
 
   const siteViews: Array<Site & { summary?: DashboardSiteSummary }> = useMemo(
-    () => SITES.map((s) => {
+    () => liveSites.map((s) => {
       const summary = summaryById.get(s.id);
       return summary ? { ...s, status: statusOf(summary.status), summary } : s;
     }),
-    [summaryById],
+    [liveSites, summaryById],
   );
 
   const visibleSites = selectedArea

@@ -382,6 +382,17 @@ export async function initFromBackend(): Promise<boolean> {
     // 型が異なる。実行時互換のためここで変換する（既存の dual-surface 契約）。
     window.SITES = adapted as unknown as import('./data').Site[];
     window.BACKEND_STATUS = { ok: true, base: WMCDSS_API_BASE, sites: adapted.length };
+    // window.SITES が backend 版（UUID id）へ置き換わったことをページへ通知する。
+    // weather-marine / site-pages / dashboard 等はモジュール import の SITES を
+    // 参照しているため、このイベントを購読して再解決する必要がある。
+    // テスト環境（fakeWindow に dispatchEvent が無い等）では失敗しても無視する。
+    try {
+      if (typeof window !== 'undefined' && typeof CustomEvent === 'function') {
+        window.dispatchEvent(new CustomEvent('wmcdss:sites-updated', { detail: { sites: adapted.length } }));
+      }
+    } catch (e) {
+      console.warn('[wmcdss] sites-updated event dispatch failed:', e);
+    }
     console.info(`[wmcdss] loaded ${adapted.length} sites from ${WMCDSS_API_BASE}`);
     return true;
   } catch (err) {
