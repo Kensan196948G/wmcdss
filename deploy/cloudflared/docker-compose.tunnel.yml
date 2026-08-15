@@ -1,0 +1,31 @@
+# WMCDSS MVP Cloudflare Tunnel — docker 常駐方式
+#
+# 使い方（tunnel credentials と config を用意した後）:
+#   docker compose -f deploy/cloudflared/docker-compose.tunnel.yml up -d
+#
+# 前提:
+#   1. cloudflared tunnel create wmcdss-mvp
+#       -> ~/.cloudflared/<TUNNEL_ID>.json が生成される
+#   2. ~/.cloudflared/wmcdss-mvp-config.yml を作成（ingress で
+#      wmcdss-mvp.mirai-dx-platform.com -> http://localhost:19080 を定義）
+#   3. DNS CNAME: wmcdss-mvp.mirai-dx-platform.com -> <TUNNEL_ID>.cfargotunnel.com
+#      (proxied: true)
+#
+# 環境変数（デフォルトは本ホストの実値）:
+#   WMCDSS_TUNNEL_CREDS  : tunnel credentials JSON のパス
+#   WMCDSS_TUNNEL_CONFIG : cloudflared config YAML のパス（credentials-file は
+#                          /etc/cloudflared/creds.json に合わせた Docker 用を用意）
+#
+# 2026-08-15 実測: restart: unless-stopped で常駐し、
+#   https://wmcdss-mvp.mirai-dx-platform.com が 200 を返すことを確認済み。
+
+services:
+  wmcdss-mvp-tunnel:
+    image: cloudflare/cloudflared:2026.7.3
+    container_name: wmcdss-mvp-tunnel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+    network_mode: host
+    volumes:
+      - ${WMCDSS_TUNNEL_CREDS:-/home/kensan/.cloudflared/c5363b16-393e-447c-9ca8-0d617b405966.json}:/etc/cloudflared/creds.json:ro
+      - ${WMCDSS_TUNNEL_CONFIG:-/home/kensan/.cloudflared/wmcdss-mvp-docker-config.yml}:/etc/cloudflared/config.yml:ro
