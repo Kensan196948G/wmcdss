@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react';
 import type { CSSProperties } from 'react';
 
 import { SITES, STATUS_CLASS } from './data';
+import { useLiveSites } from './weather-marine';
 import { ConcretePage, MarineWorkPage } from './decisions';
 import { DashboardPage } from './dashboard';
 import { WeatherPage, MarinePage } from './weather-marine';
@@ -201,6 +202,7 @@ const isDensity = (v: unknown): v is Density => v === 'normal' || v === 'compact
 const isTheme = (v: unknown): v is 'light' | 'dark' => v === 'light' || v === 'dark';
 
 export function AppShell() {
+  const liveSites = useLiveSites();
   const [page, setPage] = useState<PageId>('dashboard');
   const [selectedSite, setSelectedSite] = useState<string | null>(null);
   const [role, setRole] = usePersistedState<ShellRole>('role', 'field', isRole);
@@ -239,9 +241,9 @@ export function AppShell() {
     setSidebarOpen(false);
   };
 
-  const okCount = SITES.filter((s) => s.status === 'ok').length;
-  const warnCount = SITES.filter((s) => s.status === 'warn').length;
-  const dangerCount = SITES.filter((s) => s.status === 'danger').length;
+  const okCount = liveSites.filter((s) => s.status === 'ok').length;
+  const warnCount = liveSites.filter((s) => s.status === 'warn').length;
+  const dangerCount = liveSites.filter((s) => s.status === 'danger').length;
 
   // 各ページの props 型はレガシー由来で navigate の page 型が string/PageId と
   // 混在する。型検査ゲート導入のためここで明示的に緩和する（挙動は不変）。
@@ -388,7 +390,7 @@ export function AppShell() {
             <div className="header-title">{PAGE_TITLES[page] || 'ダッシュボード'}</div>
             {breadcrumbVisible ? (
               <div className="header-breadcrumb">
-                ▸ {SITES.find((s) => s.id === selectedSite)?.shortName}
+                ▸ {liveSites.find((s) => s.id === selectedSite)?.shortName}
               </div>
             ) : null}
           </div>

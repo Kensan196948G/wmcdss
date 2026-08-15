@@ -10,6 +10,7 @@
 import { useEffect, useMemo, useState, type FC } from 'react';
 import { BarChart, ChartColors, LineChart } from './charts';
 import { SITES, generateHistoricalMonthly } from './data';
+import { useLiveSites } from './weather-marine';
 
 // Month index 0–11 → Japanese label
 const MONTH_LABELS = [
@@ -71,7 +72,8 @@ interface HistoricalPageProps {
 }
 
 export const HistoricalPage: FC<HistoricalPageProps> = ({ selectedSite }) => {
-  const [siteId, setSiteId] = useState<string>(selectedSite || SITES[0].id);
+  const liveSites = useLiveSites();
+  const [siteId, setSiteId] = useState<string>((selectedSite || liveSites[0]?.id) ?? SITES[0].id);
   const [year, setYear] = useState<string>('2025');
   const [metric, setMetric] = useState<MetricKey>('wind');
   const [loading, setLoading] = useState(false);
@@ -79,7 +81,16 @@ export const HistoricalPage: FC<HistoricalPageProps> = ({ selectedSite }) => {
   // backendMonthly: null = not yet fetched / fallback to mock
   const [backendMonthly, setBackendMonthly] = useState<HistoricalBackendMonth[] | null>(null);
 
-  const site = SITES.find((s) => s.id === siteId) || SITES[0];
+  const site = liveSites.find((s) => s.id === siteId) || liveSites[0] || SITES[0];
+
+  // liveSites が backend 版（UUID）へ置き換わったら選択 id を追従させる。
+  useEffect(() => {
+    if (liveSites.length === 0) return;
+    const exists = liveSites.some((s) => s.id === siteId);
+    if (!exists) {
+      setSiteId(liveSites[0].id);
+    }
+  }, [liveSites, siteId]);
 
   // Fetch historical data from backend whenever site or year changes.
   // Backend is only attempted when window.WMCDSS_API or window.WMCDSS_API_BASE
@@ -251,7 +262,7 @@ export const HistoricalPage: FC<HistoricalPageProps> = ({ selectedSite }) => {
             value={siteId}
             onChange={(e) => setSiteId(e.target.value)}
           >
-            {SITES.map((s) => (
+            {liveSites.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.shortName}
               </option>
@@ -399,13 +410,14 @@ interface Wave50PageProps {
 }
 
 export const Wave50Page: FC<Wave50PageProps> = ({ selectedSite }) => {
+  const liveSites = useLiveSites();
   const [point, setPoint] = useState<WavePointKey>('東京湾北部');
   const [method, setMethod] = useState<MethodKey>('gumbel');
   const [backendData, setBackendData] = useState<Wave50BackendResponse | null>(null);
   const [insufficientWarning, setInsufficientWarning] = useState(false);
 
   // Effective site_id for backend calls: prop → SITES[0]
-  const effectiveSiteId = selectedSite ?? SITES[0].id;
+  const effectiveSiteId = selectedSite ?? liveSites[0]?.id ?? SITES[0].id;
 
   // Fetch wave50 analysis from backend whenever site or method changes.
   // Only runs when window.WMCDSS_API or window.WMCDSS_API_BASE is configured.

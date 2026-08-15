@@ -50,6 +50,7 @@ import {
   type Site,
   type Status,
 } from './data';
+import { useLiveSites } from './weather-marine';
 
 type NavigateFn = (page: string, siteId?: string) => void;
 type SiteListFilter = Status | 'all';
@@ -119,6 +120,7 @@ interface SiteListPageProps {
 }
 
 export function SiteListPage({ navigate }: SiteListPageProps) {
+  const liveSites = useLiveSites();
   const [filter, setFilter] = useState<SiteListFilter>('all');
   const [search, setSearch] = useState('');
   const [summaries, setSummaries] = useState<DashboardSiteSummary[] | null>(null);
@@ -139,14 +141,14 @@ export function SiteListPage({ navigate }: SiteListPageProps) {
   }, [summaries]);
 
   const siteViews: Array<Site & { summary?: DashboardSiteSummary }> = useMemo(
-    () => SITES.map((s) => {
+    () => liveSites.map((s) => {
       const summary = summaryById.get(s.id);
       if (!summary) return s;
       const status: Status = summary.status === 'stop' ? 'danger'
         : summary.status === 'caution' ? 'warn' : 'ok';
       return { ...s, status, summary };
     }),
-    [summaryById],
+    [liveSites, summaryById],
   );
 
   const filtered = siteViews.filter((s) => {
@@ -563,7 +565,8 @@ interface SiteDetailPageProps {
 }
 
 export function SiteDetailPage({ navigate, selectedSite }: SiteDetailPageProps) {
-  const site = SITES.find((s) => s.id === selectedSite) ?? SITES[0];
+  const liveSites = useLiveSites();
+  const site = liveSites.find((s) => s.id === selectedSite) ?? liveSites[0] ?? SITES[0];
   const [summary, setSummary] = useState<DashboardSiteSummary | null>(null);
   const [, /* tab */ _setTab] = useState<DetailTab>('overview');
   void _setTab;
