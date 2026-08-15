@@ -182,9 +182,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 480  # 8時間
 
-    # Claude AI API キー (オプション): 設定時は /api/v1/ai/analyze で使用
+    # AI API キー (オプション): 設定時は /api/v1/ai/* で LLM を使用
+    # Anthropic Claude と DeepSeek に対応（モデル ID のプレフィックスで判定）。
     claude_api_key: str = ""
     claude_model: str = "claude-sonnet-4-6"
+    deepseek_api_key: str = ""
+    deepseek_model: str = "deepseek-chat"
     ai_settings_file: str = "/app/.wmcdss_ai_settings.json"
 
     # ローカルユーザー: "username:bcrypt_hash" 形式カンマ区切り

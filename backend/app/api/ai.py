@@ -143,7 +143,21 @@ SUPPORTED_MODELS: list[dict[str, str]] = [
     {"id": "claude-opus-4-8", "label": "Claude Opus 4.8（最高精度）"},
     {"id": "claude-sonnet-4-6", "label": "Claude Sonnet 4.6（推奨・バランス型）"},
     {"id": "claude-haiku-4-5-20251001", "label": "Claude Haiku 4.5（高速・軽量）"},
+    {"id": "deepseek-chat", "label": "DeepSeek Chat V3（汎用・低コスト）"},
+    {"id": "deepseek-reasoner", "label": "DeepSeek Reasoner R1（推論特化）"},
 ]
+
+
+def _provider_for(model: str) -> Literal["anthropic", "deepseek"]:
+    """モデル ID からプロバイダーを判定する。
+
+    - ``deepseek-*`` → DeepSeek（OpenAI 互換 /chat/completions）
+    - それ以外（``claude-*`` 等）→ Anthropic Claude
+    """
+    m = model.strip().lower()
+    if m.startswith("deepseek-"):
+        return "deepseek"
+    return "anthropic"
 
 # ---------------------------------------------------------------------------
 # Settings persistence
@@ -203,9 +217,19 @@ _load_settings_file()
 # ---------------------------------------------------------------------------
 
 def _get_api_key() -> str:
+    """現在選択中モデルのプロバイダーに対応する API キーを返す。
+
+    UI 設定（_ai_settings["api_key"]）は全プロバイダー共通で保存される。
+    env フォールバックはプロバイダー別（claude_api_key / deepseek_api_key）。
+    """
     from app.core.config import get_settings  # local import avoids circular
 
-    return _ai_settings.get("api_key") or getattr(get_settings(), "claude_api_key", "")
+    if _ai_settings.get("api_key"):
+        return _ai_settings["api_key"]
+    model = _get_model()
+    if _provider_for(model) == "deepseek":
+        return getattr(get_settings(), "deepseek_api_key", "")
+    return getattr(get_settings(), "claude_api_key", "")
 
 
 def _get_model() -> str:
@@ -214,6 +238,7 @@ def _get_model() -> str:
     return (
         _ai_settings.get("model")
         or getattr(get_settings(), "claude_model", "")
+        or getattr(get_settings(), "deepseek_model", "")
         or "claude-sonnet-4-6"
     )
 
@@ -222,7 +247,7 @@ def _mask_key(key: str) -> str | None:
     """Return last-4-char preview, or None if key is empty."""
     if not key:
         return None
-    return f"sk-ant-...{key[-4:]}"
+    return f"…{key[-4:]}"
 
 
 def _detect_source() -> Literal["ui", "env", "none"]:
@@ -230,7 +255,9 @@ def _detect_source() -> Literal["ui", "env", "none"]:
         return "ui"
     from app.core.config import get_settings  # local import avoids circular
 
-    if getattr(get_settings(), "claude_api_key", ""):
+    if getattr(get_settings(), "claude_api_key", "") or getattr(
+        get_settings(), "deepseek_api_key", ""
+    ):
         return "env"
     return "none"
 
@@ -314,6 +341,7 @@ class AiSettingsResponse(BaseModel):
     configured: bool
     key_preview: str | None
     model: str
+    provider: Literal["anthropic", "deepseek"]
     source: Literal["ui", "env", "none"]
     supported_models: list[dict[str, str]]
 
@@ -614,31 +642,35 @@ def _anthropic_error_detail(resp: httpx.Response) -> str:
     return ""
 
 
-def _format_anthropic_error(status: int, detail: str = "") -> str:
-    """Return a user-facing Japanese error message for Anthropic responses."""
+def _format_ai_error(status: int, detail: str = "", provider: str = "anthropic") -> str:
+    """Return a user-facing Japanese error message for LLM responses."""
+    provider_label = "DeepSeek" if provider == "deepseek" else "Anthropic"
     if status == 400:
-        msg = "リクエストエラー: Anthropic API が 400 を返しました"
+        msg = f"リクエストエラー: {provider_label} API が 400 を返しました"
     elif status == 401:
-        msg = "認証エラー: APIキーが無効です (401)"
+        msg = f"認証エラー: APIキーが無効です (401) — {provider_label}"
     elif status == 403:
-        msg = "権限エラー: このAPIキーには必要な権限がありません (403)"
+        msg = f"権限エラー: このAPIキーには必要な権限がありません (403) — {provider_label}"
     elif status == 429:
-        msg = "レート制限: リクエストが多すぎます (429)"
+        msg = f"レート制限: リクエストが多すぎます (429) — {provider_label}"
     elif status >= 500:
-        msg = f"サーバーエラー: Anthropic API でエラーが発生しました ({status})"
+        msg = f"サーバーエラー: {provider_label} API でエラーが発生しました ({status})"
     else:
-        msg = f"エラー: Anthropic API がステータス {status} を返しました"
+        msg = f"エラー: {provider_label} API がステータス {status} を返しました"
 
     return f"{msg} - {detail}" if detail else msg
 
 
-async def _call_claude(
+async def _call_llm(
     prompt: str,
     api_key: str,
     model: str = "claude-sonnet-4-6",
     max_tokens: int = 500,
 ) -> tuple[str, int]:
-    """Call Anthropic Claude API and return (response text, usage tokens).
+    """Call the configured LLM provider (Anthropic Claude or DeepSeek).
+
+    - ``deepseek-*`` モデル → DeepSeek の OpenAI 互換 ``/chat/completions``
+    - それ以外 → Anthropic ``/messages``
 
     Returns ("", 0) on any error so the caller can fall back gracefully.
     """
@@ -648,43 +680,78 @@ async def _call_claude(
     # 通常運用では到達しない（到達したら上限設定の不備を意味する）。
     if len(prompt) > MAX_PROMPT_CHARS:
         log.warning(
-            "prompt が上限を超えたため Claude API を呼ばずにフォールバックします "
+            "prompt が上限を超えたため LLM API を呼ばずにフォールバックします "
             "(%d 文字 > 上限 %d 文字)",
             len(prompt),
             MAX_PROMPT_CHARS,
         )
         return "", 0
 
+    provider = _provider_for(model)
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "max_tokens": max_tokens,
-                    "messages": [{"role": "user", "content": prompt}],
-                },
-            )
-            if resp.status_code == 200:
-                payload = resp.json()
-                usage = payload.get("usage") or {}
-                _LAST_USAGE_TOKENS = int(
-                    usage.get("total_tokens")
-                    or usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+            if provider == "deepseek":
+                resp = await client.post(
+                    "https://api.deepseek.com/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": max_tokens,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
                 )
-                return str(payload["content"][0]["text"]), _LAST_USAGE_TOKENS
-            log.warning(
-                "Claude API call returned %s: %s",
-                resp.status_code,
-                _anthropic_error_detail(resp),
-            )
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    usage = payload.get("usage") or {}
+                    _LAST_USAGE_TOKENS = int(
+                        usage.get("total_tokens")
+                        or usage.get("prompt_tokens", 0) + usage.get("completion_tokens", 0)
+                    )
+                    choices = payload.get("choices") or []
+                    if not choices:
+                        # choices が無い応答は正常完了ではない。usage も 0 へ
+                        # 戻して予算カウンタを汚さない（呼び出し側は rule_based へ落ちる）。
+                        _LAST_USAGE_TOKENS = 0
+                        return "", 0
+                    msg = choices[0].get("message") or {}
+                    return str(msg.get("content", "")), _LAST_USAGE_TOKENS
+                log.warning(
+                    "DeepSeek API call returned %s: %s",
+                    resp.status_code,
+                    _anthropic_error_detail(resp),
+                )
+            else:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "max_tokens": max_tokens,
+                        "messages": [{"role": "user", "content": prompt}],
+                    },
+                )
+                if resp.status_code == 200:
+                    payload = resp.json()
+                    usage = payload.get("usage") or {}
+                    _LAST_USAGE_TOKENS = int(
+                        usage.get("total_tokens")
+                        or usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
+                    )
+                    return str(payload["content"][0]["text"]), _LAST_USAGE_TOKENS
+                log.warning(
+                    "Claude API call returned %s: %s",
+                    resp.status_code,
+                    _anthropic_error_detail(resp),
+                )
     except Exception:  # noqa: BLE001
-        log.warning("Claude API call failed; falling back to rule-based analysis")
+        log.warning("%s API call failed; falling back to rule-based analysis", provider)
     return "", 0
 
 
@@ -714,7 +781,7 @@ async def _assist_with_claude(
     if not api_key:
         return fallback
 
-    ai_text, _tokens = await _call_claude(prompt, api_key, _get_model(), max_tokens=max_tokens)
+    ai_text, _tokens = await _call_llm(prompt, api_key, _get_model(), max_tokens=max_tokens)
     if not ai_text:
         return fallback
 
@@ -723,7 +790,7 @@ async def _assist_with_claude(
         summary=lines[0] if lines else ai_text.strip()[:240],
         bullets=lines[1:4] if len(lines) > 1 else fallback.bullets,
         recommendations=lines[4:6] if len(lines) > 4 else fallback.recommendations,
-        analysis_type="claude_ai",
+        analysis_type="llm_ai",
         disclaimer=_DISCLAIMER,
     )
 
@@ -867,10 +934,12 @@ async def get_ai_settings(
 ) -> AiSettingsResponse:
     """Return current AI settings (API key is masked to last 4 chars)."""
     api_key = _get_api_key()
+    model = _get_model()
     return AiSettingsResponse(
         configured=bool(api_key),
         key_preview=_mask_key(api_key),
-        model=_get_model(),
+        model=model,
+        provider=_provider_for(model),
         source=_detect_source(),
         supported_models=SUPPORTED_MODELS,
     )
@@ -905,25 +974,44 @@ async def test_ai_connection(
     body: AiTestRequest,
     _current_user: UserInfo = Depends(require_admin_jwt),
 ) -> AiTestResponse:
-    """Send a minimal test request to the Anthropic API to verify the key."""
+    """Send a minimal test request to the configured LLM provider to verify the key."""
+    provider = _provider_for(body.model)
+    provider_label = "DeepSeek" if provider == "deepseek" else "Claude"
     start = time.monotonic()
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(
-                "https://api.anthropic.com/v1/messages",
-                headers={
-                    "x-api-key": body.api_key,
-                    "anthropic-version": "2023-06-01",
-                    "content-type": "application/json",
-                },
-                json={
-                    "model": body.model,
-                    "max_tokens": 16,
-                    "messages": [{"role": "user", "content": "接続テスト。OKのみ返答してください。"}],
-                },
-            )
+            if provider == "deepseek":
+                resp = await client.post(
+                    "https://api.deepseek.com/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {body.api_key}",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": body.model,
+                        "max_tokens": 16,
+                        "messages": [{"role": "user", "content": "接続テスト。OKのみ返答してください。"}],
+                    },
+                )
+            else:
+                resp = await client.post(
+                    "https://api.anthropic.com/v1/messages",
+                    headers={
+                        "x-api-key": body.api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json={
+                        "model": body.model,
+                        "max_tokens": 16,
+                        "messages": [{"role": "user", "content": "接続テスト。OKのみ返答してください。"}],
+                    },
+                )
     except httpx.TimeoutException:
-        return AiTestResponse(ok=False, message="タイムアウト: Anthropic API への接続がタイムアウトしました")
+        return AiTestResponse(
+            ok=False,
+            message=f"タイムアウト: {provider_label} API への接続がタイムアウトしました",
+        )
     except Exception as exc:  # noqa: BLE001
         return AiTestResponse(ok=False, message=f"接続エラー: {exc}")
 
@@ -934,11 +1022,11 @@ async def test_ai_connection(
             ok=True,
             model=body.model,
             latency_ms=latency_ms,
-            message="接続成功: Claude API に正常に接続できました",
+            message=f"接続成功: {provider_label} API に正常に接続できました",
         )
 
     status = resp.status_code
-    msg = _format_anthropic_error(status, _anthropic_error_detail(resp))
+    msg = _format_ai_error(status, _anthropic_error_detail(resp), provider=provider)
 
     return AiTestResponse(ok=False, message=msg)
 
@@ -990,11 +1078,11 @@ async def analyze(
                 f"50文字以内で追加の専門的アドバイスがあれば加えてください。"
             )
 
-        ai_text, _usage = await _call_claude(prompt, api_key, model)
+        ai_text, _usage = await _call_llm(prompt, api_key, model)
         if ai_text:
             result["summary"] = ai_text.strip()
-            result["analysis_type"] = "claude_ai"
-            analysis_type = "claude_ai"
+            result["analysis_type"] = "llm_ai"
+            analysis_type = "llm_ai"
 
     result["disclaimer"] = _DISCLAIMER
     _record_ai_usage(_LAST_USAGE_TOKENS)

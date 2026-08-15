@@ -755,7 +755,7 @@ describe("AiSettingsPage", () => {
     await waitFor(() =>
       expect(container.textContent).not.toContain("読み込み中"),
     );
-    expect(container.textContent).toContain("Anthropic Claude API 設定");
+    expect(container.textContent).toContain("LLM API 設定（Claude / DeepSeek）");
   });
 
   it("handleTest shows validation error when apiKey is empty", async () => {
@@ -796,7 +796,7 @@ describe("AiSettingsPage", () => {
     await waitFor(() => expect(container.textContent).toContain("接続済み"));
 
     const apiKeyInput = container.querySelector(
-      'input[placeholder="sk-ant-..."]',
+      'input[placeholder="sk-ant-... または sk-..."]',
     ) as HTMLInputElement;
     fireEvent.change(apiKeyInput, { target: { value: "sk-ant-test-key" } });
 
@@ -825,7 +825,7 @@ describe("AiSettingsPage", () => {
     await waitFor(() => expect(container.textContent).toContain("接続済み"));
 
     const apiKeyInput = container.querySelector(
-      'input[placeholder="sk-ant-..."]',
+      'input[placeholder="sk-ant-... または sk-..."]',
     ) as HTMLInputElement;
     fireEvent.change(apiKeyInput, { target: { value: "sk-ant-test-key" } });
 
