@@ -272,6 +272,39 @@ async def login_local(body: LocalLoginRequest) -> TokenResponse:
 
 
 @router.post(
+    "/demo-login",
+    response_model=TokenResponse,
+    summary="MVP 公開デモ用ログイン（資格情報なし）",
+    include_in_schema=False,
+)
+async def login_demo() -> TokenResponse:
+    """MVP 公開デモ: 資格情報なしでデモ利用者の JWT を払い出す。
+
+    WMCDSS_AUTH_BYPASS=true の環境でのみ有効。無効時は 404 を返して
+    この経路の存在自体を露出しない（本番では常に 404）。
+    """
+    s = get_settings()
+    if not s.auth_bypass:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    username = s.auth_bypass_username
+    role = s.auth_bypass_role if s.auth_bypass_role in ("field", "hq", "admin") else s.default_role
+    token = create_access_token(
+        subject=username,
+        auth_type="local",
+        extra={"display_name": username},
+        role=role,
+    )
+    return TokenResponse(
+        access_token=token,
+        username=username,
+        display_name=username,
+        auth_type="local",
+        role=role,
+        expires_in_minutes=s.jwt_expire_minutes,
+    )
+
+
+@router.post(
     "/login/m365", response_model=TokenResponse, summary="Microsoft 365 ログイン（非対話式 ROPC）"
 )
 async def login_m365(body: M365LoginRequest) -> TokenResponse:

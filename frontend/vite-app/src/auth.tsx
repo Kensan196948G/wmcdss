@@ -44,6 +44,37 @@ function safeStorage() {
   return null;
 }
 
+/**
+ * MVP 公開デモ用の自動ログイン。
+ *
+ * サーバーが WMCDSS_AUTH_BYPASS=true で動いている場合だけ
+ * POST /auth/demo-login が JWT を返す。無効な環境では 404 になるので
+ * null を返し、呼び出し側は通常のログイン画面を表示する。
+ */
+export async function tryDemoLogin(): Promise<AuthUser | null> {
+  try {
+    const res = await fetch(`${getApiBase()}/auth/demo-login`, { method: 'POST' });
+    if (!res.ok) return null;
+    const body = (await res.json()) as {
+      access_token?: string;
+      username?: string;
+      display_name?: string;
+      role?: AuthUser['role'];
+    };
+    if (!body.access_token || !body.username) return null;
+    const user: AuthUser = {
+      username: body.username,
+      displayName: body.display_name ?? body.username,
+      authType: 'local',
+      role: body.role,
+    };
+    AuthStore.save(body.access_token, user);
+    return user;
+  } catch {
+    return null;
+  }
+}
+
 export const AuthStore = {
   getToken,
   getUser(): AuthUser | null {

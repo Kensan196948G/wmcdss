@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import { AppShell } from './app-shell';
 import { WMCDSS_API } from './api';
-import { AuthStore, LoginPage, type AuthUser } from './auth';
+import { AuthStore, LoginPage, tryDemoLogin, type AuthUser } from './auth';
 import { UNAUTHORIZED_EVENT } from './auth-token';
 import './tweaks-panel';
 import './styles.css';
@@ -87,6 +87,8 @@ function App() {
   const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(
     () => window.BACKEND_STATUS ?? null,
   );
+  // デモログインを試したか（1 リクエストに限定するためのフラグ）
+  const [demoTried, setDemoTried] = useState(false);
 
   // ログイン後にだけバックエンドを初期化する。GET /sites 等は本番では JWT を
   // 要求するため、未認証のまま preflight すると「未接続」と誤判定される。
@@ -120,7 +122,20 @@ function App() {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
+  // MVP 公開デモ: サーバー側でログイン認証がバイパスされている場合は、
+  // ログイン画面を出さずにデモ用セッションを自動で開始する。
+  // バイパスが無効な環境では /auth/demo-login が 404 になるため、
+  // 従来どおりログイン画面が表示される。
+  useEffect(() => {
+    if (user || demoTried) return;
+    setDemoTried(true);
+    void tryDemoLogin().then((demoUser) => {
+      if (demoUser) setUser(demoUser);
+    });
+  }, [user, demoTried]);
+
   if (!user) {
+    if (!demoTried) return null; // デモログインの判定が終わるまで何も出さない
     return (
     <LoginPage
       onLogin={(loggedInUser) => {

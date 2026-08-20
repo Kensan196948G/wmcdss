@@ -31,6 +31,14 @@ class Settings(BaseSettings):
     # dev/prod の切り替えとして機能していないため。
     allow_insecure_defaults: bool = False
 
+    # MVP 公開デモ用のログイン認証バイパス。true のとき
+    # POST /api/v1/auth/demo-login が資格情報なしで JWT を払い出す。
+    # 既定は False。本番 compose は設定しないこと。
+    auth_bypass: bool = False
+    # バイパスで払い出す利用者名とロール（既定は閲覧中心の field）。
+    auth_bypass_username: str = "demo"
+    auth_bypass_role: str = "field"
+
     # 既定は非公開。/docs と /openapi.json は認証なしで全 API 仕様（パス、
     # パラメータ、スキーマ）を開示するため、攻撃対象領域の地図を無償で配る。
     # docker-compose.yml / docker-compose.production.yml は両方とも明示的に

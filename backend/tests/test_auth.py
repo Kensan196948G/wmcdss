@@ -292,3 +292,58 @@ def test_decode_access_token_roundtrip(monkeypatch):
     assert claims["auth_type"] == "local"
     assert claims["display_name"] == "管理者"
     assert "exp" in claims
+
+
+# ---------------------------------------------------------------------------
+# POST /api/v1/auth/demo-login — MVP 公開デモ用のログイン認証バイパス
+# ---------------------------------------------------------------------------
+
+
+def test_demo_login_disabled_by_default(monkeypatch):
+    """既定では経路の存在自体を隠す 404。"""
+    c = _make_client(monkeypatch)
+    r = c.post("/api/v1/auth/demo-login")
+    assert r.status_code == 404
+
+
+def test_demo_login_issues_token_when_enabled(monkeypatch):
+    """WMCDSS_AUTH_BYPASS=true 相当の設定でのみトークンを払い出す。"""
+    c = _make_client(monkeypatch, _settings(auth_bypass=True))
+    r = c.post("/api/v1/auth/demo-login")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["token_type"] == "bearer"
+    assert body["username"] == "demo"
+    assert body["role"] == "field"
+    assert body["access_token"]
+
+
+def test_demo_login_respects_configured_user_and_role(monkeypatch):
+    c = _make_client(
+        monkeypatch,
+        _settings(auth_bypass=True, auth_bypass_username="reviewer", auth_bypass_role="hq"),
+    )
+    r = c.post("/api/v1/auth/demo-login")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["username"] == "reviewer"
+    assert body["role"] == "hq"
+
+
+def test_demo_login_rejects_unknown_role(monkeypatch):
+    """不正なロール名は昇格させず、既定ロールへ落とす。"""
+    c = _make_client(
+        monkeypatch, _settings(auth_bypass=True, auth_bypass_role="superuser")
+    )
+    r = c.post("/api/v1/auth/demo-login")
+    assert r.status_code == 200
+    assert r.json()["role"] != "superuser"
+
+
+def test_demo_login_token_is_accepted_by_me(monkeypatch):
+    """払い出したトークンで /auth/me が通ること（=実際に閲覧できる）。"""
+    c = _make_client(monkeypatch, _settings(auth_bypass=True))
+    token = c.post("/api/v1/auth/demo-login").json()["access_token"]
+    r = c.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200
+    assert r.json()["username"] == "demo"
