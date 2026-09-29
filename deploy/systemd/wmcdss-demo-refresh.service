@@ -1,0 +1,29 @@
+[Unit]
+Description=WMCDSS - refresh demo observations for the MVP demo dashboard (one-shot)
+Documentation=file://${WMCDSS_HOME}/docs/DEMO-DATA.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# チェックアウト位置は他 unit と同じ 1 箇所から取る（fail-closed）。
+EnvironmentFile=%h/.config/wmcdss/deploy.env
+# 実装は scripts/wmcdss-demo-refresh.sh が唯一。
+# デフォルトは `docker exec wmcdss-db` 経路。稼働中の MVP スタックは
+# docker-compose.production.yml ではなく検証用 compose（project wmcdss-verify）
+# で起動されており、`docker compose -f docker-compose.production.yml exec` では
+# コンテナを解決できないため、本 unit はコンテナ名で叩く。
+# compose 経路（--compose production）を使いたい場合は
+# `systemctl --user edit wmcdss-demo-refresh.service` で ExecStart を上書きする。
+#   [Service]
+#   ExecStart=
+#   ExecStart=/bin/bash ${WMCDSS_HOME}/scripts/wmcdss-demo-refresh.sh --compose production
+# DB コンテナ名を変えている場合:
+#   Environment=WMCDSS_DB_CONTAINER=my-db
+ExecStart=/bin/bash ${WMCDSS_HOME}/scripts/wmcdss-demo-refresh.sh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target

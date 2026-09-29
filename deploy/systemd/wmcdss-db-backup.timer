@@ -1,0 +1,15 @@
+[Unit]
+Description=WMCDSS - run daily PostgreSQL backup
+Documentation=man:systemd.timer(5)
+
+[Timer]
+# OPERATIONS-2026-08-12.md §1/§2 の推奨どおり 03:30 JST に発火
+# （サーバー TZ が Asia/Tokyo 前提）。DB バックアップは 30 世代 (~30 日) を
+# 保持し、RPO 24h を成立させる。
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+AccuracySec=60s
+Unit=wmcdss-db-backup.service
+
+[Install]
+WantedBy=timers.target

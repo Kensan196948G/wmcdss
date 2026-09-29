@@ -4,15 +4,37 @@ import json
 import uuid
 from datetime import date, datetime, timezone
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import SQLAlchemyError
 
+import app.api.auth as api_auth_mod
 from app.api.decisions import router
+from app.core.config import Settings
 from app.db.session import get_db
 from app.models.observations import WeatherObservation, MarineObservation
 from app.models.threshold import Threshold
 from app.services.decision import REASON_ALL_CLEAR
+
+# ---------------------------------------------------------------------------
+# このモジュールは POST /decisions の判断ロジック（閾値評価・正規化・監査）を
+# 検証する。認可は対象外なので、開発スタック相当の
+# WMCDSS_DEV_OPEN_ACCESS=true を明示的に与えて「資格情報なしでも route 本体へ
+# 到達できる」状態を作る。
+#
+# 以前はこの状態が暗黙の既定（api_keys 空 = 素通り）だったため、テストは
+# 「無認証で書ける」ことに気付かないまま依存していた。fail-closed 化
+# (2026-09, tests/test_admin_guard.py) 以降は明示的な opt-in を要求する。
+# field ロールの JWT で許可されること（デモの判定記録）は
+# test_admin_guard.py::test_field_jwt_is_allowed_on_any_user_route が固定する。
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _dev_open_access(monkeypatch):
+    fake = Settings(dev_open_access=True)
+    monkeypatch.setattr(api_auth_mod, "get_settings", lambda: fake)
 
 _NOW = datetime(2026, 5, 27, 9, 0, 0, tzinfo=timezone.utc)
 

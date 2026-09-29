@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 
 import { AppShell } from './app-shell';
 import { WMCDSS_API } from './api';
-import { AuthStore, LoginPage, type AuthUser } from './auth';
+import { AuthStore, LoginPage, tryDemoLogin, type AuthUser } from './auth';
 import { UNAUTHORIZED_EVENT } from './auth-token';
 import './tweaks-panel';
 import './styles.css';
@@ -76,6 +76,17 @@ function BackendStatusStrip({ status }: { status: BackendStatus | null }) {
 // 認証ゲート付きアプリルート
 // ---------------------------------------------------------------------------
 
+/**
+ * デモログイン判定の状態。
+ *
+ *   'pending' … サーバーへ問い合わせ中（まだ白黒ついていない）
+ *   'done'    … 判定完了（成功で user が入る / 失敗・404 なら null のまま）
+ *
+ * 「試したか」ではなく「終わったか」を表すのが要点。判定が終わるまでは何も
+ * 描画しないため、バイパス有効環境でログイン画面が一瞬見えるちらつきが出ない。
+ */
+type DemoState = 'pending' | 'done';
+
 function App() {
   const [user, setUser] = useState<AuthUser | null>(() => {
     // 起動時にトークンが有効かチェック
@@ -87,6 +98,11 @@ function App() {
   const [backendStatus, setBackendStatus] = useState<BackendStatus | null>(
     () => window.BACKEND_STATUS ?? null,
   );
+  // 判定が終わるまで 'pending'。多重 POST の抑止は下の effect の実行条件で行う
+  // （user が居る / 既に 'done' なら何もしない）。
+  // 注意: React StrictMode の開発時のみ effect が 2 回実行されるため
+  // POST も 2 回になる（production build では 1 回）。
+  const [demoState, setDemoState] = useState<DemoState>('pending');
 
   // ログイン後にだけバックエンドを初期化する。GET /sites 等は本番では JWT を
   // 要求するため、未認証のまま preflight すると「未接続」と誤判定される。
@@ -120,7 +136,39 @@ function App() {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
+  // MVP 公開デモ: サーバー側でログイン認証がバイパスされている場合は、
+  // ログイン画面を出さずにデモ用セッションを自動で開始する。
+  // バイパスが無効な環境では /auth/demo-login が 404 になるため、
+  // 従来どおりログイン画面が表示される。
+  //
+  // 判定の完了（成功・404・予期しない reject のいずれでも）を finally で
+  // 'done' に倒す。これにより、判定が返らないまま固まっても空白になり続けず、
+  // 必ず LoginPage か AppShell のどちらかへ到達する。
+  // 依存配列は [user, demoState] で、どちらかが変われば再実行されるが、
+  // 先頭の early return により POST は 1 判定につき 1 回で止まる。
+  useEffect(() => {
+    if (user || demoState === 'done') return;
+    let cancelled = false;
+    void tryDemoLogin()
+      .then((demoUser) => {
+        if (!cancelled && demoUser) setUser(demoUser);
+      })
+      .catch((e: unknown) => {
+        // tryDemoLogin 自身は失敗時に null を返す契約だが、予期しない reject でも
+        // UI を固まらせない（finally が 'done' にして LoginPage へ落とす）。
+        console.warn('[wmcdss] tryDemoLogin failed:', e);
+      })
+      .finally(() => {
+        if (!cancelled) setDemoState('done');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, demoState]);
+
   if (!user) {
+    // 判定が終わるまでは何も描画しない（ログイン画面が一瞬出るちらつきを防ぐ）
+    if (demoState === 'pending') return null;
     return (
     <LoginPage
       onLogin={(loggedInUser) => {

@@ -6,7 +6,15 @@ requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.32",
-  "sqlalchemy>=2.0",
+  # `asyncio` extra を必ず付けること。SQLAlchemy 2.1 で `greenlet` が
+  # 必須依存から `asyncio` extra へ移動したため、素の `sqlalchemy>=2.0` だと
+  # 新規インストール（CI・Docker イメージ）で greenlet が入らず、
+  # `sqlalchemy.ext.asyncio` の import 時に
+  # "The SQLAlchemy asyncio module requires that the Python 'greenlet' library
+  # is installed" で落ちる（2026-09-29 に CI で実際に発生。ローカルの
+  # 2.0.x は greenlet を同梱するため再現しなかった）。
+  # app/db/session.py が async engine を使う以上、これは必須依存である。
+  "sqlalchemy[asyncio]>=2.0",
   "asyncpg>=0.30",
   "pydantic>=2.9",
   "pydantic-settings>=2.6",

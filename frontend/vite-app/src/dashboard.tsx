@@ -5,14 +5,23 @@ import {
   type Site, type Status,
 } from './data';
 import { useLiveSites } from './weather-marine';
+import { matchesArea } from './area';
 import {
   requestAiChat,
   requestAiRiskSummary,
-  backendConnected,
-  fetchDashboardSummary,
   type DashboardSiteSummary,
   type AiAssistResponse,
 } from './api';
+import {
+  applySummaries,
+  countStatuses,
+  indexSummaries,
+  statusOf,
+  useDashboardSummary,
+} from './dashboard-summary';
+
+// 後方互換: statusOf は以前このモジュールから export していた。
+export { statusOf };
 
 declare global {
   interface Window {
@@ -48,12 +57,8 @@ export interface MapViewProps {
   selectedArea?: string | null;
 }
 
-/** バックエンド判定 status（go/caution/stop）→ 表示用 Status（ok/warn/danger） */
-export function statusOf(status: string | undefined): Status {
-  if (status === 'caution') return 'warn';
-  if (status === 'stop') return 'danger';
-  return 'ok';
-}
+/** バックエンド判定 status（go/caution/stop）→ 表示用 Status（ok/warn/danger）は
+ *  dashboard-summary.ts に集約（ヘッダーと同一の写像を使うため）。 */
 
 function fmt(v: number | null | undefined, unit: string, digits = 1): string {
   if (v == null || Number.isNaN(v)) return '—';
@@ -153,22 +158,27 @@ export interface SiteStatusCardProps {
   site: Site & { summary?: DashboardSiteSummary };
   onClick: (id: string) => void;
   density?: 'normal' | 'compact';
+  /** バックエンド接続中か。true のとき実判定が無い現場にモック値を表示しない。 */
+  connected?: boolean;
 }
 
-export const SiteStatusCard: FC<SiteStatusCardProps> = ({ site, onClick, density }) => {
+export const SiteStatusCard: FC<SiteStatusCardProps> = ({ site, onClick, density, connected = false }) => {
   const live = !!site.summary;
+  // 生成値（モック）を出してよいのは「未接続のデモ」だけ。接続中に集約判定が
+  // 無い現場へモック値を出すと、実測値・実判定と見分けがつかない（task-10）。
+  const showMock = !live && !connected;
   const w = site.summary?.latest_weather
     ? {
         temp: site.summary.latest_weather.temperature_c,
         wind: site.summary.latest_weather.wind_speed_ms,
         rain: site.summary.latest_weather.precip_mm,
       }
-    : !live
+    : showMock
       ? (() => { const g = generateWeather(site.id); return { temp: g.temp, wind: g.wind, rain: g.rain }; })()
       : null;
   const m = site.summary?.latest_marine
     ? { waveHeight: site.summary.latest_marine.sig_wave_h_m }
-    : !live
+    : showMock
       ? (() => { const g = generateMarine(site.id); return g ? { waveHeight: g.waveHeight } : null; })()
       : null;
   const decision = { status: site.status, reasons: site.summary ? [site.summary.reason] : [] };
@@ -185,10 +195,15 @@ export const SiteStatusCard: FC<SiteStatusCardProps> = ({ site, onClick, density
             <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>{site.shortName}</div>
             <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{TYPE_LABEL[site.type]}・{site.station}</div>
           </div>
-          <span className={`badge ${STATUS_CLASS[decision.status]}`}>
-            <span className="badge-dot"></span>
-            {STATUS_LABEL[decision.status]}
-          </span>
+          {live || !connected ? (
+            <span className={`badge ${STATUS_CLASS[decision.status]}`}>
+              <span className="badge-dot"></span>
+              {STATUS_LABEL[decision.status]}
+            </span>
+          ) : (
+            // 接続中で集約判定がまだ無い現場。モックの判定を出さない。
+            <span className="badge badge-info">判定取得中</span>
+          )}
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8, marginBottom: 8 }}>
@@ -310,48 +325,35 @@ export interface DashboardPageProps {
 export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => {
   const liveSites = useLiveSites();
   const [selectedArea, setSelectedArea] = useState<string | null>(null);
-  const [summaries, setSummaries] = useState<DashboardSiteSummary[] | null>(null);
   const [riskAi, setRiskAi] = useState<AiAssistResponse | null>(null);
   const [riskLoading, setRiskLoading] = useState(false);
   const [chatQuestion, setChatQuestion] = useState('');
   const [chatAi, setChatAi] = useState<AiAssistResponse | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
 
-  useEffect(() => {
-    if (!backendConnected()) return;
-    let cancelled = false;
-    fetchDashboardSummary()
-      .then((data) => {
-        if (!cancelled) setSummaries(data.sites);
-      })
-      .catch(() => {
-        if (!cancelled) setSummaries(null);
-      });
-    return () => { cancelled = true; };
-  }, []);
+  // 集約判定はヘッダーと共有する単一情報源から取る（dashboard-summary.ts）。
+  // 以前は `useEffect(..., [])` の中で backendConnected() を評価していたため、
+  // 接続確立前にマウントすると二度と取得されず、カードがモック判定のまま
+  // 表示されていた（task-10 (A)）。今は接続確立を検知して必ず取得する。
+  const { summaries, ready: verdictsReady, connected } = useDashboardSummary();
 
   // 実データ接続時は site.status をバックエンド判定で上書きする。モック値を
   // 判定に使わないための要（この集約レスポンスは生成値を持たない）。
-  const summaryById = useMemo(() => {
-    const map = new Map<string, DashboardSiteSummary>();
-    (summaries ?? []).forEach((s) => map.set(s.site_id, s));
-    return map;
-  }, [summaries]);
+  const summaryById = useMemo(() => indexSummaries(summaries), [summaries]);
 
   const siteViews: Array<Site & { summary?: DashboardSiteSummary }> = useMemo(
-    () => liveSites.map((s) => {
-      const summary = summaryById.get(s.id);
-      return summary ? { ...s, status: statusOf(summary.status), summary } : s;
-    }),
+    () => applySummaries(liveSites, summaryById),
     [liveSites, summaryById],
   );
 
-  const visibleSites = selectedArea
-    ? siteViews.filter((s) => s.area === selectedArea)
-    : siteViews;
-  const okCount = visibleSites.filter((s) => s.status === 'ok').length;
-  const warnCount = visibleSites.filter((s) => s.status === 'warn').length;
-  const dangerCount = visibleSites.filter((s) => s.status === 'danger').length;
+  // 地域を判別できなかった現場（area === '全国'）は、どの地域を選んでも表示する。
+  // 施工判断の画面で現場が無言で消える（0 件表示になる）ことを防ぐ（task-12）。
+  const visibleSites = siteViews.filter((s) => matchesArea(s.area, selectedArea));
+  // 接続中に実判定が未取得のあいだは、モック由来の件数を実判定として出さない。
+  const counts = countStatuses(visibleSites);
+  const okCount = verdictsReady ? counts.ok : '—';
+  const warnCount = verdictsReady ? counts.warn : '—';
+  const dangerCount = verdictsReady ? counts.danger : '—';
   const today = FORECAST_DAYS[0];
 
   const aiSitePayload = visibleSites.map((site) => {
@@ -529,7 +531,7 @@ export const DashboardPage: FC<DashboardPageProps> = ({ navigate, density }) => 
             現場ステータス（{visibleSites.length}件{selectedArea ? ` / ${selectedArea}` : ''}）
           </div>
           {visibleSites.map((site) => (
-            <SiteStatusCard key={site.id} site={site} density={density}
+            <SiteStatusCard key={site.id} site={site} density={density} connected={connected}
               onClick={(id) => navigate('site-detail', id)} />
           ))}
         </div>

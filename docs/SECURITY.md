@@ -12,12 +12,16 @@
 | ブラウザからの認証エラー読み取り不能 | CORS が auth より先に実行されるよう middleware 登録順を制御 |
 | 操作者の不明化 | mutation 成功時に `audit_log(actor, action, detail)` を必ず記録 |
 | ローカル開発時の摩擦 | `api_keys = []` で認証無効化を可能（本番では必ず設定） |
+| 資格情報なしリクエストの admin 昇格 | `_credential_less_holder()` が fail-closed（401/403）。開発スタックの opt-in `WMCDSS_DEV_OPEN_ACCESS` がある場合のみ admin 相当（2026-09-29 修正。§2.6） |
 
 ## 2. API Key 認証の実装ポイント
 
 > **2026-08-12 追記**: 読み取り系（GET）も `get_current_user_or_anon` /
 > `require_*` 依存で保護する。本番（api_keys 設定済み）では Bearer JWT または
 > X-API-Key が無い GET は 401。開発モード（api_keys 空）のみ無認証を許容する。
+>
+> **2026-09-29 修正**: 上の「開発モード（api_keys 空）のみ無認証を許容する」は
+> **変更系メソッドについては誤りだった**。§2.6 を必ず読むこと。
 
 `backend/app/core/security.py`
 
@@ -134,8 +138,98 @@ _SECURITY_HEADERS = {
 Swagger UI / ReDoc が使う CDN リソースのために、`/docs` `/redoc` のパスでは
 CSP の `default-src 'none'` を免除している。
 
-HSTS は**意図的に含めない**。現状の配信は平文 HTTP であり、TLS 終端が無い状態で
-HSTS を名乗るのは実態と異なる。TLS 導入と同じ変更で追加する。
+HSTS は**意図的に含めない**。本番 compose（`docker-compose.production.yml`）の配信は
+LAN 内の平文 HTTP であり、TLS 終端が無い状態で HSTS を名乗るのは実態と異なる。
+TLS 導入と同じ変更で追加する。
+
+> **2026-09-29 追記（MVP はこの前提から外れている）**: 公開 MVP
+> （`wmcdss-mvp.mirai-dx-platform.com`）は Cloudflare Tunnel 経由で **HTTPS 配信**
+> されており（実測: `http://` → 301、`server: cloudflare`、CSP / nosniff /
+> X-Frame-Options 付与）、上記「平文 HTTP」の前提は MVP には当てはまらない。
+> ただし HSTS の追加は **公開ホスト名のブラウザ側ポリシーを最大 age 分だけ固定する
+> 変更**であり、Tunnel を外して平文へ戻す運用に切り替えた場合にアクセス不能を
+> 招く。ネットワークセキュリティの変更として扱い、**実施前に
+> Action / Risk / Impact / Rollback を提示して承認を得ること**（本リポジトリでは
+> 未実施）。Cloudflare 側の HSTS 設定でも同等の効果が得られるため、適用面の
+> 選択肢も含めて判断する。
+
+### 2.6 資格情報なしリクエストの解決（2026-09-29 修正・重要）
+
+**修正前の欠陥**: route 層の `require_admin_or_api_key` /
+`require_hq_or_admin_or_api_key` / `require_any_user_or_api_key` /
+`require_machine_client` は、`Authorization` ヘッダーが無いとき
+「APIKeyMiddleware が X-API-Key を照合済みだから」という前提で
+`_api_key_holder()`（= **admin 相当**）を返していた。ところが
+`APIKeyMiddleware` は `api_keys` が空だと最初の分岐で丸ごと素通りする
+（§2.1 の「空のときは認証無効」）。結果、**`api_keys` が空の環境では
+`Authorization` ヘッダーを外すだけで匿名リクエストが admin 相当になった。**
+
+公開 MVP は `WMCDSS_API_KEYS_RAW` が空で稼働していたため、実際に以下が
+無認証で通っていた（2026-09-29 実測。body を空にした非破壊 probe で
+「422/404 が返る = 認可を通過した」と判定）:
+
+| メソッド | パス | 修正前 | 修正後 |
+|---|---|---|---|
+| POST | `/api/v1/sites` | 422（認可通過） | **401** |
+| POST | `/api/v1/thresholds` | 422（認可通過） | **401** |
+| PATCH | `/api/v1/thresholds/{id}` | 404（認可通過） | **401** |
+| DELETE | `/api/v1/thresholds/{id}` | 404（認可通過） | **401** |
+| POST | `/api/v1/decisions` | 422（認可通過） | **401** |
+| POST | `/api/v1/observations/weather` | 422（認可通過） | **403** |
+| POST | `/api/v1/observations/marine` | 422（認可通過） | **403** |
+
+観測値は施工判断（go/caution/stop）の入力そのものであるため、これは
+「第三者が任意の現場の判定を外部から操作できる」ことを意味していた。
+
+**修正後**: 資格情報なしの解決を `_credential_less_holder(request)` に一本化した。
+
+```python
+# 優先順位（fail-closed）
+1. X-API-Key が設定済みの鍵と一致      -> _api_key_holder()   # admin 相当（機械連携）
+2. WMCDSS_DEV_OPEN_ACCESS=true        -> _dev_open_holder()  # 開発スタック専用の opt-in
+3. それ以外                            -> 401
+```
+
+- 判定は 4 つの依存すべてで同一。1 つでも緩い経路が残ると別経路になるため。
+- `_credential_less_holder` は **依存側でも X-API-Key を再照合する**。
+  `auth_exempt_paths` のパスでは middleware が働かないため、
+  「middleware が通したから安全」という前提に依存しない。
+- `require_machine_client` は資格情報なしを **403**（API キー専用の意味を保つ）。
+- `get_current_user_or_anon`（GET 用）は匿名を引き続き通すが、
+  **`role="admin"` を返さない**。匿名の身元は `anon` + `default_role`（既定 `field`）とし、
+  将来 role を認可判定に使った瞬間に昇格経路が復活するのを防ぐ。
+- **Bearer 付きの経路は不変**。`field` ロールの JWT は
+  `require_any_user_or_api_key`（判定の記録）で従来どおり許可される。
+
+**`WMCDSS_DEV_OPEN_ACCESS` の扱い**
+
+| 環境 | 設定 | 理由 |
+|---|---|---|
+| `docker-compose.yml`（開発） | 既定は **false**（`${WMCDSS_DEV_OPEN_ACCESS:-false}`） | 資格情報なしで curl したい開発者だけが `.env` で `true` を明示する（2026-09-29 に既定を反転。反転前は既定 true で、compose で起動した瞬間に匿名＝admin へ戻る fail-open だった） |
+| `docker-compose.production.yml` | **渡さない**（=false） | 本番で匿名が admin になる理由はない。`${VAR:-false}` 形式で書かないのは、運用者のシェルに残った `true` が流れ込む経路を作らないため |
+| `.env.production.example` | コメントで「設定しない」と明記 | 同上 |
+| MVP スタック | **渡さない**（=false） | `api_keys` が空のため、渡すと穴が戻る。`deploy/MVP-STACK.md` 参照 |
+
+> **`WMCDSS_ALLOW_INSECURE_DEFAULTS` と混同しないこと。** あちらは「起動時検査を警告へ
+> 降格する」だけで、**資格情報なしリクエストを admin にする効果はない**。この混同が
+> 今回の穴の背景にある。資格情報なしの扱いを決めるのは `WMCDSS_DEV_OPEN_ACCESS` ただ 1 つ。
+
+### 2.7 独立検証で残った論点（2026-09-29 / 未決定を含む）
+
+`docs/VERIFY-SECURITY-2026-09-29.md` の敵対的再検証で、以下が残論点として上がった。
+**実装は変更していない**（Authorization の意味論に関わるため、判断を要する）。
+
+| # | 内容 | 状態 |
+|---|---|---|
+| F-01 [High] | dev compose が `WMCDSS_DEV_OPEN_ACCESS` を既定 true で渡し、`api_keys` 空と組み合わさると匿名＝admin に戻る | **2026-09-29 修正済み**（既定 false へ反転。`backend/tests/test_startup_role_guards.py` が機械的に固定） |
+| F-02 [High] | `POST /api/v1/auth/demo-login` が配る `field` JWT で `POST /api/v1/decisions` が通る。`/sites` は無認証で読めるため、公開デモでは「demo-login → site UUID 取得 → 判定の記録」が可能。`decisions`・`audit_log` が増え、`WMCDSS_NOTIFY_*` 設定時は偽の警戒/中止ダイジェストが送られうる（現 MVP は未設定で no-op） | **未決定**。README は「判定はすべて記録に残る」と説明しており *意図した機能* とも読める一方、公開デモとしては無制限の書き込み。選択肢: (a) 現状維持（IP 単位 60 req/min のレート制限と監査のみ）、(b) demo-login に読み取り専用ロールを新設し `POST /decisions` を拒否、(c) デモでは判定記録を無効化。**承認のうえ決定する** |
+| F-03 [Medium] | `WMCDSS_DEFAULT_ROLE=admin` で匿名読み取りの身元と未登録ユーザーが admin になる | **2026-09-29 修正済み**（起動 warning を追加。fatal にはしていない） |
+| F-04 [Medium] | `WMCDSS_AUTH_BYPASS_ROLE=admin\|hq` で無認証にその権限の JWT が配られる（警告なし） | **2026-09-29 修正済み**（降格後の実効ロールで判定し warning。admin/hq はより強い文言） |
+| F-05 [Low] | 資格情報なしの規則が `_credential_less_holder` と `require_machine_client` に二重実装 | 未着手（片側だけ変更すると別経路が復活する） |
+| F-06 [Low] | 拒否コードの不統一（`machine` のみ 403、他は 401） | 未着手（挙動としての危険はなし） |
+| F-07 [Low] | `Authorization` があると `X-API-Key` が無視される | 未着手（バイパスにはならないが機械連携の癖） |
+| F-08 [Info] | 匿名 GET で `/metrics`・`/etl/status`・`/` が 200 | 意図的（監視・疎通）。`/metrics` を閉じるなら監視側の認証設計と同時に |
+| F-10 [Info] | 稼働コンテナが compose ラベルを持つのに compose 解決値と env が不一致（再作成手順が `docker run` と compose の 2 系統に分裂） | 未着手。`deploy/MVP-STACK.md` に `docker run` 手順を明記済み |
 
 ## 3. 監査ログ (audit_log)
 

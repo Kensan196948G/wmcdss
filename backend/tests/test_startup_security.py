@@ -102,6 +102,9 @@ def test_findings_never_contain_the_secret_value():
         ({"expose_openapi": True}, "EXPOSE_OPENAPI"),
         ({"debug": True}, "DEBUG"),
         ({"local_users": ""}, "Entra"),
+        # 資格情報なしを admin 相当にする開発専用フラグ。有効化は起動を止めないが、
+        # 何を許したのかが起動ログに必ず残ること。
+        ({"dev_open_access": True}, "DEV_OPEN_ACCESS"),
     ],
 )
 def test_non_fatal_settings_warn_but_do_not_block(override, needle):
@@ -149,6 +152,14 @@ def test_openapi_is_not_exposed_by_default():
     # 同上。compose は両系とも false を明示しているが、compose を経由しない
     # 起動 (systemd、素の uvicorn) では既定値がそのまま効く。
     assert Settings().expose_openapi is False
+
+
+def test_dev_open_access_is_false_by_default():
+    # 資格情報なしのリクエストを admin 相当として扱う開発専用フラグ。
+    # 既定が True だと「フラグを設定し忘れた本番」で匿名が admin になり、
+    # 公開 URL から現場・閾値・観測値・判定を書き換えられる (実際にそうなっていた)。
+    # この既定値そのものが防御なので、明示的に固定する。
+    assert Settings().dev_open_access is False
 
 
 def test_default_settings_are_rejected_by_the_audit():

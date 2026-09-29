@@ -65,8 +65,11 @@ def audit_security_posture(s: Settings) -> tuple[list[str], list[str]]:
     if not s.api_keys:
         fatal.append(
             "WMCDSS_API_KEYS_RAW が空です。APIKeyMiddleware は API キー未設定時に"
-            "認証を丸ごとスキップするため、観測値の投入を含む全ての変更系"
-            "リクエストが無認証で通ります。"
+            "認証層を丸ごとスキップし、機械連携（ETL・監視・スクリプト）を識別する"
+            "資格情報が存在しない状態になります。route 層の認可も"
+            "WMCDSS_DEV_OPEN_ACCESS を明示しない限り資格情報なしを拒否しますが、"
+            "観測値投入などの機械連携経路を守る API キーそのものが無いため、"
+            "本番では必ず設定してください。"
         )
 
     # --- 防御力は下がるが起動は妨げない設定 = warning -----------------------
@@ -81,6 +84,67 @@ def audit_security_posture(s: Settings) -> tuple[list[str], list[str]]:
             "WMCDSS_EXPOSE_OPENAPI が有効です。/docs と /openapi.json が"
             "無認証で全 API 仕様を公開します。"
         )
+
+    # 資格情報なしを admin 相当にする開発専用フラグ。api_keys 未設定と組み合わさると
+    # 「Authorization ヘッダーを外す = admin」に戻るため、起動のたびに必ず可視化する。
+    # api_keys を設定した本番構成では変更系が APIKeyMiddleware に 401 で拒否される
+    # ため実害は限定的だが、それでも本番で有効にする理由はない。
+    if s.dev_open_access:
+        warnings.append(
+            "WMCDSS_DEV_OPEN_ACCESS が有効です。資格情報なしのリクエストが admin 相当と"
+            "して扱われ、api_keys が空の環境では現場・閾値・判定の変更系 API が"
+            "無認証で通ります。開発スタック専用のフラグであり、本番では絶対に"
+            "設定しないでください。"
+        )
+
+    # --- ロール既定値 --------------------------------------------------------
+    # `default_role` は 2 か所に効く。どちらも「設定漏れが黙って管理者になる」
+    # 方向へ倒れやすいため、admin を既定にした場合は必ず可視化する。
+    #   1. WMCDSS_ROLE_USERS_RAW に未登録のユーザーの JWT ロール (role_for)
+    #   2. 資格情報なしの読み取り身元 (get_current_user_or_anon の anon)
+    # 開発利便を潰さないため fatal にはしない（既存の分類に合わせる）。
+    if s.default_role == "admin":
+        warnings.append(
+            "WMCDSS_DEFAULT_ROLE が admin です。WMCDSS_ROLE_USERS_RAW に未登録の"
+            "ユーザーと、資格情報なしの読み取り身元が admin 相当になります。"
+            "ロール未設定の利用者が黙って管理者になるため、既定は field のままに"
+            "してください。"
+        )
+    elif s.default_role not in ("field", "hq", "admin"):
+        warnings.append(
+            f"WMCDSS_DEFAULT_ROLE が未知の値 ({s.default_role!r}) です。"
+            "ロールは field/hq/admin のいずれかを前提にしているため、"
+            "意図しない権限判定になる可能性があります。"
+        )
+
+    # --- デモログインのバイパス ---------------------------------------------
+    if s.auth_bypass:
+        # demo-login が実際に払い出すロールは、`auth_bypass_role` が
+        # field/hq/admin ならそれを使い、それ以外は default_role へ降格する
+        # （app/api/auth.py と同じ規則）。「設定値」ではなく「実際に配られる
+        # ロール」で危険度を判定する。設定値だけを見ると
+        # auth_bypass_role="superuser" + default_role="admin" のような
+        # 降格後の admin を見落とす。
+        effective_role = (
+            s.auth_bypass_role
+            if s.auth_bypass_role in ("field", "hq", "admin")
+            else s.default_role
+        )
+        if effective_role in ("admin", "hq"):
+            warnings.append(
+                "WMCDSS_AUTH_BYPASS=true かつ、demo-login が払い出すロールが "
+                f"{effective_role!r} です。POST /api/v1/auth/demo-login を叩くだけで"
+                "資格情報なしにその権限の JWT が得られます。管理者権限の取得に認証が"
+                "不要になるため、公開環境では絶対に設定しないでください"
+                "（ロールは field のままにしてください）。"
+            )
+        else:
+            warnings.append(
+                "WMCDSS_AUTH_BYPASS=true です。POST /api/v1/auth/demo-login が"
+                f"資格情報なしでロール {effective_role!r} の JWT を払い出すため、"
+                "ログイン画面なしで API に到達できます。MVP 公開デモ専用の設定であり、"
+                "デモ終了後は false に戻してください。"
+            )
 
     if s.debug:
         warnings.append("WMCDSS_DEBUG が有効です。本番では無効にしてください。")

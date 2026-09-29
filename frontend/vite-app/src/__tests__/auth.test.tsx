@@ -21,7 +21,7 @@ Object.defineProperty(globalThis, "localStorage", {
 });
 
 // ── import after shim is in place ───────────────────────────────────────────
-import { AuthStore, LoginPage, type AuthUser } from "../auth";
+import { AuthStore, LoginPage, tryDemoLogin, type AuthUser } from "../auth";
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
@@ -107,6 +107,144 @@ describe("AuthStore", () => {
       _store["wmcdss_access_token"] = "aaa.!!!.ccc";
       expect(AuthStore.isAuthenticated()).toBe(false);
     });
+  });
+});
+
+// ── tryDemoLogin — MVP 公開デモ用の自動ログイン（bd9628d） ───────────────────
+//
+// サーバーが WMCDSS_AUTH_BYPASS=true のときだけ 200 を返す。本番は 404 なので
+// 呼び出し側（main.tsx）はログイン画面へフォールバックする。ここでは「200 の
+// ときだけ保存して user を返す」「それ以外は必ず null」を固定する。
+
+describe("tryDemoLogin", () => {
+  beforeEach(() => _fakeStorage.clear());
+  afterEach(() => {
+    _fakeStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  it("POSTs to /auth/demo-login once", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await tryDemoLogin();
+
+    expect(mockFetch).toHaveBeenCalledOnce();
+    expect(mockFetch.mock.calls[0][0]).toContain("/auth/demo-login");
+    expect(mockFetch.mock.calls[0][1]).toEqual(expect.objectContaining({ method: "POST" }));
+  });
+
+  it("returns null and stores nothing on 404 (bypass disabled)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 404 }));
+
+    await expect(tryDemoLogin()).resolves.toBeNull();
+    expect(AuthStore.getToken()).toBeNull();
+    expect(AuthStore.getUser()).toBeNull();
+  });
+
+  it("saves the JWT and returns the user on 200", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({
+        access_token: "demo-jwt",
+        username: "demo",
+        display_name: "Demo User",
+        role: "admin",
+      }),
+    }));
+
+    await expect(tryDemoLogin()).resolves.toEqual({
+      username: "demo",
+      displayName: "Demo User",
+      authType: "local",
+      role: "admin",
+    });
+    // 自動ログインでも AuthStore 経由で保存され、以降 isAuthenticated() が真になる
+    expect(AuthStore.getToken()).toBe("demo-jwt");
+    expect(AuthStore.getUser()).toEqual({
+      username: "demo",
+      displayName: "Demo User",
+      authType: "local",
+      role: "admin",
+    });
+  });
+
+  it("falls back to username when display_name / role are omitted", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: vi.fn().mockResolvedValue({ access_token: "demo-jwt", username: "demo" }),
+    }));
+
+    await expect(tryDemoLogin()).resolves.toEqual({
+      username: "demo",
+      displayName: "demo",
+      authType: "local",
+      role: undefined,
+    });
+  });
+
+  it("returns null when the 200 body is missing access_token or username", async () => {
+    const incompleteBodies = [
+      {},
+      { access_token: "demo-jwt" },
+      { username: "demo" },
+    ];
+    for (const body of incompleteBodies) {
+      _fakeStorage.clear();
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        json: vi.fn().mockResolvedValue(body),
+      }));
+
+      await expect(tryDemoLogin()).resolves.toBeNull();
+      expect(AuthStore.getToken()).toBeNull();
+    }
+  });
+
+  it("returns null instead of throwing when fetch rejects", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    await expect(tryDemoLogin()).resolves.toBeNull();
+    expect(AuthStore.getToken()).toBeNull();
+  });
+
+  // ── 無応答（ハング）対策のタイムアウト配線 ─────────────────────────────────
+  // 実時間で 5 秒待つテストは書かない（遅いテストはフレーク源）。ここでは
+  // 「signal が実際に fetch へ渡っている」ことと「abort/timeout の reject が
+  // null になる」ことを固定する。
+
+  it("passes an AbortSignal to fetch (demo-login timeout is wired)", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 404 });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await tryDemoLogin();
+
+    const init = mockFetch.mock.calls[0][1] as RequestInit;
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    // 呼び出し直後に既に aborted だと判定が即失敗してしまう（配線ミス）
+    expect((init.signal as AbortSignal).aborted).toBe(false);
+  });
+
+  it("returns null when the request aborts (AbortError)", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(
+      new DOMException("The operation was aborted.", "AbortError"),
+    ));
+
+    await expect(tryDemoLogin()).resolves.toBeNull();
+    expect(AuthStore.getToken()).toBeNull();
+  });
+
+  it("returns null when the request times out (TimeoutError)", async () => {
+    // AbortSignal.timeout() が発火したとき fetch が投げる DOMException
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(
+      new DOMException("The operation was aborted due to timeout", "TimeoutError"),
+    ));
+
+    await expect(tryDemoLogin()).resolves.toBeNull();
+    expect(AuthStore.getToken()).toBeNull();
   });
 });
 

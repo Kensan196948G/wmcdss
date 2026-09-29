@@ -85,6 +85,13 @@ services:
       # 重要: `${VAR:-false}` にすると、運用者のシェルに残った
       # WMCDSS_ALLOW_INSECURE_DEFAULTS=true が本番へ流れ込みうる。
       WMCDSS_ALLOW_INSECURE_DEFAULTS: "false"
+      # WMCDSS_DEV_OPEN_ACCESS は **意図的に渡さない**（= アプリ既定の false）。
+      # これは「資格情報なしのリクエストを admin 相当として扱う」開発スタック
+      # 専用のフラグで、true にすると api_keys 未設定時の匿名リクエストが
+      # admin になり、現場・閾値・観測値・判定の変更系 API が無認証で通る。
+      # 開発スタック側は docker-compose.yml が true を渡している。
+      # `${WMCDSS_DEV_OPEN_ACCESS:-false}` とも書かない: 運用者のシェルに
+      # 残った true が本番へ流れ込む経路を作らないため、ここでは一切触れない。
       WMCDSS_CORS_ORIGINS_RAW: ${WMCDSS_CORS_ORIGINS_RAW:-http://${WMCDSS_WEBUI_HOST:-192.168.0.185}:${WMCDSS_WEBUI_PORT:-9080}}
       WMCDSS_API_KEYS_RAW: ${WMCDSS_API_KEYS_RAW:?WMCDSS_API_KEYS_RAW must be set in .env.production}
       WMCDSS_RATE_LIMIT_PER_MINUTE: ${WMCDSS_RATE_LIMIT_PER_MINUTE:-60}
