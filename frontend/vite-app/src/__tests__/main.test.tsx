@@ -62,6 +62,10 @@ beforeEach(() => {
   }));
   vi.doMock("../tweaks-panel", () => ({}));
   // 認証済みとしてスタブ化（main.test は認証ゲートの後 AppShell のレンダーをテストする）
+  //
+  // ../auth はモジュール全体を差し替える方式なので、main.tsx が import する
+  // シンボルは *すべて* ここに用意する必要がある。tryDemoLogin を欠かすと
+  // 未認証分岐のテストで「No "tryDemoLogin" export is defined」になる。
   vi.doMock("../auth", () => ({
     AuthStore: {
       isAuthenticated: vi.fn().mockReturnValue(true),
@@ -77,6 +81,8 @@ beforeEach(() => {
       getToken: vi.fn().mockReturnValue("mock-token"),
     },
     LoginPage: () => <div data-testid="login-page">login-page-stub</div>,
+    // 認証済みなので demo-login は呼ばれないが、import 時点で解決できる必要がある。
+    tryDemoLogin: vi.fn().mockResolvedValue(null),
   }));
 });
 
@@ -159,6 +165,8 @@ describe("main.tsx — Auth gate (unauthenticated path)", () => {
           getToken: vi.fn().mockReturnValue(null),
         },
         LoginPage: () => <div data-testid="login-page">login-page-stub</div>,
+        // 未認証 → main.tsx は demo-login を試す。null = バイパス無効（404）。
+        tryDemoLogin: vi.fn().mockResolvedValue(null),
       }));
 
       await importMainAndFlush();
@@ -167,6 +175,247 @@ describe("main.tsx — Auth gate (unauthenticated path)", () => {
         { timeout: DYNAMIC_IMPORT_TIMEOUT },
       );
       expect(document.body.textContent).not.toContain("app-shell-stub");
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
+});
+
+// ---------------------------------------------------------------------------
+// main.tsx — MVP demo auto-login (bd9628d / task-5)
+//
+// サーバーが WMCDSS_AUTH_BYPASS=true のときだけ POST /auth/demo-login が JWT を
+// 返す。無効な環境では 404 になり tryDemoLogin は null を返すため、従来どおり
+// ログイン画面が表示される。加えて、判定が終わるまでは何も描画しない
+// （=ログイン画面が一瞬出るちらつきを防ぐ）ことを固定する。
+// ---------------------------------------------------------------------------
+
+describe("main.tsx — MVP demo auto-login", () => {
+  type DemoUser = { username: string; displayName: string; authType: "local" };
+
+  const DEMO_USER: DemoUser = {
+    username: "demo",
+    displayName: "Demo User",
+    authType: "local",
+  };
+
+  /** demo-login の応答を手動で制御する deferred（判定中の状態を再現する）。 */
+  function deferredDemoLogin(): {
+    promise: Promise<DemoUser | null>;
+    resolve: (user: DemoUser | null) => void;
+  } {
+    let resolve!: (user: DemoUser | null) => void;
+    const promise = new Promise<DemoUser | null>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  }
+
+  /** 判定中に何も描画されていないことを確認する。 */
+  function expectNothingRendered(): void {
+    const root = document.getElementById("root");
+    expect(root?.innerHTML).toBe("");
+    expect(document.body.textContent).not.toContain("login-page-stub");
+    expect(document.body.textContent).not.toContain("app-shell-stub");
+  }
+
+  /**
+   * beforeEach と同じ 4 モジュールを、demo-login の結果だけ差し替えて再適用する。
+   * 呼び出し前に vi.resetModules() が済んでいる必要がある。
+   */
+  function mockMainDependencies(options: {
+    isAuthenticated: boolean;
+    tryDemoLogin: ReturnType<typeof vi.fn>;
+  }): void {
+    vi.doMock("../api", () => ({
+      WMCDSS_API: {
+        initFromBackend: vi.fn().mockResolvedValue(true),
+      },
+    }));
+    vi.doMock("../app-shell", () => ({
+      AppShell: () => <div data-testid="appshell">app-shell-stub</div>,
+    }));
+    vi.doMock("../tweaks-panel", () => ({}));
+    vi.doMock("../auth", () => ({
+      AuthStore: {
+        isAuthenticated: vi.fn().mockReturnValue(options.isAuthenticated),
+        getUser: vi
+          .fn()
+          .mockReturnValue(
+            options.isAuthenticated
+              ? { username: "test", displayName: "Test User", authType: "local" }
+              : null,
+          ),
+        clear: vi.fn(),
+        save: vi.fn(),
+        getToken: vi.fn().mockReturnValue(options.isAuthenticated ? "mock-token" : null),
+      },
+      LoginPage: () => <div data-testid="login-page">login-page-stub</div>,
+      tryDemoLogin: options.tryDemoLogin,
+    }));
+  }
+
+  it(
+    "renders LoginPage when demo-login returns null (bypass disabled → 404)",
+    async () => {
+      vi.resetModules();
+      const tryDemoLogin = vi.fn().mockResolvedValue(null);
+      mockMainDependencies({ isAuthenticated: false, tryDemoLogin });
+
+      await importMainAndFlush();
+      await waitFor(
+        () => expect(document.body.textContent).toContain("login-page-stub"),
+        { timeout: DYNAMIC_IMPORT_TIMEOUT },
+      );
+      // バイパス無効のときも判定自体は行い、そのうえでログイン画面へフォールバックする
+      expect(tryDemoLogin).toHaveBeenCalled();
+      // バイパス無効のときは AppShell を出さない
+      expect(document.body.textContent).not.toContain("app-shell-stub");
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
+
+  it(
+    "renders AppShell without LoginPage when demo-login returns an AuthUser (bypass enabled)",
+    async () => {
+      vi.resetModules();
+      const tryDemoLogin = vi.fn().mockResolvedValue({
+        username: "demo",
+        displayName: "Demo User",
+        authType: "local",
+      });
+      mockMainDependencies({ isAuthenticated: false, tryDemoLogin });
+
+      await importMainAndFlush();
+      await waitFor(
+        () => expect(document.body.textContent).toContain("app-shell-stub"),
+        { timeout: DYNAMIC_IMPORT_TIMEOUT },
+      );
+      expect(tryDemoLogin).toHaveBeenCalled();
+      // demo ユーザーで自動ログインした以上、ログイン画面は描画されない
+      expect(document.body.textContent).not.toContain("login-page-stub");
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
+
+  it(
+    "does not attempt demo-login when a valid session already exists",
+    async () => {
+      vi.resetModules();
+      const tryDemoLogin = vi.fn().mockResolvedValue(null);
+      mockMainDependencies({ isAuthenticated: true, tryDemoLogin });
+
+      await importMainAndFlush();
+      await waitFor(
+        () => expect(document.body.textContent).toContain("app-shell-stub"),
+        { timeout: DYNAMIC_IMPORT_TIMEOUT },
+      );
+      // 既存セッションがあるなら余計な POST /auth/demo-login を投げない
+      expect(tryDemoLogin).not.toHaveBeenCalled();
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
+
+  // ── ちらつき防止（task-5）────────────────────────────────────────────────
+  // 判定が終わるまでは null を render する。以前は「判定の開始」でフラグが
+  // 立っていたため、判定中に LoginPage が一瞬描画されていた。
+
+  it(
+    "renders nothing while demo-login is pending, then LoginPage when it resolves to null",
+    async () => {
+      vi.resetModules();
+      const demo = deferredDemoLogin();
+      const tryDemoLogin = vi.fn().mockReturnValue(demo.promise);
+      mockMainDependencies({ isAuthenticated: false, tryDemoLogin });
+
+      await importMainAndFlush();
+      await waitFor(() => expect(tryDemoLogin).toHaveBeenCalled(), {
+        timeout: DYNAMIC_IMPORT_TIMEOUT,
+      });
+
+      // 判定中。少し待っても LoginPage / AppShell のどちらも描画しない。
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expectNothingRendered();
+
+      // 404（null）で判定完了 → 従来どおりログイン画面へ遷移する
+      demo.resolve(null);
+      await waitFor(
+        () => expect(document.body.textContent).toContain("login-page-stub"),
+        { timeout: DYNAMIC_IMPORT_TIMEOUT },
+      );
+      expect(document.body.textContent).not.toContain("app-shell-stub");
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
+
+  it(
+    "renders nothing while demo-login is pending, then AppShell when it resolves to an AuthUser",
+    async () => {
+      vi.resetModules();
+      const demo = deferredDemoLogin();
+      const tryDemoLogin = vi.fn().mockReturnValue(demo.promise);
+      mockMainDependencies({ isAuthenticated: false, tryDemoLogin });
+
+      await importMainAndFlush();
+      await waitFor(() => expect(tryDemoLogin).toHaveBeenCalled(), {
+        timeout: DYNAMIC_IMPORT_TIMEOUT,
+      });
+
+      // 判定中はログイン画面を出さない（これがちらつきの正体）
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expectNothingRendered();
+
+      // バイパス有効（AuthUser）で判定完了 → ログイン画面を挟まず AppShell へ
+      demo.resolve(DEMO_USER);
+      await waitFor(
+        () => expect(document.body.textContent).toContain("app-shell-stub"),
+        { timeout: DYNAMIC_IMPORT_TIMEOUT },
+      );
+      expect(document.body.textContent).not.toContain("login-page-stub");
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
+
+  it(
+    "does not repeat demo-login once the judgement is done (no loop / no extra POST)",
+    async () => {
+      vi.resetModules();
+      const tryDemoLogin = vi.fn().mockResolvedValue(null);
+      mockMainDependencies({ isAuthenticated: false, tryDemoLogin });
+
+      await importMainAndFlush();
+      await waitFor(
+        () => expect(document.body.textContent).toContain("login-page-stub"),
+        { timeout: DYNAMIC_IMPORT_TIMEOUT },
+      );
+      const callsAfterDone = tryDemoLogin.mock.calls.length;
+      expect(callsAfterDone).toBeGreaterThan(0);
+      // production build は 1 回、開発/テストは React StrictMode の effect 二重実行で
+      // 2 回。それ以上は「判定完了後も effect が再実行されている」= 多重 POST の回帰。
+      expect(callsAfterDone).toBeLessThanOrEqual(2);
+      // 'done' に落ちた後は再レンダリングされても POST が増えない（無限ループ防止）
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(tryDemoLogin.mock.calls.length).toBe(callsAfterDone);
+    },
+    DYNAMIC_IMPORT_TIMEOUT,
+  );
+
+  it(
+    "renders LoginPage when demo-login rejects (does not stay blank)",
+    async () => {
+      vi.resetModules();
+      const tryDemoLogin = vi.fn().mockRejectedValue(new Error("demo-login boom"));
+      mockMainDependencies({ isAuthenticated: false, tryDemoLogin });
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      await importMainAndFlush();
+      // reject しても判定は 'done' になり、空白のまま固まらず LoginPage へ落ちる
+      await waitFor(
+        () => expect(document.body.textContent).toContain("login-page-stub"),
+        { timeout: DYNAMIC_IMPORT_TIMEOUT },
+      );
+      expect(document.body.textContent).not.toContain("app-shell-stub");
+      expect(warn).toHaveBeenCalled();
+      warn.mockRestore();
     },
     DYNAMIC_IMPORT_TIMEOUT,
   );

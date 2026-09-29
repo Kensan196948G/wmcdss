@@ -2,11 +2,17 @@
    App Shell — Sidebar, Header, Router (ESM port)
    ============================================ */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { CSSProperties } from 'react';
 
 import { SITES, STATUS_CLASS } from './data';
 import { useLiveSites } from './weather-marine';
+import {
+  applySummaries,
+  countStatuses,
+  indexSummaries,
+  useDashboardSummary,
+} from './dashboard-summary';
 import { ConcretePage, MarineWorkPage } from './decisions';
 import { DashboardPage } from './dashboard';
 import { WeatherPage, MarinePage } from './weather-marine';
@@ -241,9 +247,21 @@ export function AppShell() {
     setSidebarOpen(false);
   };
 
-  const okCount = liveSites.filter((s) => s.status === 'ok').length;
-  const warnCount = liveSites.filter((s) => s.status === 'warn').length;
-  const dangerCount = liveSites.filter((s) => s.status === 'danger').length;
+  // ヘッダーの判定件数は、ダッシュボードのカードと *同じ* 単一情報源
+  // （/api/v1/dashboard の集約判定）から数える。以前は liveSites の status
+  // （= adapter がモックから引き継いだ値）を数えていたため、「カードは実判定・
+  // ヘッダーはモック件数」という自己矛盾した画面になっていた（task-10 (B)）。
+  const { summaries, ready: verdictsReady } = useDashboardSummary();
+  const summaryById = useMemo(() => indexSummaries(summaries), [summaries]);
+  const verdictSites = useMemo(
+    () => applySummaries(liveSites, summaryById),
+    [liveSites, summaryById],
+  );
+  const verdictCounts = countStatuses(verdictSites);
+  // 接続中に実判定が未取得のあいだは、モック由来の件数を実判定として表示しない。
+  const okCount = verdictsReady ? verdictCounts.ok : '—';
+  const warnCount = verdictsReady ? verdictCounts.warn : '—';
+  const dangerCount = verdictsReady ? verdictCounts.danger : '—';
 
   // 各ページの props 型はレガシー由来で navigate の page 型が string/PageId と
   // 混在する。型検査ゲート導入のためここで明示的に緩和する（挙動は不変）。

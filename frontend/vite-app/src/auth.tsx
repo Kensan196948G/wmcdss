@@ -45,15 +45,34 @@ function safeStorage() {
 }
 
 /**
+ * 起動時のデモログイン判定に許す上限時間（ms）。
+ *
+ * この判定が返らないと呼び出し側（main.tsx）は「判定中」のまま何も描画できず、
+ * 空白画面が続いてユーザーがログイン画面へ進む手段を失う。通常はローカル/
+ * 近距離で数十 ms で返るため 5 秒でも十分な余裕があり、かつ待たされ感が出る
+ * 前に「バイパス無効」と同じ扱いへ落とせる値として 5000ms を選ぶ。
+ */
+const DEMO_LOGIN_TIMEOUT_MS = 5000;
+
+/**
  * MVP 公開デモ用の自動ログイン。
  *
  * サーバーが WMCDSS_AUTH_BYPASS=true で動いている場合だけ
  * POST /auth/demo-login が JWT を返す。無効な環境では 404 になるので
  * null を返し、呼び出し側は通常のログイン画面を表示する。
+ *
+ * タイムアウト: オリジンが無応答（TCP は生きているが応答が返らない）の場合に
+ * 呼び出し側が永久に待たされないよう AbortSignal.timeout で打ち切る。打ち切りは
+ * TimeoutError/AbortError として下の catch に入り、404 と同じく null を返す
+ * （＝ログイン画面へフォールバックする）。
  */
 export async function tryDemoLogin(): Promise<AuthUser | null> {
   try {
-    const res = await fetch(`${getApiBase()}/auth/demo-login`, { method: 'POST' });
+    const res = await fetch(`${getApiBase()}/auth/demo-login`, {
+      method: 'POST',
+      // URL・method・レスポンス処理は従来どおり。無応答対策として signal のみ追加。
+      signal: AbortSignal.timeout(DEMO_LOGIN_TIMEOUT_MS),
+    });
     if (!res.ok) return null;
     const body = (await res.json()) as {
       access_token?: string;

@@ -1,0 +1,19 @@
+[Unit]
+Description=WMCDSS - refresh demo observations every 10 min
+Documentation=man:systemd.timer(5)
+
+[Timer]
+# 判定 API の鮮度ガードは「気象 30 分 / 海象 3 時間」。
+# 10 分間隔なら、タイマーが 1 回失敗しても次の実行までに観測値が
+# 30 分を超えない（2 回連続で失敗した時点で初めて caution 固定に戻る）ため、
+# 30 分より十分短い 10 分を採用する。5 分間隔にしないのは、鮮度ガードに
+# 対して余裕が過剰で、DELETE + 49 点再投入の無駄が増えるだけだから。
+# 発火分を :05 にずらしているのは、AMeDAS(:00/:10/:20) と
+# NOWPHAS(:20) の取り込みと同時に走らせないため。
+OnCalendar=*:5/10:00
+AccuracySec=15s
+Persistent=true
+Unit=wmcdss-demo-refresh.service
+
+[Install]
+WantedBy=timers.target

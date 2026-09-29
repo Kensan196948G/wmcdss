@@ -53,6 +53,11 @@ frontend/vite-app/coverage/
 # Docker / DB volumes (mounted via named volumes; nothing local)
 pgdata/
 
+# DB バックアップ実体（pg_dump の出力）。業務データを含むためリポジトリへ入れない。
+# ディレクトリ自体はスクリプトの既定出力先として残すが、中身は必ず
+# ローカルまたは外部退避先に留めること。誤コミットを .gitignore で防ぐ。
+backups/
+
 # Pre-project proposal documents (kept locally for reference, not source-of-truth).
 # Live design docs go under docs/. The 8.5MB sample HTML in particular must not
 # bloat the repo — extract the relevant UI snippets into docs/ if reused.

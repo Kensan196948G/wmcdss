@@ -72,7 +72,25 @@ services:
       # 開発スタックは API キーなし・既定 JWT 秘密鍵で動く。本番なら起動を
       # 拒否される構成なので、ここで明示的に検査を降格する。
       # 本番 (docker-compose.production.yml) では false に固定している。
+      #
+      # ※ このフラグは「起動時セキュリティ検査を降格する」だけであり、
+      #   資格情報なしのリクエストを admin 相当にする効果は無い。両者は別物で、
+      #   混同すると下の WMCDSS_DEV_OPEN_ACCESS の既定を誤って true にしてしまう
+      #   （それが verifier F-01 の穴だった）。
       WMCDSS_ALLOW_INSECURE_DEFAULTS: "${WMCDSS_ALLOW_INSECURE_DEFAULTS:-true}"
+      # 資格情報なしのリクエストを admin 相当として扱う明示 opt-in。
+      # **既定は false**（fail-closed）。開発スタックでも、資格情報なしで curl して
+      # 挙動を確かめたい開発者だけが `.env` に
+      # `WMCDSS_DEV_OPEN_ACCESS=true` を明示する。口は残すが既定では開けない。
+      #
+      # 以前ここを `:-true` にしていたため、開発スタック（backend は 0.0.0.0:8003、
+      # frontend は 0.0.0.0:9080 で公開）が LAN から到達可能な状態で、匿名
+      # POST /api/v1/sites・POST /api/v1/thresholds・DELETE /api/v1/thresholds・
+      # POST /api/v1/observations/weather が無認証で通っていた。fail-open を
+      # リポジトリ側の既定値で復活させないこと。
+      # 本番 (docker-compose.production.yml / .env.production.example) はこの変数を
+      # 渡さない（= アプリ既定の false）。
+      WMCDSS_DEV_OPEN_ACCESS: "${WMCDSS_DEV_OPEN_ACCESS:-false}"
       # --- CORS: コンマ区切り URL 文字列 (str フィールド cors_origins_raw にマップ) ---
       WMCDSS_CORS_ORIGINS_RAW: "${WMCDSS_CORS_ORIGINS_RAW:-http://${WMCDSS_WEBUI_HOST:-172.23.10.251}:${WMCDSS_WEBUI_PORT:-9080},http://localhost:${WMCDSS_WEBUI_PORT:-9080},http://127.0.0.1:${WMCDSS_WEBUI_PORT:-9080}}"
       # --- API キー: コンマ区切り文字列 (str フィールド api_keys_raw にマップ) ---

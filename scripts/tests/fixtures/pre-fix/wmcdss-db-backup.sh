@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# !!! テスト専用フィクスチャ — 本番・運用で使用しないこと !!!
+# これは F-2 修正**前**の実装の凍結スナップショットである。scripts/tests/ 配下の
+# 安全性テストが「修正前は空 gzip / サイズ不足のバックアップを成功扱いしていた」
+# ことを実行時に証明するためだけに存在する。復元・バックアップの実務に使うと
+# 無言の失敗（何も復元していないのに成功と表示する）を再現してしまう。
+# 実行は scripts/tests/test-backup-restore-safety.sh から bash <file> で行う。
 #
 # wmcdss-db-backup.sh — PostgreSQL 定期バックアップ (cron 用)
 #
@@ -11,10 +17,6 @@
 #   scripts/wmcdss-db-backup.sh --rclone-remote b2:wmcdss-backup    # rclone 退避
 #   scripts/wmcdss-db-backup.sh --dry-run          # 実行せずに動作だけ表示
 #
-# 環境変数:
-#   WMCDSS_BACKUP_DIR       出力先 (既定: <repo>/backups)
-#   WMCDSS_BACKUP_MIN_BYTES 出力のサイズ下限 (既定: 1024)
-#
 # cron 例 (毎日 03:30, IT-STAFF.md 推奨に合わせた世代管理 30 日):
 #   30 3 * * * /path/to/wmcdss/scripts/wmcdss-db-backup.sh >> /var/log/wmcdss-backup.log 2>&1
 #
@@ -22,21 +24,6 @@
 #   - docker compose (compose plugin) が利用可能
 #   - wmcdss コンテナスタックが起動済み (db コンテナが稼働していること)
 #   - バックアップの正本は外部ストレージ/別ホストへの退避を推奨 (スクリプトはローカル保存のみ)
-#
-# ## 出力ファイルの不変条件 (2026-09-29 修正 / F-2)
-#
-# **`<BACKUP_DIR>/wmcdss_*.sql.gz` という名前のファイルは「検証済み」を意味する。**
-#
-# 修正前は `pg_dump ... | gzip > 最終名` と直接リダイレクトしていたため、
-# pg_dump が失敗しても「20 バイトの有効な空 gzip」が最終名で残っていた。
-# 空 gzip は `gzip -t` を **通る**（空ストリームは正当な gzip である）ため、
-# restore 側の整合性チェックも素通りし、空入力を psql に流して EXIT=0、
-# つまり **何も復元していないのに「restore done」と表示される**。
-# 障害時に初めて「復元できない」と判明する worst-case だった。
-#
-# 現在は (1) 一時ファイルへ出力 → (2) サイズ下限 → (3) gzip -t → (4) 最終名へ
-# atomic rename、の順に進み、検証を通らないものは最終名にならない。
-# 失敗時に既存の正常なバックアップを壊すこともない。
 
 set -euo pipefail
 
@@ -52,11 +39,6 @@ DB_USER=""
 DB_NAME=""
 REMOTE_DIR=""
 RCLONE_REMOTE=""
-
-# 出力のサイズ下限 (bytes)。空 gzip は 20 バイトで `gzip -t` を通るため、
-# サイズ下限だけがそれを検出できる。1 KB は「空ではない SQL が入っている」
-# ことの粗い証明として十分（実測のダンプは 24 KB 程度）。
-MIN_BYTES="${WMCDSS_BACKUP_MIN_BYTES:-1024}"
 
 # --- 引数解析 -------------------------------------------------------------
 usage() {
@@ -136,61 +118,35 @@ mkdir -p "$BACKUP_DIR"
 stamp="$(date +%Y%m%d_%H%M%S)"
 out_file="${BACKUP_DIR}/wmcdss_${stamp}.sql.gz"
 
-# 一時ファイルは最終名と **同一ディレクトリ** に作る。rename(2) が原子的なのは
-# 同一ファイルシステム内に限られるため（別 FS への mv は copy+unlink になる）。
-# 一時名は `wmcdss_*.sql.gz` にマッチしないので、世代管理や「最新を選ぶ」処理が
-# 未検証の中間ファイルを掴むことはない。
-tmp_file="${out_file}.tmp.$$"
-cleanup_tmp() { rm -f "$tmp_file"; }
-trap cleanup_tmp EXIT
-
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup start (target=${COMPOSE_TARGET}, keep=${KEEP_GENERATIONS}, min_bytes=${MIN_BYTES})"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup start (target=${COMPOSE_TARGET}, keep=${KEEP_GENERATIONS})"
 
 if [[ $DRY_RUN -eq 1 ]]; then
-  echo "[dry-run] would run: ${COMPOSE[*]} exec -T db pg_dump --clean --if-exists -U ${DB_USER} ${DB_NAME} | gzip > ${tmp_file}"
-  echo "[dry-run] then verify: size >= ${MIN_BYTES} bytes / gzip -t / mv ${tmp_file} ${out_file}"
+  echo "[dry-run] would run: ${COMPOSE[*]} exec -T db pg_dump --clean --if-exists -U ${DB_USER} ${DB_NAME} | gzip > ${out_file}"
 else
   # compose exec の stdin を閉じる (-T) ことで cron 環境でもハングしない。
   # --clean --if-exists: 復元時に既存のオブジェクトを DROP してから CREATE する。
   # これを付けないと既存 DB へ復元した際に "already exists" で失敗する
   # （2026-08-09 の復元試験で実証済み）。
-  #
-  # 失敗を握り潰さないこと。捕まえずに進むと、落ちた pg_dump の空出力が
-  # 「成功したバックアップ」に化ける（= F-2 の症状そのもの）。
-  if ! "${COMPOSE[@]}" exec -T db pg_dump --clean --if-exists -U "$DB_USER" "$DB_NAME" | gzip > "$tmp_file"; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: バックアップ取得に失敗した (pg_dump / docker compose exec, db=${DB_NAME})" >&2
-    echo "ERROR: 最終名のファイルは作成していない (${out_file})" >&2
-    exit 1
-  fi
-
-  # 検証 (1/2): サイズ下限。空 gzip は 20 バイトで `gzip -t` を通るため、
-  # ここが「空を弾く」唯一の関門になる。
-  actual_bytes="$(stat -c %s "$tmp_file" 2>/dev/null || echo 0)"
-  if (( actual_bytes < MIN_BYTES )); then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: バックアップが小さすぎる (${actual_bytes} bytes < 下限 ${MIN_BYTES} bytes)" >&2
-    echo "ERROR: 空 gzip は 'gzip -t' を通過するため、サイズ下限が唯一の検出手段である。" >&2
-    echo "ERROR: 最終名のファイルは作成していない (${out_file})" >&2
-    exit 1
-  fi
-
-  # 検証 (2/2): gzip 整合性。壊れたファイルを世代管理で保持し続けると、
-  # 復旧時に気付くまで何世代も無駄に残るため、作成直後に検証する。
-  if ! gzip -t "$tmp_file"; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: gzip 整合性チェックに失敗: ${tmp_file}" >&2
-    echo "ERROR: 最終名のファイルは作成していない (${out_file})" >&2
-    exit 1
-  fi
-
-  # 検証を通ったものだけを最終名へ昇格させる。
-  mv -f "$tmp_file" "$out_file"
+  "${COMPOSE[@]}" exec -T db pg_dump --clean --if-exists -U "$DB_USER" "$DB_NAME" | gzip > "$out_file"
   size="$(du -h "$out_file" | cut -f1)"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup complete: ${out_file} (${size}, ${actual_bytes} bytes)"
-  echo "[$(date '+%Y-%m-%d %H:%M:%S')] 検証 OK: size=${actual_bytes} >= ${MIN_BYTES} / gzip -t"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup complete: ${out_file} (${size})"
+fi
+
+# 書き出したバックアップが壊れていないか（gzip 整合性）を確認する。
+# 壊れたファイルを世代管理で保持し続けると、復旧時に気付くまで何世代も
+# 無駄に残るため、作成直後に検証して失敗時は即座に非ゼロ終了する。
+if [[ $DRY_RUN -eq 0 ]]; then
+  if ! gzip -t "$out_file"; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: gzip 整合性チェックに失敗: ${out_file}" >&2
+    rm -f "$out_file"
+    exit 1
+  fi
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] gzip integrity OK"
 fi
 
 # --- 外部退避 ---------------------------------------------------------------
 # ローカル保存は「サーバー障害でバックアップごと消失」するため、退避先が
-# 指定された場合は作成直後の検証を通過したファイルのみを転送する。
+# 指定された場合は作成直後の gzip 検証を通過したファイルのみを転送する。
 if [[ $DRY_RUN -eq 0 && -n "$REMOTE_DIR" ]]; then
   if command -v scp >/dev/null 2>&1; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] offsite copy (scp): $out_file -> $REMOTE_DIR"
@@ -213,7 +169,6 @@ fi
 
 # --- 世代管理 -------------------------------------------------------------
 # 古いものから順に、保持世代数を超えたファイルを削除する。
-# 一時ファイル (`*.tmp.<pid>`) はこの glob にマッチしないので対象外。
 mapfile -t old_files < <(ls -1t "${BACKUP_DIR}"/wmcdss_*.sql.gz 2>/dev/null | tail -n +$((KEEP_GENERATIONS + 1)))
 if [[ ${#old_files[@]} -gt 0 ]]; then
   for f in "${old_files[@]}"; do

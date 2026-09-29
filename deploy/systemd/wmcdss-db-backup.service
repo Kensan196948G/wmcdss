@@ -1,0 +1,24 @@
+[Unit]
+Description=WMCDSS - daily PostgreSQL backup (one-shot)
+Documentation=file://${WMCDSS_HOME}/docs/OPERATIONS-2026-08-12.md
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# チェックアウト位置は他 unit と同じ 1 箇所から取る（fail-closed）。
+EnvironmentFile=%h/.config/wmcdss/deploy.env
+# バックアップは scripts/wmcdss-db-backup.sh が唯一の実装。ここで pg_dump を
+# 直接書かないのは、一時ファイル + サイズ下限 + gzip -t + atomic rename という
+# 「検証を通ったものだけが最終名になる」不変条件を unit 側で再実装しないため
+# （2026-09-29 の F-2: 失敗しても空 gzip が最終名で残り、復元できないことが
+#  障害時に初めて判明する経路があった）。
+ExecStart=/bin/bash ${WMCDSS_HOME}/scripts/wmcdss-db-backup.sh --compose production --keep 30
+# 外部退避 (scp/rclone) を足す場合は `systemctl --user edit wmcdss-db-backup.service`
+# で ExecStart を上書きする。deploy/systemd/README.md に例を記載している。
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=default.target

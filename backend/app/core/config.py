@@ -31,6 +31,29 @@ class Settings(BaseSettings):
     # dev/prod の切り替えとして機能していないため。
     allow_insecure_defaults: bool = False
 
+    # 資格情報なしのリクエストを admin 相当として扱うことを許可する明示的な
+    # opt-in フラグ（開発専用）。既定は False（fail-closed）。
+    #
+    # WHY: 認証は 2 層あり、どちらも「api_keys が空なら素通り」という開発都合の
+    # 分岐を持つ。
+    #   1. API キー層 (app/core/security.py APIKeyMiddleware)
+    #   2. route 層 (app/api/auth.py の require_* 依存)
+    # このうち 2 は「1 が照合済みだから」という前提で、Bearer ヘッダーが無い
+    # リクエストへ admin 相当 (_api_key_holder) を返していた。ところが 1 は
+    # api_keys が空だと丸ごと素通りするため、公開 MVP (WMCDSS_API_KEYS_RAW が
+    # 空) では **Authorization ヘッダーを外すだけ** で匿名リクエストが admin に
+    # なり、現場・閾値・判定の変更系 API が無認証で通っていた（実測: 匿名
+    # POST /api/v1/sites body={} → 422 = 認可通過）。MVP の意図は「誰でも閲覧
+    # できる read-only デモ」であり、これは意図せぬ fail-open である。
+    #
+    # そこで資格情報なしを許す経路をこの 1 つのフラグへ集約する。true にする
+    # のは開発スタック (docker-compose.yml) だけ。本番相当
+    # (docker-compose.production.yml / .env.production.example) は設定しない
+    # (=false) こと。api_keys を設定した環境では、従来どおり APIKeyMiddleware が
+    # 変更系メソッドを 401 で拒否するため、このフラグの値に関わらず匿名の
+    # 変更系リクエストは通らない（挙動不変）。
+    dev_open_access: bool = False
+
     # MVP 公開デモ用のログイン認証バイパス。true のとき
     # POST /api/v1/auth/demo-login が資格情報なしで JWT を払い出す。
     # 既定は False。本番 compose は設定しないこと。
