@@ -34,6 +34,26 @@ def _bearer() -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _machine_headers() -> dict[str, str]:
+    """観測値投入（= API キー専用経路）用のヘッダー。
+
+    観測値の投入は `require_machine_client` が「API キー専用」と定めている。
+    JWT（ブラウザ経路）では 403 になる仕様であり、これは
+    tests/test_admin_guard.py が fail-closed 不変条件として固定している
+    （2026-09-29 以前は api_keys が空だと素通りしていたため、この smoke も
+    JWT のまま通っていた）。
+
+    このスイートは `docker compose exec backend pytest` で backend コンテナの
+    中から走るため、サーバープロセスと同じ `WMCDSS_API_KEYS_RAW` を読める。
+    そこから先頭のキーを取り出して `X-API-Key` として送る。
+    キーが未設定の環境（ローカルで `WMCDSS_DEV_OPEN_ACCESS=true` を使う場合など）
+    では何も付けない — その場合だけ開発フラグが機械経路を素通りさせる。
+    """
+    raw = os.environ.get("WMCDSS_API_KEYS_RAW", "")
+    keys = [k.strip() for k in raw.split(",") if k.strip()]
+    return {"X-API-Key": keys[0]} if keys else {}
+
+
 @pytest.fixture(scope="module")
 def client() -> httpx.Client:
     # ブラウザ UI と同じく、常に Bearer を持った状態で叩く。認証を要する経路が
@@ -101,9 +121,9 @@ def test_weather_ingest_is_idempotent(client: httpx.Client, site_id: str) -> Non
         "temperature_c": 10.0, "wind_speed_ms": 5.0,
     }]
     r1 = client.post("/api/v1/observations/weather", json=payload,
-                     headers={"X-Actor": "pytest"}).raise_for_status().json()
+                     headers={**_machine_headers(), "X-Actor": "pytest"}).raise_for_status().json()
     r2 = client.post("/api/v1/observations/weather", json=payload,
-                     headers={"X-Actor": "pytest"}).raise_for_status().json()
+                     headers={**_machine_headers(), "X-Actor": "pytest"}).raise_for_status().json()
     assert r1["total"] == r2["total"] == 1
 
 
@@ -112,7 +132,8 @@ def test_weather_validation_rejects_bad_humidity(client: httpx.Client, site_id: 
         "site_id": site_id, "observed_at": "2026-01-01T00:00:00Z",
         "data_version": TEST_DV, "humidity_pct": 150.0,
     }]
-    r = client.post("/api/v1/observations/weather", json=payload)
+    r = client.post("/api/v1/observations/weather", json=payload,
+                    headers=_machine_headers())
     assert r.status_code == 422, "humidity > 100 must be rejected"
 
 
