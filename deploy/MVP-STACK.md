@@ -130,3 +130,74 @@ docker run -d --name wmcdss-backend --restart always \
   -p 127.0.0.1:18003:8000 --env-file backend.env \
   -v "$PWD/backend:/app" -w /app wmcdss-backend:dev
 ```
+
+## ⚠️ `git checkout` のあと公開 URL が落ちる権限の罠（2026-09-29 実障害）
+
+**症状**: 公開 URL が無応答。`/readyz` が返らず backend コンテナが `unhealthy`。
+tunnel のログには `Incoming request ended abruptly: context canceled` が並ぶ。
+frontend の静的配信（`/`）は 200 のままなので「nginx は生きているのに API だけ死ぬ」に見える。
+
+**原因**: backend コンテナは **`appuser` (uid 999) で動いており**、`./backend` を
+bind mount している。ホスト側のファイルがこの uid から読めないと、`uvicorn --reload` は
+app の import に失敗し続ける:
+
+```
+PermissionError: [Errno 13] Permission denied: '/app/app/core/config.py'
+```
+
+`git checkout` / `git pull` で書き換えたファイルは **そのときの umask** で作られる。
+この開発環境の既定 umask は `0077` のため、書き換えられたファイルは `600`
+（所有者のみ読み書き）になり、`appuser` から読めなくなる。実際に
+`git checkout main` の直後に 88 ファイルが `600` になり、公開デモが停止した。
+
+**復旧**（可逆・数秒）:
+
+```sh
+chmod -R a+rX backend            # リポジトリ全体でもよい
+docker restart wmcdss-backend    # --reload が拾い直す。確実にするなら restart
+curl -sf http://127.0.0.1:18003/readyz   # {"status":"ready","db":"ok"}
+```
+
+**予防**: ブランチ切替・pull のあとは `find backend -type f ! -perm -o=r | wc -l`
+が 0 であることを確認する。恒久的には、コンテナをリポジトリ所有者と同じ uid で動かす、
+`core.sharedRepository` を設定する、あるいは `chmod` を deploy 手順に含める、のいずれか。
+
+## 🔁 デモ鮮度とバックアップの timer（2026-09-29 install 済み）
+
+MVP のデモ観測は `now()` 相対で投入されるため、**放置すると鮮度ガード（気象 30 分）を
+超えて全現場が caution に固定される**（下記「デモデータの鮮度」参照）。また
+バックアップが 1 件も無い状態だった。次の 2 つの user timer を install 済み:
+
+| unit | 間隔 | 実体 |
+|---|---|---|
+| `wmcdss-demo-refresh.timer` | 10 分 | `scripts/wmcdss-demo-refresh.sh` |
+| `wmcdss-db-backup.timer` | 毎日 03:30 | `scripts/wmcdss-db-backup.sh --container wmcdss-db --keep 30` |
+
+```sh
+mkdir -p ~/.config/wmcdss
+printf 'WMCDSS_HOME=%s\n' "$PWD" > ~/.config/wmcdss/deploy.env   # 秘密情報は入れない
+mkdir -p ~/.config/systemd/user
+cp deploy/systemd/wmcdss-demo-refresh.{service,timer} \
+   deploy/systemd/wmcdss-db-backup.{service,timer} ~/.config/systemd/user/
+
+# このスタックは compose プロジェクトに属さない（docker run 起動）ため、
+# バックアップは `--container` 経路へ drop-in で切り替える
+mkdir -p ~/.config/systemd/user/wmcdss-db-backup.service.d
+cat > ~/.config/systemd/user/wmcdss-db-backup.service.d/override.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/bin/bash ${WMCDSS_HOME}/scripts/wmcdss-db-backup.sh --container wmcdss-db --keep 30
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now wmcdss-demo-refresh.timer wmcdss-db-backup.timer
+systemctl --user list-timers 'wmcdss-*'
+```
+
+`--container NAME` は compose を経由せず `docker exec` で叩く経路で、DB ユーザー /
+DB 名は**コンテナ自身の `POSTGRES_USER` / `POSTGRES_DB` から導出**される
+（compose の既定 `wmcdss_app` と実際のロール `wmcdss` が違うため、指定を省くと
+`role "wmcdss_app" does not exist` で落ちる。`--db-user` / `--db-name` で上書き可）。
+
+> `scripts/wmcdss-healthcheck.sh` の既定は開発 compose の `127.0.0.1:9080` を見る。
+> MVP スタック（`127.0.0.1:19080`）を確認する場合は引数 / 環境変数で URL を上書きすること。
