@@ -5,6 +5,9 @@
 # 使い方:
 #   scripts/wmcdss-db-backup.sh                     # 既定 (本番 compose, 30世代)
 #   scripts/wmcdss-db-backup.sh --compose dev      # 開発 compose を対象
+#   scripts/wmcdss-db-backup.sh --container wmcdss-db   # compose を使わず docker exec で叩く
+#                                                        # (docker run で起動したスタック用。
+#                                                        #  公開 MVP スタックはこれ)
 #   scripts/wmcdss-db-backup.sh --keep 14          # 保持世代数を 14 に変更
 #   scripts/wmcdss-db-backup.sh --db-user X --db-name Y   # DB 資格情報を明示
 #   scripts/wmcdss-db-backup.sh --remote user@host:/backup/wmcdss   # scp 退避
@@ -45,6 +48,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker-compose.production.yml"
 ENV_FILE=".env.production"
 COMPOSE_TARGET="production"
+# --container NAME 指定時は compose を経由せず `docker exec` で叩く（空なら compose）。
+DB_CONTAINER=""
 BACKUP_DIR="${WMCDSS_BACKUP_DIR:-${REPO_ROOT}/backups}"
 KEEP_GENERATIONS=30
 DRY_RUN=0
@@ -60,7 +65,7 @@ MIN_BYTES="${WMCDSS_BACKUP_MIN_BYTES:-1024}"
 
 # --- 引数解析 -------------------------------------------------------------
 usage() {
-  echo "Usage: $0 [--compose production|dev] [--keep N] [--dry-run]" >&2
+  echo "Usage: $0 [--compose production|dev] [--container NAME] [--keep N] [--dry-run]" >&2
   exit 1
 }
 
@@ -73,6 +78,15 @@ while [[ $# -gt 0 ]]; do
         dev)        COMPOSE_TARGET="dev" ;;
         *) echo "unknown --compose value: $2" >&2; usage ;;
       esac
+      shift 2
+      ;;
+    --container)
+      # `docker run` で起動したスタック（compose プロジェクトに属さない）を
+      # 対象にする経路。公開 MVP スタックはまさにこれで、`docker compose exec`
+      # ではコンテナを解決できず「バックアップが 1 件も取れない」状態だった
+      # （2026-09-29 の DB 検証 F-1/F-6）。
+      [[ $# -ge 2 ]] || usage
+      DB_CONTAINER="$2"
       shift 2
       ;;
     --keep)
@@ -110,6 +124,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# --container 経路では、コンテナ自身が持つ POSTGRES_USER / POSTGRES_DB を既定に使う。
+# コンテナ名だけで動くようにしておかないと、「compose の既定ユーザー (wmcdss_app) と
+# 実際のロール (wmcdss) が違い、pg_dump が "role does not exist" で落ちる」という罠を
+# 踏む（2026-09-29 に実際に踏んだ）。--db-user / --db-name の明示指定が最優先。
+if [[ -n "$DB_CONTAINER" ]]; then
+  c_env="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$DB_CONTAINER" 2>/dev/null || true)"
+  c_user="$(printf '%s\n' "$c_env" | sed -n 's/^POSTGRES_USER=//p' | tail -1)"
+  c_name="$(printf '%s\n' "$c_env" | sed -n 's/^POSTGRES_DB=//p' | tail -1)"
+  [[ -z "$DB_USER" && -n "$c_user" ]] && DB_USER="$c_user"
+  [[ -z "$DB_NAME" && -n "$c_name" ]] && DB_NAME="$c_name"
+fi
+
 if [[ "$COMPOSE_TARGET" == "dev" ]]; then
   COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
   ENV_FILE=".env"
@@ -130,6 +156,16 @@ fi
 
 COMPOSE=(docker compose --env-file "${REPO_ROOT}/${ENV_FILE}" -f "$COMPOSE_FILE")
 
+# DB への実行経路を 1 箇所に固定する。--container 指定時は compose を経由せず
+# コンテナ名で直接叩く（compose プロジェクトに属さないスタック用）。
+if [[ -n "$DB_CONTAINER" ]]; then
+  DB_EXEC=(docker exec -i "$DB_CONTAINER")
+  DB_TARGET_LABEL="docker exec ${DB_CONTAINER}"
+else
+  DB_EXEC=("${COMPOSE[@]}" exec -T db)
+  DB_TARGET_LABEL="docker compose exec db"
+fi
+
 # --- 実行 -----------------------------------------------------------------
 mkdir -p "$BACKUP_DIR"
 
@@ -147,7 +183,7 @@ trap cleanup_tmp EXIT
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] backup start (target=${COMPOSE_TARGET}, keep=${KEEP_GENERATIONS}, min_bytes=${MIN_BYTES})"
 
 if [[ $DRY_RUN -eq 1 ]]; then
-  echo "[dry-run] would run: ${COMPOSE[*]} exec -T db pg_dump --clean --if-exists -U ${DB_USER} ${DB_NAME} | gzip > ${tmp_file}"
+  echo "[dry-run] would run: ${DB_EXEC[*]} pg_dump --clean --if-exists -U ${DB_USER} ${DB_NAME} | gzip > ${tmp_file}"
   echo "[dry-run] then verify: size >= ${MIN_BYTES} bytes / gzip -t / mv ${tmp_file} ${out_file}"
 else
   # compose exec の stdin を閉じる (-T) ことで cron 環境でもハングしない。
@@ -157,8 +193,8 @@ else
   #
   # 失敗を握り潰さないこと。捕まえずに進むと、落ちた pg_dump の空出力が
   # 「成功したバックアップ」に化ける（= F-2 の症状そのもの）。
-  if ! "${COMPOSE[@]}" exec -T db pg_dump --clean --if-exists -U "$DB_USER" "$DB_NAME" | gzip > "$tmp_file"; then
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: バックアップ取得に失敗した (pg_dump / docker compose exec, db=${DB_NAME})" >&2
+  if ! "${DB_EXEC[@]}" pg_dump --clean --if-exists -U "$DB_USER" "$DB_NAME" | gzip > "$tmp_file"; then
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] ERROR: バックアップ取得に失敗した (pg_dump / ${DB_TARGET_LABEL}, db=${DB_NAME})" >&2
     echo "ERROR: 最終名のファイルは作成していない (${out_file})" >&2
     exit 1
   fi

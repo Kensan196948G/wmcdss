@@ -45,6 +45,8 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="${REPO_ROOT}/docker-compose.production.yml"
 ENV_FILE=".env.production"
 COMPOSE_TARGET="production"
+# --container NAME 指定時は compose を経由せず `docker exec` で叩く（空なら compose）。
+DB_CONTAINER=""
 BACKUP_DIR="${WMCDSS_BACKUP_DIR:-${REPO_ROOT}/backups}"
 DB_USER=""
 DB_NAME=""
@@ -54,7 +56,7 @@ DRY_RUN=0
 MIN_BYTES="${WMCDSS_BACKUP_MIN_BYTES:-1024}"
 
 usage() {
-  echo "Usage: $0 [--compose production|dev] [--db-user X] [--db-name Y] [--dry-run] [BACKUP_FILE]" >&2
+  echo "Usage: $0 [--compose production|dev] [--container NAME] [--db-user X] [--db-name Y] [--dry-run] [BACKUP_FILE]" >&2
   exit 1
 }
 
@@ -67,6 +69,14 @@ while [[ $# -gt 0 ]]; do
         dev)        COMPOSE_TARGET="dev" ;;
         *) echo "unknown --compose value: $2" >&2; usage ;;
       esac
+      shift 2
+      ;;
+    --container)
+      # `docker run` で起動したスタック（compose プロジェクトに属さない）を
+      # 対象にする経路。公開 MVP スタックはこれに当たり、`docker compose exec`
+      # ではコンテナを解決できないため復元手段が存在しなかった（DB 検証 F-6）。
+      [[ $# -ge 2 ]] || usage
+      DB_CONTAINER="$2"
       shift 2
       ;;
     --db-user)
@@ -88,6 +98,18 @@ while [[ $# -gt 0 ]]; do
     *) BACKUP_FILE="$1"; shift ;;
   esac
 done
+
+# --container 経路では、コンテナ自身が持つ POSTGRES_USER / POSTGRES_DB を既定に使う。
+# コンテナ名だけで動くようにしておかないと、「compose の既定ユーザー (wmcdss_app) と
+# 実際のロール (wmcdss) が違い、pg_dump が "role does not exist" で落ちる」という罠を
+# 踏む（2026-09-29 に実際に踏んだ）。--db-user / --db-name の明示指定が最優先。
+if [[ -n "$DB_CONTAINER" ]]; then
+  c_env="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$DB_CONTAINER" 2>/dev/null || true)"
+  c_user="$(printf '%s\n' "$c_env" | sed -n 's/^POSTGRES_USER=//p' | tail -1)"
+  c_name="$(printf '%s\n' "$c_env" | sed -n 's/^POSTGRES_DB=//p' | tail -1)"
+  [[ -z "$DB_USER" && -n "$c_user" ]] && DB_USER="$c_user"
+  [[ -z "$DB_NAME" && -n "$c_name" ]] && DB_NAME="$c_name"
+fi
 
 if [[ "$COMPOSE_TARGET" == "dev" ]]; then
   COMPOSE_FILE="${REPO_ROOT}/docker-compose.yml"
@@ -120,17 +142,27 @@ fi
 
 COMPOSE=(docker compose --env-file "${REPO_ROOT}/${ENV_FILE}" -f "$COMPOSE_FILE")
 
+# DB への実行経路を 1 箇所に固定する。--container 指定時は compose を経由せず
+# コンテナ名で直接叩く（compose プロジェクトに属さないスタック用）。
+if [[ -n "$DB_CONTAINER" ]]; then
+  DB_EXEC=(docker exec -i "$DB_CONTAINER")
+  DB_TARGET_LABEL="docker exec ${DB_CONTAINER}"
+else
+  DB_EXEC=("${COMPOSE[@]}" exec -T db)
+  DB_TARGET_LABEL="docker compose exec db"
+fi
+
 # 対象 DB への psql。すべての読み書きをここ経由にして、接続先を 1 箇所に固定する。
 psql_target() {
-  "${COMPOSE[@]}" exec -T db psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" "$@"
+  "${DB_EXEC[@]}" psql -v ON_ERROR_STOP=1 -U "$DB_USER" -d "$DB_NAME" "$@"
 }
 
 backup_bytes="$(stat -c %s "$BACKUP_FILE" 2>/dev/null || echo 0)"
-echo "[$(date '+%Y-%m-%d %H:%M:%S')] restore start (target=${COMPOSE_TARGET}, file=${BACKUP_FILE}, ${backup_bytes} bytes, db=${DB_NAME}, user=${DB_USER})"
+echo "[$(date '+%Y-%m-%d %H:%M:%S')] restore start (target=${DB_TARGET_LABEL}, file=${BACKUP_FILE}, ${backup_bytes} bytes, db=${DB_NAME}, user=${DB_USER})"
 
 if [[ $DRY_RUN -eq 1 ]]; then
   echo "[dry-run] would verify: size >= ${MIN_BYTES} bytes / gzip -t"
-  echo "[dry-run] would run: gunzip -c ${BACKUP_FILE} | ${COMPOSE[*]} exec -T db psql -v ON_ERROR_STOP=1 -U ${DB_USER} -d ${DB_NAME}"
+  echo "[dry-run] would run: gunzip -c ${BACKUP_FILE} | ${DB_EXEC[*]} psql -v ON_ERROR_STOP=1 -U ${DB_USER} -d ${DB_NAME}"
   echo "[dry-run] would then compare restored row counts against the COPY blocks in the dump"
   echo "[dry-run] この操作は ${DB_NAME} の既存データを置き換えます。"
   exit 0
