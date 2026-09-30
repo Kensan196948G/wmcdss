@@ -9,10 +9,13 @@ Strengthens the error-case coverage that the existing happy-path suites omit:
 
 Scope notes — these tests assert *real* behavior, not the issue's assumptions:
 
-  * The API has no role-based authorization layer, so there is no "403
-    forbidden" path for application users. Write authorization is enforced by
-    ``APIKeyMiddleware``, which returns **401** (not 403) when ``X-API-Key`` is
-    missing or wrong. We therefore assert the actual 401 boundary.
+  * Write authorization is layered. ``APIKeyMiddleware`` returns **401** when
+    ``X-API-Key`` is missing or wrong on a non-exempt path. The route-level
+    ``require_*`` dependencies (app/api/auth.py) additionally enforce roles and
+    reject credential-less requests with **401/403** when
+    ``WMCDSS_DEV_OPEN_ACCESS`` is false; those fail-closed invariants are pinned
+    in tests/test_admin_guard.py. The middleware boundary tests below assert the
+    actual 401 boundary they are about.
   * Threshold creation has no uniqueness constraint, so there is no 409 path
     for ``/thresholds`` — only ``/sites`` enforces a unique ``code`` -> 409
     (already covered in test_sites.py).
@@ -23,6 +26,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -36,6 +40,23 @@ from app.core import security as security_mod
 from app.core.config import Settings
 from app.core.security import APIKeyMiddleware
 from app.db.session import get_db
+
+# ---------------------------------------------------------------------------
+# このモジュールの /sites・/thresholds 422 検証テストは「ボディ検証まで到達する
+# こと」を前提にする。認可は対象外なので、開発スタック相当の
+# WMCDSS_DEV_OPEN_ACCESS=true を明示的に与える（以前は api_keys 空の素通りという
+# 暗黙の既定に依存していた）。無認証の変更系が 401/403 で拒否されること自体は
+# tests/test_admin_guard.py が固定する。
+#
+# なお APIKeyMiddleware 自体の 401 境界テスト（_guarded_app）は config モジュール
+# 経由で設定を読むため、この差し替えの影響を受けない。
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _dev_open_access(monkeypatch):
+    fake = Settings(dev_open_access=True)
+    monkeypatch.setattr(api_auth_mod, "get_settings", lambda: fake)
 
 _NOW = datetime(2026, 6, 19, 9, 0, 0, tzinfo=timezone.utc)
 

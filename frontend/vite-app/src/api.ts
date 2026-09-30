@@ -10,6 +10,7 @@
 // callers one at a time without subtle drift.
 
 import { authHeader, notifyUnauthorized } from './auth-token';
+import { areaFromAddress } from './area';
 
 export interface BackendSite {
   id: number | string;
@@ -220,7 +221,9 @@ export function adaptSite(backendSite: BackendSite, mockFallback?: Partial<Adapt
     name: backendSite.name,
     shortName: fallback.shortName || backendSite.name.slice(0, 8),
     type: backendSite.kind,
-    area: fallback.area || '',
+    // 接続モードでも地域フィルタを機能させるため、住所から地方を導出する。
+    // 判別できない場合は '全国'（= どの地域でも表示される側）に倒す（task-12）。
+    area: fallback.area || areaFromAddress(backendSite.address),
     lat: backendSite.lat,
     lng: backendSite.lon,
     station: fallback.station || backendSite.jma_station_id || '',
@@ -375,9 +378,12 @@ export async function initFromBackend(): Promise<boolean> {
       window.BACKEND_STATUS = { ok: false, reason: 'empty', sites: 0 };
       return false;
     }
-    const adapted = backendSites.map((bs, idx) =>
-      adaptSite(bs, (mockSites[idx] as unknown as Partial<AdaptedSite>) || undefined),
-    );
+    // モック SITES を index で引き当ててはいけない（task-10 (C)）。
+    // DB の並びとモックの並びは一致しないため、`mockSites[idx]` を fallback に
+    // 渡すと「別現場の shortName（例: 2 件目に横浜港防波堤）」や「モックの
+    // status（＝モック判定）」が実データとして画面に出てしまう。
+    // 現場名は API の name から導出し、判定は /dashboard の集約結果だけを使う。
+    const adapted = backendSites.map((bs) => adaptSite(bs));
     // AdaptedSite は backend 由来（id: number）で data.ts の Site（id: string）と
     // 型が異なる。実行時互換のためここで変換する（既存の dual-surface 契約）。
     window.SITES = adapted as unknown as import('./data').Site[];

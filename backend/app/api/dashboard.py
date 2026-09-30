@@ -115,7 +115,16 @@ async def dashboard_summary(
         inputs, w_at, m_at = await _latest_inputs(db, site.id, now)
         per_work: list[dict[str, Any]] = []
         worst = "go"
-        worst_reason = "しきい値が設定されていません"
+        # 代表 reason は「実際に評価された作業種別の reason」から選ぶ。
+        #
+        # 以前はここを「しきい値が設定されていません」で初期化し、`>` でだけ
+        # 更新していた。`worst` の初期値が "go" なので、評価済みの作業種別が
+        # 全て go の現場では reason が一度も更新されず、**「施工可」のカードに
+        # 「しきい値が設定されていません」** と表示された（実測バグ）。利用者には
+        # 「基準が未設定」なのか「基準を満たしている」のか区別できず、判定の
+        # 根拠表示として成立しない。`None` で初期化し、最初に評価できた reason を
+        # 必ず採用したうえで、より悪い status が出たら上書きする。
+        worst_reason: str | None = None
 
         for wt in work_types:
             rules_rows = by_work.get(wt, [])
@@ -140,7 +149,10 @@ async def dashboard_summary(
                 out_of_effect=out_of_effect,
             )
             severity = {"go": 0, "caution": 1, "stop": 2}
-            if severity[res.status] > severity[worst]:
+            # 同値のタイブレークは work_types の評価順で最初（決定的）。
+            # 同じ入力に対して常に同じ代表 reason を返すため、比較は厳密大なりのまま
+            # 「未設定(None)なら無条件で採用」を先に置く。
+            if worst_reason is None or severity[res.status] > severity[worst]:
                 worst = res.status
                 worst_reason = res.reason
             per_work.append({
@@ -149,6 +161,12 @@ async def dashboard_summary(
                 "reason": res.reason,
                 "evaluated": res.evaluated_count,
             })
+
+        if worst_reason is None:
+            # 評価された作業種別が 1 つも無い = 判定根拠が無い。ここだけは
+            # 「しきい値が設定されていません」を返す（data_complete=False と対で、
+            # 基準未設定であることを伝える）。go の理由文で埋めてはならない。
+            worst_reason = "しきい値が設定されていません"
 
         w_fresh = w_at is not None and (now - w_at) <= _WEATHER_FRESH
         m_fresh = m_at is not None and (now - m_at) <= _MARINE_FRESH

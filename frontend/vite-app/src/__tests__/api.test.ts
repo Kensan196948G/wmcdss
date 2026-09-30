@@ -225,6 +225,25 @@ describe('adaptSite', () => {
     expect(a.address).toBe('Tokyo Bay');
     expect(a.jmaStationId).toBe('44132');
   });
+
+  // task-12: 接続モードでも地域フィルタが機能するよう、住所から地方を導出する
+  it('derives area from the address prefecture', () => {
+    expect(adaptSite({ ...backend, address: '東京都港区' }).area).toBe('関東');
+    expect(adaptSite({ ...backend, address: '神奈川県横浜市中区' }).area).toBe('関東');
+    expect(adaptSite({ ...backend, address: '福岡県福岡市博多区' }).area).toBe('九州');
+    expect(adaptSite({ ...backend, address: '北海道札幌市' }).area).toBe('北海道');
+  });
+
+  it('falls back to 全国 (never empty) when the address is unknown', () => {
+    expect(adaptSite({ ...backend, address: null }).area).toBe('全国');
+    expect(adaptSite({ ...backend, address: '' }).area).toBe('全国');
+    // 既存 fixture の address は 'Tokyo Bay'（都道府県を含まない）
+    expect(adaptSite(backend).area).toBe('全国');
+  });
+
+  it('keeps an explicit fallback.area when provided', () => {
+    expect(adaptSite(backend, { area: '近畿' }).area).toBe('近畿');
+  });
 });
 
 // ---------------------------------------------------------------------------
